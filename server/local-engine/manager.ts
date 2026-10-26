@@ -1,3 +1,4 @@
+import { TaskClient } from "../task-api/task-client.ts";
 import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
@@ -20,14 +21,22 @@ import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
-import type { CommandRunner } from "../process/command-runner.ts";
 import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
+import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
+import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
 import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts";
 import type { RunStore } from "../runs/run-store.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
-import type { InstalledPackage, PendingSwitch, Settings } from "../settings/settings.ts";
+import {
+  isNativePackage,
+  type InstalledNativePackage,
+  type InstalledPackage,
+  type PendingSwitch,
+  type Settings,
+} from "../settings/settings.ts";
+import type { ManifestVariant } from "../manifest/schema.ts";
 import { checkCaps, defaultCaps, type Caps } from "./caps.ts";
 import { EngineLog, type EngineLogDeps } from "./engine-log.ts";
 
@@ -37,6 +46,8 @@ export const LOCAL_ENGINE_NAME = "This computer";
 const PORT_TRIES = 3;
 /** A page load reuses a look at the graphics card this young. An install and a start always look again. */
 const GPU_PRECHECK_MAX_AGE_MS = 60_000;
+/** Looking for systemd, and trying a scope, each wait this long. */
+const SYSTEMD_TIMEOUT_MS = 10_000;
 /** A start does not ask the runtimes again if they answered this recently. */
 const DETECTION_MAX_AGE_MS = 10_000;
 /** Seconds to wait before each try to bring back a crashed engine: 2, 4, 8, 16, 32. */
@@ -70,6 +81,16 @@ interface InstallPlan {
   pkg: ContainerPackage;
   installed: InstalledPackage;
   variant: ContainerVariant;
+  /** Bytes the download takes, from the manifest. */
+  size: number;
+}
+
+/** What an install of a native package downloads, and what it records once the download works. */
+interface NativePlan {
+  pkg: EnginePackage;
+  installed: InstalledNativePackage;
+  /** Bytes the download takes, from the manifest. */
+  size: number;
 }
 
 /** What a Mac still lacks, and the service that supplies it. */
@@ -90,12 +111,47 @@ const RUN_CHECK_MAX_AGE_MS = 1000;
 interface UpdateOffer {
   packageVersion: string;
   size: number;
-  variant: ContainerVariant;
+  variant: ManifestVariant;
 }
 
-/** The image a package pins, the way the runtimes know it. */
-function imageOf(installed: InstalledPackage): string {
-  return `${installed.container.image}@${installed.container.digest}`;
+/** What differs between the two kinds of package, so that the rest of the manager does not switch on the kind. */
+interface KindView {
+  kind: "container" | "native";
+  /** The runtime that pulled the image; null for a program. */
+  runtime: RuntimeId | null;
+  gpu: boolean;
+  /** The bytes a package downloads, from the manifest entry it was installed from. */
+  size: number;
+  /** What a package is, apart from the others: the image it pins, or the folder of its version. */
+  identity: string;
+}
+
+function kindOf(installed: InstalledPackage): KindView {
+  return isNativePackage(installed)
+    ? { kind: "native", runtime: null, gpu: installed.native.gpu, size: installed.native.size, identity: `native:${installed.packageVersion}` }
+    : {
+        kind: "container",
+        runtime: installed.runtime,
+        gpu: installed.container.gpu,
+        size: installed.container.size,
+        identity: `${installed.container.image}@${installed.container.digest}`,
+      };
+}
+
+/** The progress at the start of a download or of a start, before the package says more. */
+function firstProgress(phase: "pulling" | "starting", size: number, installed: InstalledPackage): InstallProgressView {
+  return {
+    phase,
+    variant: installed.variant,
+    steps: [{ id: "engine", size }],
+    step: "engine",
+    stepReceived: null,
+    size,
+    layersDone: null,
+    layersTotal: null,
+    attempt: 1,
+    maxAttempts: kindOf(installed).kind === "native" ? 1 : PULL_ATTEMPTS,
+  };
 }
 
 /**
@@ -149,6 +205,10 @@ export interface LocalEngineDeps {
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
   /** How long a new version may take to answer before an update or a rollback is undone; default 120 seconds. */
   updateReadyTimeoutMs?: number;
+  /** Runs tar to unpack a native package, and systemctl and systemd-run to look for systemd. Default: the real programs. */
+  nativeRunner?: CommandRunner;
+  /** For native packages; a test swaps the way the program is started and the way the archive is fetched. */
+  native?: NativeOptions;
 }
 
 function randomToken(): string {
@@ -176,6 +236,9 @@ function refusal(status: number, code: ApiError["code"], data: Record<string, un
  * Installs, starts, stops and watches the local engine. It keeps no state the
  * database does not also hold, except what is happening right now.
  */
+/** How long the reattach waits for the running engine to confirm the stored token. */
+const CONFIRM_TIMEOUT_MS = 5_000;
+
 export class LocalEngineManager {
   private readonly settings: Settings;
   private readonly store: EngineStore;
@@ -184,6 +247,7 @@ export class LocalEngineManager {
   private readonly listeners = new Set<(view: LocalEngineView) => void>();
   private readonly unsubscribeMonitor: () => void;
   private readonly abort = new AbortController();
+  private readonly runner: CommandRunner;
 
   private detections: RuntimeDetection[] = [];
   private detectedAt = 0;
@@ -208,6 +272,13 @@ export class LocalEngineManager {
   private precheck: { at: number; runtime: RuntimeId | null; value: Promise<GpuPrecheck> } | undefined;
   /** Set when the graphics card package failed its test run and could not be deleted. Cleared by the next install. */
   private packageLeft: ApiError | null = null;
+  /** Whether systemd can give a native package a memory limit; null until it has been looked for once. */
+  private systemd: boolean | null = null;
+  private systemdLookup: Promise<void> | undefined;
+  /** The programs this run of aidm-ui started, so that a silent one is still known to be ours. */
+  private readonly children = new Map<number, ChildState>();
+  /** The package objects of native versions, made once each. */
+  private readonly nativePackages = new Map<string, NativePackage>();
   /** The update or the way back under way, shown like an install. */
   private updateProgress: InstallProgressView | null = null;
   private offer: UpdateOffer | null = null;
@@ -229,6 +300,7 @@ export class LocalEngineManager {
 
   constructor(private readonly deps: LocalEngineDeps) {
     this.settings = deps.settings;
+    this.runner = deps.nativeRunner ?? systemRunner();
     this.store = deps.engineStore;
     this.monitor = deps.monitor;
     this.engineLog = new EngineLog({ dataFolder: deps.dataFolder, token: () => this.token, log: deps.log, ...deps.logOptions });
@@ -269,10 +341,16 @@ export class LocalEngineManager {
 
     const available = this.drivable().filter((detection) => detection.available);
     const preferred = this.settings.get("runtime.preferred");
-    const chosen = installedPackage?.runtime ?? preferredRuntime(available, preferred)?.id ?? null;
+    const installedKind = installedPackage === null ? null : kindOf(installedPackage);
+    const native = installedKind?.kind === "native";
+    const chosen = native ? null : (installedKind?.runtime ?? preferredRuntime(available, preferred)?.id ?? null);
     const detection = this.detections.find((candidate) => candidate.id === chosen);
     const warnings: ApiError[] = [];
-    if (detection !== undefined && detection.available) {
+    if (native) {
+      // Systemd limits the memory, nothing limits the cores. Once it is known that systemd is missing, the limit has no effect.
+      if (this.systemd === false) warnings.push({ code: "local.memory_cap_not_enforced", data: {} });
+      if (caps.cpus < limits.cpus) warnings.push({ code: "local.cpu_cap_not_enforced", data: {} });
+    } else if (detection !== undefined && detection.available) {
       if (detection.memoryCapEnforced === false) {
         warnings.push({ code: "local.memory_cap_not_enforced", data: { runtime: detection.id } });
       }
@@ -285,13 +363,13 @@ export class LocalEngineManager {
 
     return {
       installed:
-        installedPackage === null
+        installedPackage === null || installedKind === null
           ? null
           : {
               packageVersion: installedPackage.packageVersion,
               variant: installedPackage.variant,
-              kind: "container",
-              runtime: installedPackage.runtime,
+              kind: installedKind.kind,
+              runtime: installedKind.runtime,
             },
       engineId: engine?.id ?? null,
       enabled: this.isEnabled(),
@@ -366,6 +444,9 @@ export class LocalEngineManager {
         this.detections = await this.deps.detectRuntimes();
         this.detectedAt = Date.now();
         answered = true;
+        // The view warns about a missing memory limit only once it knows.
+        const installed = this.settings.get("local.package");
+        if (installed !== null && kindOf(installed).kind === "native") await this.lookForSystemd();
       } catch (error) {
         this.deps.log(`Looking for container runtimes failed: ${error instanceof Error ? error.message : String(error)}`);
         return;
@@ -390,6 +471,34 @@ export class LocalEngineManager {
   private async lookAtRuntimesAgain(): Promise<boolean> {
     while (this.detecting !== undefined) await this.detecting;
     return this.lookAtRuntimes();
+  }
+
+  /**
+   * Looks once for systemd's user manager, which gives a native package its
+   * memory limit, and tries a scope with a limit, since a manager that runs
+   * can still refuse one (no user bus, no permission). Linux only.
+   */
+  private lookForSystemd(): Promise<void> {
+    this.systemdLookup ??= (async () => {
+      if (this.deps.machine.platform !== "linux") {
+        this.systemd = false;
+        return;
+      }
+      const found = await this.runner.run(["systemctl", "--user", "show-environment"], { timeoutMs: SYSTEMD_TIMEOUT_MS });
+      if (found.exitCode !== 0) {
+        this.systemd = false;
+        return;
+      }
+      const scope = await this.runner.run(["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=1G", "--", "true"], {
+        timeoutMs: SYSTEMD_TIMEOUT_MS,
+      });
+      this.systemd = scope.exitCode === 0;
+      if (!this.systemd) this.deps.log(`systemd cannot start a scope with a memory limit (exit ${scope.exitCode}): ${scope.stderr.trim().slice(0, 300)}`);
+    })().catch((error: unknown) => {
+      this.deps.log(`Looking for systemd failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.systemd = false;
+    });
+    return this.systemdLookup;
   }
 
   /** The operator's choice of runtime; null for automatic. One that does not work is refused. */
@@ -483,40 +592,49 @@ export class LocalEngineManager {
       const offered = await this.deps.manifests.offerWithVariant(this.offerFacts(machine, gpu));
       const { offer } = offered.view;
       const variant = offered.variant;
-      if (offer === null || variant === null || variant.kind !== "container") {
-        return refusal(409, "install.not_offered", { reason: offered.view.reason });
+      if (offer === null || variant === null) return refusal(409, "install.not_offered", { reason: offered.view.reason });
+
+      let plan: InstallPlan | NativePlan;
+      let fallback: InstallPlan | null = null;
+      let mac: MacPlan | null = null;
+      if (variant.kind === "native") {
+        // A program on this computer needs no container tool.
+        const installed: InstalledNativePackage = { packageVersion: offer.packageVersion, variant: offer.variant, native: variant };
+        const pkg = this.packageFor(installed);
+        if (pkg === null) return refusal(409, "install.no_runtime");
+        plan = { pkg, installed, size: variant.size };
+      } else {
+        const runtime = this.chosenRuntime();
+        // A Mac without a working container tool gets it set up first.
+        mac = runtime === null ? this.macNeed() : null;
+        if (runtime === null && mac === null) return refusal(409, "install.no_runtime");
+        const driver = this.deps.runtimes(runtime?.id ?? "apple-container");
+        if (driver === null) return refusal(409, "install.no_runtime");
+
+        // Only a missing passthrough is stored as a note. The other reasons are read from the settings when the view is made.
+        const reason = offered.view.gpu.reason;
+        plan = this.planFor({
+          driver,
+          runtime,
+          offer,
+          variant,
+          gpuNote: reason?.code === "gpu.no_passthrough" ? reason : null,
+        });
+        // The processor package of this same manifest, for when the test run inside the graphics card package fails.
+        const { processor } = offered;
+        fallback =
+          variant.gpu && processor !== null && processor.variant.kind === "container"
+            ? this.planFor({
+                driver,
+                runtime,
+                offer: { packageVersion: offer.packageVersion, variant: processor.id },
+                variant: processor.variant,
+                gpuNote: null,
+              })
+            : null;
       }
-
-      const runtime = this.chosenRuntime();
-      // A Mac without a working container tool gets it set up first.
-      const mac = runtime === null ? this.macNeed() : null;
-      if (runtime === null && mac === null) return refusal(409, "install.no_runtime");
-      const driver = this.deps.runtimes(runtime?.id ?? "apple-container");
-      if (driver === null) return refusal(409, "install.no_runtime");
-
-      // Only a missing passthrough is stored as a note. The other reasons are read from the settings when the view is made.
-      const reason = offered.view.gpu.reason;
-      const plan = this.planFor({
-        driver,
-        runtime,
-        offer,
-        variant,
-        gpuNote: reason?.code === "gpu.no_passthrough" ? reason : null,
-      });
-      // The processor package of this same manifest, for when the test run inside the graphics card package fails.
-      const { processor } = offered;
-      const fallback =
-        variant.gpu && processor !== null && processor.variant.kind === "container"
-          ? this.planFor({
-              driver,
-              runtime,
-              offer: { packageVersion: offer.packageVersion, variant: processor.id },
-              variant: processor.variant,
-              gpuNote: null,
-            })
-          : null;
       const steps: InstallStepView[] = [...(mac?.setup.steps(mac.need) ?? []), { id: "engine", size: variant.size }];
-      // Refused here, before anything is pulled, so the operator hears it in the answer to the click.
+      // Refused here, before anything is downloaded, so the operator hears it in the answer to the click.
       const space = await plan.pkg.preflight();
       if (!space.ok) return { ok: false, status: 409, error: space.error };
       if (mac !== null) {
@@ -544,7 +662,7 @@ export class LocalEngineManager {
         layersDone: null,
         layersTotal: null,
         attempt: 1,
-        maxAttempts: PULL_ATTEMPTS,
+        maxAttempts: variant.kind === "native" ? 1 : PULL_ATTEMPTS,
       };
       this.background = this.runInstall(plan, fallback, mac, steps)
         .catch((error: unknown) => {
@@ -587,7 +705,8 @@ export class LocalEngineManager {
         const release = await this.deps.manifests.releaseFor(installed.variant);
         if (
           release !== null &&
-          release.variant.kind === "container" &&
+          // A release is an update of the same kind of package. Moving from a container to a program is a new install.
+          release.variant.kind === kindOf(installed).kind &&
           compareVersions(release.packageVersion, installed.packageVersion) > 0
         ) {
           next = { packageVersion: release.packageVersion, size: release.variant.size, variant: release.variant };
@@ -703,33 +822,30 @@ export class LocalEngineManager {
   ): Promise<{ to: InstalledPackage; progress: InstallProgressView } | { refused: InstallOutcome }> {
     const blocked = this.updateBlock(true, this.engineState());
     if (blocked !== null) return { refused: { ok: false, status: 409, error: blocked } };
-    const progress = (phase: "pulling" | "starting", size: number, to: InstalledPackage): InstallProgressView => ({
-      phase,
-      variant: to.variant,
-      steps: [{ id: "engine", size }],
-      step: "engine",
-      stepReceived: null,
-      size,
-      layersDone: null,
-      layersTotal: null,
-      attempt: 1,
-      maxAttempts: PULL_ATTEMPTS,
-    });
+    const progress = (phase: "pulling" | "starting", size: number, to: InstalledPackage): InstallProgressView =>
+      firstProgress(phase, size, to);
 
     if (kind === "rollback") {
       const previous = this.settings.get("local.previous");
       if (previous === null) return { refused: refusal(409, "update.no_previous") };
-      return { to: previous, progress: progress("starting", previous.container.size, previous) };
+      return { to: previous, progress: progress("starting", kindOf(previous).size, previous) };
     }
 
     await this.refreshUpdateOffer();
     const offer = this.offer;
     if (offer === null) return { refused: refusal(409, "install.not_offered", { reason: null }) };
-    if (this.deps.runtimes(from.runtime) === null) {
-      return { refused: refusal(409, "runtime.not_available", { runtime: from.runtime }) };
+    let to: InstalledPackage;
+    if (isNativePackage(from)) {
+      if (offer.variant.kind !== "native") return { refused: refusal(409, "install.not_offered", { reason: null }) };
+      to = { packageVersion: offer.packageVersion, variant: from.variant, native: offer.variant };
+    } else {
+      if (offer.variant.kind !== "container") return { refused: refusal(409, "install.not_offered", { reason: null }) };
+      if (this.deps.runtimes(from.runtime) === null) {
+        return { refused: refusal(409, "runtime.not_available", { runtime: from.runtime }) };
+      }
+      await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
+      to = { packageVersion: offer.packageVersion, variant: from.variant, runtime: from.runtime, container: offer.variant };
     }
-    await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-    const to: InstalledPackage = { packageVersion: offer.packageVersion, variant: from.variant, runtime: from.runtime, container: offer.variant };
     const space = await this.packageFor(to)?.preflight();
     if (space !== undefined && !space.ok) return { refused: { ok: false, status: 409, error: space.error } };
     return { to, progress: progress("pulling", offer.size, to) };
@@ -763,7 +879,7 @@ export class LocalEngineManager {
     const oldPkg = this.packageFor(from);
     const newPkg = this.packageFor(to);
     if (engine === null || oldPkg === null || newPkg === null) {
-      return this.endSwitch({ code: "runtime.not_available", data: { runtime: from.runtime } });
+      return this.endSwitch({ code: "runtime.not_available", data: { runtime: kindOf(from).runtime } });
     }
 
     if (kind === "update") {
@@ -777,7 +893,7 @@ export class LocalEngineManager {
       if (!pulled.ok) return this.endSwitch(pulled.error);
       // The pull takes minutes. A run may have started in the meantime.
       if (this.runOnLocalEngine(true)) {
-        await this.dropImage(to, from);
+        await this.dropVersion(to, from);
         return this.endSwitch({ code: "update.run_in_progress", data: {} });
       }
     }
@@ -790,7 +906,7 @@ export class LocalEngineManager {
     const stopped = await oldPkg.stop();
     if (!stopped.ok) {
       this.settings.set("local.switch", null);
-      await this.dropImage(to, from);
+      await this.dropVersion(to, from);
       return this.endSwitch(stopped.error);
     }
     const started = await this.startEngine(to);
@@ -808,7 +924,7 @@ export class LocalEngineManager {
       const droppable = this.settings.get("local.previous");
       this.commitSwitch(engineId, pending);
       // Exactly one previous version is kept. The one before it goes, unless it is one of the two that stay.
-      if (droppable !== null) await this.dropImage(droppable);
+      if (droppable !== null) await this.dropVersion(droppable);
       this.updateProgress = null;
       this.publish();
       await this.refreshUpdateOffer();
@@ -821,7 +937,7 @@ export class LocalEngineManager {
     }
     this.deps.log(`The engine ${to.packageVersion} did not become ready. Starting ${from.packageVersion} again.`);
     await this.discard(newPkg);
-    await this.dropImage(to, from);
+    await this.dropVersion(to, from);
     const restored = await this.startEngine(from);
     this.settings.set("local.switch", null);
     // A start that failed has its own failure, and the engine shows failed with the way to start it again.
@@ -854,18 +970,7 @@ export class LocalEngineManager {
     this.busy = true;
     this.monitor.setHeld(engine.id, true);
     this.failure = null;
-    this.updateProgress = {
-      phase: "starting",
-      variant: pending.to.variant,
-      steps: [{ id: "engine", size: pending.to.container.size }],
-      step: "engine",
-      stepReceived: null,
-      size: pending.to.container.size,
-      layersDone: null,
-      layersTotal: null,
-      attempt: 1,
-      maxAttempts: PULL_ATTEMPTS,
-    };
+    this.updateProgress = firstProgress("starting", kindOf(pending.to).size, pending.to);
     this.background = (async () => {
       const status = await newPkg.status();
       const running = status.ok && status.value.state === "running" && engine.address !== "";
@@ -916,19 +1021,24 @@ export class LocalEngineManager {
   }
 
   /**
-   * Removes the image of a version, unless it is the current one, the previous
-   * one or one of `alsoKeep`. A failure is logged, since nothing depends on it.
+   * Removes a version (its image, or its folder), unless it is the current
+   * one, the previous one or one of `alsoKeep`. A failure is logged, since
+   * nothing depends on it.
    */
-  private async dropImage(version: InstalledPackage, ...alsoKeep: InstalledPackage[]): Promise<void> {
-    const image = imageOf(version);
+  private async dropVersion(version: InstalledPackage, ...alsoKeep: InstalledPackage[]): Promise<void> {
+    const identity = kindOf(version).identity;
     const keep = [this.settings.get("local.package"), this.settings.get("local.previous"), ...alsoKeep];
-    if (keep.some((other) => other !== null && imageOf(other) === image)) return;
+    if (keep.some((other) => other !== null && kindOf(other).identity === identity)) return;
     try {
+      if (isNativePackage(version)) {
+        await this.packageFor(version)?.remove();
+        return;
+      }
       const runtime = this.deps.runtimes(version.runtime);
-      const removed = await runtime?.removeImage(image);
+      const removed = await runtime?.removeImage(identity);
       if (removed !== undefined && !removed.ok) this.deps.log(`An old engine image could not be removed (${removed.error.code}).`);
     } catch (error) {
-      this.deps.log(`Removing an old engine image failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.deps.log(`Removing an old engine version failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -962,7 +1072,7 @@ export class LocalEngineManager {
       const engine = this.store.local();
       if (installed === null || engine === null) return fail("local.not_installed");
       const pkg = this.packageFor(installed);
-      if (pkg === null) return fail("runtime.not_available", { runtime: installed.runtime });
+      if (pkg === null) return fail("runtime.not_available", { runtime: kindOf(installed).runtime });
       const stopped = await pkg.stop();
       if (!stopped.ok) return stopped;
       // The log ends by itself when the container does; this only makes sure.
@@ -1002,9 +1112,20 @@ export class LocalEngineManager {
       const status = await pkg.status();
       if (this.closed) return;
       if (status.ok && status.value.state === "running" && engine.address !== "") {
-        this.token = engine.token;
-        this.engineLog.follow(pkg, { fresh: false });
-        return;
+        // Confirmed by the stored token: the engine that answers is the one this
+        // data folder started. One that refuses the token is stopped and started fresh.
+        const answer = await new TaskClient(
+          { address: engine.address, token: engine.token },
+          { timeoutMs: CONFIRM_TIMEOUT_MS, log: this.deps.log },
+        ).info();
+        if (this.closed) return;
+        if (answer.ok || answer.failure.kind !== "engine_error") {
+          this.token = engine.token;
+          this.engineLog.follow(pkg, { fresh: false });
+          return;
+        }
+        this.deps.log("The running engine refused the stored token, so it is started again.");
+        await pkg.stop();
       }
       if (this.busy) return;
       this.busy = true;
@@ -1041,7 +1162,7 @@ export class LocalEngineManager {
   // Inside ------------------------------------------------------------------
 
   private async runInstall(
-    first: InstallPlan,
+    first: InstallPlan | NativePlan,
     fallback: InstallPlan | null,
     mac: MacPlan | null,
     steps: InstallStepView[],
@@ -1054,7 +1175,7 @@ export class LocalEngineManager {
     const pulled = await this.pull(plan, steps);
     if (!pulled.ok) return this.failInstall(pulled.error);
 
-    if (plan.variant.gpu) {
+    if ("variant" in plan && plan.variant.gpu) {
       // Check c. The image is the same one the engine will run, with the same flag.
       this.showStep("checking_gpu", plan, steps);
       const confirmed = await plan.pkg.confirmGpu(this.abort.signal);
@@ -1089,12 +1210,12 @@ export class LocalEngineManager {
       engine = this.store.addLocal({
         name: LOCAL_ENGINE_NAME,
         token,
-        packageKind: "container",
+        packageKind: kindOf(installed).kind,
         installedVersion: installed.packageVersion,
       });
     } else {
       this.store.update(engine.id, { token });
-      this.store.setInstalledVersion(engine.id, "container", installed.packageVersion);
+      this.store.setInstalledVersion(engine.id, kindOf(installed).kind, installed.packageVersion);
     }
     this.settings.set("local.package", installed);
     this.settings.set("local.previous", null);
@@ -1103,9 +1224,9 @@ export class LocalEngineManager {
     await this.refreshUpdateOffer();
   }
 
-  private pull(plan: InstallPlan, steps: InstallStepView[]): Promise<PackageResult<void>> {
+  private pull(plan: InstallPlan | NativePlan, steps: InstallStepView[]): Promise<PackageResult<void>> {
     // The package knows only its own step, the page wants all of them. The engine step has the size of the package being pulled.
-    const all = steps.map((step) => (step.id === "engine" ? { ...step, size: plan.variant.size } : step));
+    const all = steps.map((step) => (step.id === "engine" ? { ...step, size: plan.size } : step));
     return plan.pkg.install({
       signal: this.abort.signal,
       onProgress: (progress) => {
@@ -1134,15 +1255,17 @@ export class LocalEngineManager {
 
   /** What the operator is told about the graphics card, from the stored state each time the picture is made. */
   private gpuWarnings(installed: InstalledPackage | null): ApiError[] {
-    if (installed?.container.gpu) {
+    if (installed !== null && kindOf(installed).gpu) {
       return this.settings.get("local.forceCpu") ? [{ code: "gpu.forced_cpu", data: {} }] : [];
     }
+    // The notes about the graphics card come from the container install, the only one that checks it.
+    const container = installed !== null && !isNativePackage(installed) ? installed : null;
     const notes: ApiError[] = [];
     if (this.settings.get("local.gpuCheckFailed") !== null && (installed !== null || this.installing)) {
       notes.push(inImageFailed());
     }
-    if (installed?.gpuNote) notes.push(installed.gpuNote);
-    const left = installed === null ? this.packageLeft : (installed.gpuPackageLeft ?? null);
+    if (container?.gpuNote) notes.push(container.gpuNote);
+    const left = installed === null ? this.packageLeft : (container?.gpuPackageLeft ?? null);
     if (left !== null) notes.push(left);
     return notes;
   }
@@ -1150,11 +1273,12 @@ export class LocalEngineManager {
   /** The note that the container tool cannot hand over the card goes once it can, since the operator may have set it up since. */
   private async recheckGpuNote(): Promise<void> {
     const installed = this.settings.get("local.package");
-    if (installed?.gpuNote?.code !== "gpu.no_passthrough" || this.settings.get("local.forceCpu")) return;
+    if (installed === null || isNativePackage(installed)) return;
+    if (installed.gpuNote?.code !== "gpu.no_passthrough" || this.settings.get("local.forceCpu")) return;
     const precheck = await this.gpuPrecheck(this.deps.machine);
     if (precheck.state === "no_passthrough") return;
     const latest = this.settings.get("local.package");
-    if (latest === null) return;
+    if (latest === null || isNativePackage(latest)) return;
     this.settings.set("local.package", { ...latest, gpuNote: null });
     this.publish();
   }
@@ -1183,7 +1307,7 @@ export class LocalEngineManager {
       container: input.variant,
       gpuNote: input.gpuNote,
     };
-    return { pkg, installed, variant: input.variant };
+    return { pkg, installed, variant: input.variant, size: input.variant.size };
   }
 
   /** The runtime that would be used: the operator's choice if it works, else Podman before Docker. */
@@ -1304,22 +1428,32 @@ export class LocalEngineManager {
     await this.engineLog.stop();
 
     const pkg = this.packageFor(installed);
-    if (pkg === null) return this.failStart(engine.id, { code: "runtime.not_available", data: { runtime: installed.runtime } });
-    await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-    const detection = this.detections.find((candidate) => candidate.id === installed.runtime);
+    if (pkg === null) {
+      return this.failStart(engine.id, { code: "runtime.not_available", data: { runtime: kindOf(installed).runtime } });
+    }
 
-    // A cap is left out where the runtime cannot enforce it, each one on its own.
+    // A cap is left out where it cannot be enforced, each one on its own.
     const caps = this.capsNow();
-    const applied = {
-      memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
-      cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,
-    };
+    const kind = kindOf(installed);
+    let applied: { memoryBytes: number | null; cpus: number | null };
+    if (kind.kind === "native") {
+      // Only systemd gives a program a limit, and only for memory.
+      await this.lookForSystemd();
+      applied = { memoryBytes: this.systemd === true ? caps.memoryBytes : null, cpus: null };
+    } else {
+      await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
+      const detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      applied = {
+        memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
+        cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,
+      };
+    }
 
     let engineDataFolder: string;
     try {
       engineDataFolder = this.settings.get("engine.dataFolder") ?? join(this.deps.dataFolder, "engine-data");
       // The folder goes into "-v host:container", where a colon would cut it in two, and a relative one means a named volume.
-      if (!isAbsolute(engineDataFolder) || engineDataFolder.includes(":")) {
+      if (!isAbsolute(engineDataFolder) || (kind.kind === "container" && engineDataFolder.includes(":"))) {
         this.deps.log("The engine data folder must be a full path without a colon. The engine was not started.");
         return this.failStart(engine.id, { code: "server.internal_error", data: {} });
       }
@@ -1329,7 +1463,7 @@ export class LocalEngineManager {
       return this.failStart(engine.id, { code: "server.internal_error", data: {} });
     }
 
-    let started: PackageResult<{ address: string }> = fail("runtime.start_failed");
+    let started: PackageResult<{ address: string; memoryCapEnforced?: boolean }> = fail("runtime.start_failed");
     for (let attempt = 1; attempt <= PORT_TRIES; attempt++) {
       let hostPort: number;
       try {
@@ -1344,11 +1478,16 @@ export class LocalEngineManager {
         cpus: applied.cpus,
         engineDataFolder,
         // With the processor-only choice the card stays out, and the engine runs on the processor.
-        gpu: installed.container.gpu && !this.settings.get("local.forceCpu"),
+        gpu: kind.gpu && !this.settings.get("local.forceCpu"),
       });
       if (started.ok || started.error.code !== "runtime.port_in_use") break;
     }
     if (!started.ok) return this.failStart(engine.id, started.error);
+    if (started.value.memoryCapEnforced === false && applied.memoryBytes !== null) {
+      // The scope with the limit did not work, and the engine runs without one. The view warns, and later starts do not try again.
+      this.systemd = false;
+      applied = { ...applied, memoryBytes: null };
+    }
 
     // The container runs now. If recording it fails, nothing would know about it, so it is taken away again.
     try {
@@ -1489,7 +1628,7 @@ export class LocalEngineManager {
         const delayMs = (RESTART_BACKOFF_SECONDS[restart.attempts] ?? 32) * 1000;
         restart.attempts++;
         restart.nextAt = this.now() + delayMs;
-        this.deps.log(`The engine container is ${status.value.state}. Starting it again, try ${restart.attempts} of ${RESTART_MAX_ATTEMPTS}.`);
+        this.deps.log(`The engine is ${status.value.state}. Starting it again, try ${restart.attempts} of ${RESTART_MAX_ATTEMPTS}.`);
         this.publish();
         await this.pause(delayMs);
         if (!wanted()) return;
@@ -1558,8 +1697,30 @@ export class LocalEngineManager {
     }
   }
 
-  /** The package of what is installed, driven by the runtime that pulled it. Null when this version cannot drive that runtime. */
+  /** The package of what is installed. For a container, the one driven by the runtime that pulled it, or null when this version cannot drive that runtime. */
   private packageFor(installed: InstalledPackage): EnginePackage | null {
+    if (isNativePackage(installed)) {
+      // One object per version, which holds nothing that changes: the program itself is found through the settings.
+      const key = `${installed.packageVersion}:${installed.native.sha256}`;
+      let pkg = this.nativePackages.get(key);
+      if (pkg === undefined) {
+        pkg = new NativePackage({
+          ...this.deps.native,
+          variant: installed.native,
+          variantId: installed.variant,
+          version: installed.packageVersion,
+          dataFolder: this.deps.dataFolder,
+          freeBytes: this.deps.freeBytes,
+          settings: this.settings,
+          runner: this.runner,
+          systemd: () => this.systemd === true,
+          children: this.children,
+          log: this.deps.log,
+        });
+        this.nativePackages.set(key, pkg);
+      }
+      return pkg;
+    }
     const runtime = this.deps.runtimes(installed.runtime);
     if (runtime === null) return null;
     return new ContainerPackage({

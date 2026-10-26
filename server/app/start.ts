@@ -166,6 +166,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       log: options.log,
       macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: options.log }) : undefined,
       localEngineOffer: async () => (await machineChecks.read()).localEngine,
+      nativeRunner: runner,
     });
     const sample = new SampleJob({
       dataset: SAMPLE_DATASET,

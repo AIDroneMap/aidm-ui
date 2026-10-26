@@ -84,6 +84,7 @@ export const MESSAGE_CODES = [
   "install.no_runtime",
   "install.not_enough_space",
   "install.pull_failed",
+  "install.unpack_failed",
   "install.start_failed",
   "install.already_running",
   "install.already_installed",

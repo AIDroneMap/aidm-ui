@@ -38,6 +38,9 @@ a Fedora container). The recordings are from 26 October 2026.
 | `docker/inspect-missing.*` | `docker inspect --format json NAME` after removal | stdout `[]`, exit 1, stderr `error: no such object: ...` (lower case, unlike the Docker CLI source). |
 | `docker/logs.*` | `docker logs --tail 50 NAME` after one request | Container output is on stderr (busybox `httpd -v`), so it is in the `.json`. Client address changed to `192.0.2.1`. |
 | `docker/logs-missing.*`, `docker/stop.txt`, `docker/stop-missing.*`, `docker/rm.txt`, `docker/rm-missing.txt`, `docker/rmi.txt`, `docker/rmi-missing.*` | `logs`, `stop -t 5`, `rm -f`, `rmi` on the container and image above, and again once gone | Name changed to `aidm-engine`. `rm -f` of a missing container prints nothing and exits 0. |
+| `systemd/show-environment.txt` | `systemctl --user show-environment` on a Linux machine whose user manager runs (exit 0) | User name and home folder changed to `operator`, the user id to 1000. The entries that name this machine (`GPG_AGENT_INFO`, `SSH_AUTH_SOCK`, snap paths in `PATH` and `XDG_DATA_DIRS`) were dropped. |
+| `systemd/run-scope.txt` | `systemd-run --user --scope --quiet -p MemoryMax=1G -- true` on a Linux machine whose user manager runs | Nothing (no output, exit 0). |
+| `systemd/run-scope-no-bus.*` | the same with `XDG_RUNTIME_DIR` set to a folder that does not exist and `DBUS_SESSION_BUS_ADDRESS` empty, so that the user manager cannot be reached | stderr only, exit 1. Nothing was changed. |
 
 The adapter now asks for a container with `docker inspect --type container NAME`
 and `podman container inspect NAME`, which print the same JSON as the commands

@@ -33,6 +33,7 @@ import { FakePrivilegedRunner, FakeSystemFiles } from "../../test-support/fake-p
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
+import { runnerWithSystemd } from "../../test-support/native-archive.ts";
 
 const GiB = 1024 ** 3;
 
@@ -105,6 +106,10 @@ export function openHarness(
     localMachine?: LocalEngineDeps["machine"];
     /** The port the local engine is published on; a test passes one that repeats to reuse a port. */
     freePort?: LocalEngineDeps["freePort"];
+    /** What runs tar and systemctl for a native package; default: the real tar, and no systemd. */
+    runner?: LocalEngineDeps["runner"];
+    /** How a native package is started and downloaded; a test records the start or points the download at a fake file server. */
+    native?: LocalEngineDeps["native"];
     /** How long a new engine version may stay silent before an update is undone. */
     updateReadyTimeoutMs?: LocalEngineDeps["updateReadyTimeoutMs"];
     /** Passed to the log of the local engine, to make it rotate or retry sooner. */
@@ -212,6 +217,8 @@ export function openHarness(
     freePort: options.freePort,
     logOptions: options.localLog,
     updateReadyTimeoutMs: options.updateReadyTimeoutMs,
+    nativeRunner: options.runner ?? runnerWithSystemd(false),
+    native: { stopGraceMs: 2000, logPollMs: 25, wrapWatchMs: 200, ...options.native },
   });
 
   const sample = new SampleJob({
@@ -316,11 +323,25 @@ export function openHarness(
       await localEngine.close();
       await engines.stop();
       // The containers of the fake runtimes hold fake engines that listen on real ports.
-      if (!stopOptions.leaveEngines) for (const runtime of Object.values(runtimes)) await runtime.remove(CONTAINER_NAME);
+      if (!stopOptions.leaveEngines) {
+        for (const runtime of Object.values(runtimes)) await runtime.remove(CONTAINER_NAME);
+        endNativeEngine(settings);
+      }
       db.close();
       if (ownFolder !== undefined) rmSync(ownFolder, { recursive: true, force: true });
     },
   };
+}
+
+/** Ends the program of a native package, the way removing a container ends a fake one. */
+function endNativeEngine(settings: Settings): void {
+  const record = settings.get("local.native");
+  if (record === null) return;
+  try {
+    process.kill(-record.pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
 }
 
 /** An IPv4 address of this computer that is not loopback, or undefined when it has none. */

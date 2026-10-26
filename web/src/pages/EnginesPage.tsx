@@ -109,6 +109,8 @@ export interface EngineListProps {
   log?: { open: boolean; lines: string[]; onToggle: () => void };
   /** The switch of the local engine, when the page has it. */
   localSwitch?: ReactNode;
+  /** How the local engine is installed, when the page has it. */
+  localKind?: "container" | "native" | null;
 }
 
 const LOG_ID = "engine-log";
@@ -139,6 +141,7 @@ export function EngineList(props: EngineListProps) {
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
           {engine.problem && <EngineNote error={engine.problem} kind="problem" />}
           {engine.warning && <EngineNote error={engine.warning} kind="warning" />}
+          {engine.kind === "local" && props.localKind === "native" && <p>{t("local.package.native")}</p>}
           {engine.kind === "local" ? (
             <>
               {/* The local engine is turned on and off by its own switch, not by enabling it like a remote one. */}
@@ -485,6 +488,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
           onConfirmRemove={(engine) => void remove(engine)}
           onKeep={() => setAskingToRemove(null)}
           log={{ open: logOpen, lines: logLines, onToggle: () => setLogOpen((open) => !open) }}
+          localKind={local.view?.installed?.kind ?? null}
           localSwitch={
             local.view?.installed ? (
               <LocalSwitch view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} />

@@ -280,6 +280,7 @@ function Offer({ packages }: { packages: PackagesView }) {
       <ul>
         <li>{t("wizard.install.variant", { variant: t(`variant.${offer.variant}`) })}</li>
         <li>{t("wizard.install.size", { size: formatBytes(offer.size) })}</li>
+        {offer.kind === "native" && <li>{t("local.package.native")}</li>}
         <li>
           {offer.source === "builtin"
             ? t("wizard.install.source.builtin")

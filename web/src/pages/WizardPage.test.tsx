@@ -380,6 +380,13 @@ test("a downloaded package names the release it came from", () => {
   expect(untranslatedText(html, ["2.6.0", "651 MiB", "v2.6.0"])).toEqual([]);
 });
 
+test("a native package says it is installed as a program, and a container does not", () => {
+  const native = renderInstall({ ...builtIn, offer: { ...builtIn.offer!, packageVersion: "2.6.0", kind: "native" } });
+  expect(native).toContain("Installed as a program on this computer");
+  expect(renderInstall(builtIn)).not.toContain("Installed as a program on this computer");
+  expect(untranslatedText(native, ["2.6.0", "651 MiB"])).toEqual([]);
+});
+
 test("an interface that is too old shows both versions and no offer", () => {
   const html = renderInstall({
     ...builtIn,

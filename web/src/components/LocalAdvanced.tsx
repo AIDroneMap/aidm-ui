@@ -151,7 +151,8 @@ export function AdvancedForm(props: AdvancedFormProps) {
         <p role="status">{props.forceCpuSaved ? t("local.advanced.force_cpu_saved") : ""}</p>
       </div>
 
-      {choices.length > 1 && (
+      {/* A program on this computer runs without a container tool, so there is nothing to choose. */}
+      {choices.length > 1 && view.installed?.kind !== "native" && (
         <fieldset aria-describedby="local-runtime-hint">
           <legend>{t("local.runtime.legend")}</legend>
           {([null, ...choices] as (RuntimeId | null)[]).map((choice) => {

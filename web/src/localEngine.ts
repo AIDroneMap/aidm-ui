@@ -164,7 +164,8 @@ export function updateProblem(view: LocalEngineView): ApiError | null {
   const problem = view.problem;
   if (problem === null) return null;
   if (problem.code.startsWith("update.")) return problem;
-  const download = problem.code.startsWith("install.") || problem.code.startsWith("runtime.");
+  const download =
+    problem.code.startsWith("install.") || problem.code.startsWith("runtime.") || problem.code.startsWith("download.");
   return download && view.state !== "failed" ? problem : null;
 }
 

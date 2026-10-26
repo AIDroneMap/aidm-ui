@@ -287,6 +287,14 @@ test("the local engine is called This computer and has no Edit and no Remove", (
   expect(buttonsHaveNames(html)).toBe(true);
 });
 
+test("the local engine says it is a program on this computer when its package is native", () => {
+  expect(renderList([local], { localKind: "native" })).toContain("<p>Installed as a program on this computer</p>");
+  expect(renderList([local], { localKind: "container" })).not.toContain("Installed as a program");
+  expect(renderList([local])).not.toContain("Installed as a program");
+  // A remote engine never says it.
+  expect(renderList([engine], { localKind: "native" })).not.toContain("Installed as a program");
+});
+
 test("the local engine has a toggle for its log, closed at first", () => {
   const closed = renderList([local], { log: { open: false, lines: [], onToggle: () => {} } });
   expect(closed).toContain(">Show the engine log</button>");
