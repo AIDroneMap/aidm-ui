@@ -40,6 +40,8 @@ export interface RunPatch {
   progress?: number | null;
   engineMessage?: string | null;
   problem?: ApiError | null;
+  /** Set when the engine started the task over. */
+  restarted?: boolean;
 }
 
 function parseJson<T>(text: string | null, fallback: T): T {
@@ -116,10 +118,11 @@ export class RunStore {
       progress: patch.progress === undefined ? current.progress : patch.progress,
       engineMessage: patch.engineMessage === undefined ? current.engineMessage : patch.engineMessage,
       problem: patch.problem === undefined ? current.problem : patch.problem,
+      restarted: patch.restarted ?? current.restarted,
     };
     this.db
       .query(
-        `UPDATE runs SET task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, updated_at = ?
+        `UPDATE runs SET task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, restarted = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -128,6 +131,7 @@ export class RunStore {
         next.progress,
         next.engineMessage,
         next.problem === null ? null : JSON.stringify(next.problem),
+        next.restarted ? 1 : 0,
         new Date().toISOString(),
         id,
       );

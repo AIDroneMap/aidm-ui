@@ -1,5 +1,12 @@
 import { errorResponse } from "../../shared/api-error.ts";
-import { RUNTIME_IDS, type CapsRequest, type ForceCpuRequest, type RuntimeChoiceRequest, type RuntimeId } from "../../shared/api-types.ts";
+import {
+  RUNTIME_IDS,
+  type CapsRequest,
+  type ForceCpuRequest,
+  type LocalEngineEnabledRequest,
+  type RuntimeChoiceRequest,
+  type RuntimeId,
+} from "../../shared/api-types.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
 import { LOG_MEMORY_LINES } from "./engine-log.ts";
 
@@ -79,6 +86,27 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
     "/api/local-engine/install/cancel": {
       POST: () => {
         localEngine.stopWaitingForApproval();
+        return Response.json(localEngine.view());
+      },
+    },
+
+    "/api/local-engine/start": {
+      // Also the way back after the manager gave up on a crashed engine.
+      POST: async () => {
+        const started = await localEngine.start();
+        if (!started.ok) return errorResponse(409, started.error.code, started.error.data);
+        return Response.json(localEngine.view());
+      },
+    },
+
+    "/api/local-engine/enabled": {
+      PUT: async (req) => {
+        const parsed = await readJson(req);
+        if (!parsed.ok) return parsed.response;
+        const { enabled } = parsed.body as Partial<Record<keyof LocalEngineEnabledRequest, unknown>>;
+        if (typeof enabled !== "boolean") return errorResponse(400, "api.invalid_body");
+        const changed = await localEngine.setEnabled(enabled);
+        if (!changed.ok) return errorResponse(409, changed.error.code, changed.error.data);
         return Response.json(localEngine.view());
       },
     },

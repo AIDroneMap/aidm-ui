@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
@@ -60,6 +60,8 @@ export class RunTracker {
   private readonly live = new Map<number, Live>();
   /** Lines saved per run, counted once from the file. It is also the next line to ask the engine for. */
   private readonly lineCounts = new Map<number, number>();
+  /** Where in our log the output of the engine's latest restart begins, per run. Kept in a file next to the log. */
+  private readonly restartLines = new Map<number, number | null>();
   private readonly listeners = new Map<number, Set<(event: RunEvent) => void>>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private started = false;
@@ -123,7 +125,7 @@ export class RunTracker {
   log(runId: number, from: number): RunLogView {
     const start = Math.max(0, Math.min(from, this.lineCount(runId)));
     const lines = this.readLines(runId, start, LOG_PAGE_LINES);
-    return { lines, next: start + lines.length };
+    return { lines, next: start + lines.length, restartedAtLine: this.restartLine(runId) };
   }
 
   /** The newest saved lines, and the line number of the first one. What a listener gets when it joins. */
@@ -220,6 +222,35 @@ export class RunTracker {
 
   private logPath(runId: number): string {
     return join(this.dataFolder, "runs", String(runId), "log.txt");
+  }
+
+  private restartPath(runId: number): string {
+    return join(this.dataFolder, "runs", String(runId), "restarted-at-line.txt");
+  }
+
+  /** The line of our log where the engine's latest output begins after a restart, or null. */
+  private restartLine(runId: number): number | null {
+    let line = this.restartLines.get(runId);
+    if (line === undefined) {
+      const path = this.restartPath(runId);
+      const value = existsSync(path) ? Number(readFileSync(path, "utf8").trim()) : Number.NaN;
+      line = Number.isInteger(value) && value >= 0 ? value : null;
+      this.restartLines.set(runId, line);
+    }
+    return line;
+  }
+
+  /** The engine started the task over, so its output begins again from its line 0, at the end of what we hold. */
+  private markRestart(runId: number): void {
+    const line = this.lineCount(runId);
+    mkdirSync(join(this.dataFolder, "runs", String(runId)), { recursive: true });
+    writeFileSync(this.restartPath(runId), String(line));
+    this.restartLines.set(runId, line);
+  }
+
+  /** The next line to ask the engine for: it counts its own lines, from its latest start. */
+  private engineLine(runId: number): number {
+    return this.lineCount(runId) - (this.restartLine(runId) ?? 0);
   }
 
   /** How many lines the run has saved. The file is read for this only the first time. */
@@ -321,8 +352,12 @@ export class RunTracker {
       if (this.current(runId, following) !== null) this.pollFailed(runId, following, info.failure);
       return;
     }
+    const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
+    // A task that was processing and is queued again was started over by the engine, and its log starts again too.
+    const restarted = run.state === "processing" && state === "queued";
+    if (restarted) this.markRestart(runId);
     // The output comes before the state, so a finished run's last lines are saved before the run shows as finished.
-    const output = await client.taskOutput(run.taskUuid, this.lineCount(runId));
+    const output = await client.taskOutput(run.taskUuid, this.engineLine(runId));
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
@@ -338,7 +373,6 @@ export class RunTracker {
       this.emit(runId, { type: "log", lines: output.value, from });
     }
 
-    const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
     if (state === "unknown") {
       const raw = JSON.stringify(info.value.statusCode) ?? String(info.value.statusCode);
       if (!following.unknownCodes.has(raw)) {
@@ -348,8 +382,8 @@ export class RunTracker {
     }
     const progress = info.value.progress;
     const message = info.value.errorMessage;
-    if (before.state !== state || before.progress !== progress || before.engineMessage !== message) {
-      this.update(runId, { state, progress, engineMessage: message });
+    if (restarted || before.state !== state || before.progress !== progress || before.engineMessage !== message) {
+      this.update(runId, { state, progress, engineMessage: message, ...(restarted ? { restarted: true } : {}) });
     }
   }
 

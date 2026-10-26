@@ -661,7 +661,8 @@ test("a start without an install is refused", async () => {
 });
 
 test("an engine whose container dies becomes unreachable", async () => {
-  const h = start();
+  // The manager would start it again at once; this wait never ends, so the state can be looked at.
+  const h = start({ sleep: () => new Promise<void>(() => {}) });
   await installAndWaitReady(h);
   await podman(h).kill(CONTAINER_NAME);
   await eventually(async () => (await localView(h)).state === "unreachable");

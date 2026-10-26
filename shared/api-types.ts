@@ -209,6 +209,12 @@ export interface RunLogView {
   lines: string[];
   /** The line number to ask for next. */
   next: number;
+  /**
+   * The line number in this log where the output of the engine's latest
+   * restart begins, or null when the run never restarted. The page draws its
+   * own separator there; the server writes no text of its own into the log.
+   */
+  restartedAtLine: number | null;
 }
 
 // Machine check and wizard (ticket #7).
@@ -361,6 +367,8 @@ export interface LocalEngineView {
   installed: { packageVersion: string; variant: VariantId; kind: "container" | "native"; runtime: RuntimeId | null } | null;
   /** The engine's row in the engines list, once there is one. */
   engineId: number | null;
+  /** The switch "Run the engine on this computer". Off means the engine is stopped and stays so. */
+  enabled: boolean;
   state: EngineState;
   install: InstallProgressView | null;
   /**
@@ -381,6 +389,19 @@ export interface LocalEngineView {
   /** True when the operator chose to use the processor only. */
   forceCpu: boolean;
   problem: ApiError | null;
+  /**
+   * While the manager brings back an engine that crashed: the try it is on (from 1),
+   * the most tries in a row, and when the next one starts (ISO 8601, null while one is running).
+   * Null when no restart is going on.
+   */
+  restarts: { attempts: number; max: number; nextAt: string | null } | null;
+}
+
+// Lifecycle (ticket #10).
+
+/** PUT /api/local-engine/enabled */
+export interface LocalEngineEnabledRequest {
+  enabled: boolean;
 }
 
 /** PUT /api/local-engine/caps */

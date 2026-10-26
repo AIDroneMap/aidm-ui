@@ -95,3 +95,12 @@ test("removing the engine keeps its runs and forgets the engine", () => {
   new EngineStore(db).remove(engineId);
   expect(store.get(run.id)?.engineId).toBeNull();
 });
+
+test("a run is marked restarted once, and later updates keep the mark", () => {
+  const run = newRun();
+  store.update(run.id, { taskUuid: "abc", state: "processing" });
+  expect(store.get(run.id)?.restarted).toBe(false);
+  store.update(run.id, { state: "queued", restarted: true });
+  store.update(run.id, { progress: 3 });
+  expect(store.get(run.id)).toMatchObject({ state: "queued", restarted: true, progress: 3 });
+});

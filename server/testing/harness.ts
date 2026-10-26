@@ -66,7 +66,11 @@ export interface Harness {
   /** Every line the server wrote to its log. */
   logs: string[];
   rebinds: string[];
-  stop(): Promise<void>;
+  /**
+   * Stops the server. The containers of the fake runtimes are removed unless
+   * `leaveEngines` is set, which is what a stopped aidm-ui does: the engine goes on.
+   */
+  stop(options?: { leaveEngines?: boolean }): Promise<void>;
 }
 
 /**
@@ -105,6 +109,8 @@ export function openHarness(
     localLog?: LocalEngineDeps["logOptions"];
     /** How long a freshly started local engine may stay silent and still be starting. */
     startingGraceMs?: number;
+    /** Waits between pull attempts and before each restart of a crashed local engine; default: no wait. */
+    sleep?: LocalEngineDeps["sleep"];
     /**
      * Where the manifest comes from. Without a fetch of its own the service
      * has no network at all, so a test can only reach a fake release server on purpose.
@@ -196,7 +202,7 @@ export function openHarness(
     log,
     macSetup: options.macSetup === undefined ? undefined : new MacSetup({ ...options.macSetup, dataFolder, log }),
     localEngineOffer: async () => (await machineChecks.read()).localEngine,
-    sleep: async () => {},
+    sleep: options.sleep ?? (async () => {}),
     freePort: options.freePort,
     logOptions: options.localLog,
   });
@@ -267,8 +273,11 @@ export function openHarness(
   });
   engines.start();
   tracker.start();
+  // As the real server does: an engine that still runs is followed again, one that is gone is started.
+  void localEngine.resume();
   updateChecks.start();
 
+  let stopped = false;
   return {
     base: `http://${LOOPBACK}:${listener.port}`,
     port: listener.port,
@@ -290,7 +299,9 @@ export function openHarness(
     clock,
     logs,
     rebinds,
-    async stop() {
+    async stop(stopOptions = {}) {
+      if (stopped) return;
+      stopped = true;
       await listener?.stop();
       await updateChecks.stop();
       await sample.stop();
@@ -298,7 +309,7 @@ export function openHarness(
       await localEngine.close();
       await engines.stop();
       // The containers of the fake runtimes hold fake engines that listen on real ports.
-      for (const runtime of Object.values(runtimes)) await runtime.remove(CONTAINER_NAME);
+      if (!stopOptions.leaveEngines) for (const runtime of Object.values(runtimes)) await runtime.remove(CONTAINER_NAME);
       db.close();
       if (ownFolder !== undefined) rmSync(ownFolder, { recursive: true, force: true });
     },

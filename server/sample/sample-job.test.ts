@@ -283,8 +283,13 @@ test("the console lines arrive on the events stream and through the log route", 
   expect(await getJson<RunLogView>(`/api/runs/${run.id}/log`)).toEqual({
     lines: ["Reading images", "Matching", "Meshing"],
     next: 3,
+    restartedAtLine: null,
   });
-  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2`)).toEqual({ lines: ["Meshing"], next: 3 });
+  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2`)).toEqual({
+    lines: ["Meshing"],
+    next: 3,
+    restartedAtLine: null,
+  });
   expect(readFileSync(join(harness.dataFolder, "runs", String(run.id), "log.txt"), "utf8")).toBe(
     "Reading images\nMatching\nMeshing\n",
   );
@@ -826,9 +831,9 @@ test("the log route gives at most 1000 lines from where it is asked, and the eve
   expect(second.lines).toEqual(lines.slice(1000, 2000));
   expect(second.next).toBe(2000);
   const third = await getJson<RunLogView>(`/api/runs/${run.id}/log?from=${second.next}`);
-  expect(third).toEqual({ lines: lines.slice(2000), next: 2300 });
-  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2300`)).toEqual({ lines: [], next: 2300 });
-  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=99999`)).toEqual({ lines: [], next: 2300 });
+  expect(third).toEqual({ lines: lines.slice(2000), next: 2300, restartedAtLine: null });
+  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2300`)).toEqual({ lines: [], next: 2300, restartedAtLine: null });
+  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=99999`)).toEqual({ lines: [], next: 2300, restartedAtLine: null });
 
   const events = eventReader(await send("GET", `/api/runs/${run.id}/events`));
   try {

@@ -91,6 +91,7 @@ export const MESSAGE_CODES = [
   "local.engine_config_write_failed",
   "local.memory_cap_not_enforced",
   "local.cpu_cap_not_enforced",
+  "local.restart_gave_up",
   "caps.memory_invalid",
   "caps.cpus_invalid",
   "runtime.not_available",

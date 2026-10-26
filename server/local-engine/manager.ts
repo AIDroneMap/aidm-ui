@@ -5,6 +5,7 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type {
   CapsRequest,
   EngineState,
+  EngineView,
   InstallProgressView,
   InstallStepView,
   LocalEngineView,
@@ -36,6 +37,10 @@ const PORT_TRIES = 3;
 const GPU_PRECHECK_MAX_AGE_MS = 60_000;
 /** A start does not ask the runtimes again if they answered this recently. */
 const DETECTION_MAX_AGE_MS = 10_000;
+/** Seconds to wait before each try to bring back a crashed engine: 2, 4, 8, 16, 32. */
+export const RESTART_BACKOFF_SECONDS = [2, 4, 8, 16, 32] as const;
+/** The most tries in a row. The next one waits for the operator. */
+export const RESTART_MAX_ATTEMPTS = RESTART_BACKOFF_SECONDS.length;
 
 /** What an install pulls, and what it records once the pull works. */
 interface InstallPlan {
@@ -77,8 +82,10 @@ export interface LocalEngineDeps {
   /** The token for a new install. 32 random bytes in hex by default. */
   random?: () => string;
   freePort?: () => Promise<number>;
-  /** Waits between pull attempts; a test passes one that does not wait. */
+  /** Waits between pull attempts and before each restart; a test passes one that does not wait. */
   sleep?: (ms: number) => Promise<void>;
+  /** The clock for the time of the next restart. */
+  now?: () => number;
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
 }
 
@@ -139,13 +146,24 @@ export class LocalEngineManager {
   private precheck: { at: number; runtime: RuntimeId | null; value: Promise<GpuPrecheck> } | undefined;
   /** Set when the graphics card package failed its test run and could not be deleted. Cleared by the next install. */
   private packageLeft: ApiError | null = null;
+  /** The try to bring back a crashed engine that is waiting or running, from 1; 0 when there is none. */
+  private restartAttempts = 0;
+  private restartNextAt: number | null = null;
+  /** True after the last try. Nothing restarts the engine again until the operator acts. */
+  private gaveUp = false;
+  private restartTask: Promise<void> | undefined;
+  /** Counts the times the operator started or stopped the engine, so a restart that waited knows it is out of date. */
+  private epoch = 0;
 
   constructor(private readonly deps: LocalEngineDeps) {
     this.settings = deps.settings;
     this.store = deps.engineStore;
     this.monitor = deps.monitor;
     this.engineLog = new EngineLog({ dataFolder: deps.dataFolder, token: () => this.token, log: deps.log, ...deps.logOptions });
-    this.unsubscribeMonitor = this.monitor.subscribe(() => this.publish());
+    this.unsubscribeMonitor = this.monitor.subscribe((views) => {
+      this.publish();
+      this.watch(views);
+    });
   }
 
   /** The log of the engine, for the logs route. */
@@ -200,6 +218,7 @@ export class LocalEngineManager {
               runtime: installedPackage.runtime,
             },
       engineId: engine?.id ?? null,
+      enabled: this.settings.get("local.enabled"),
       state,
       install: this.progress,
       plan: this.plan,
@@ -214,6 +233,14 @@ export class LocalEngineManager {
       warnings,
       forceCpu: this.settings.get("local.forceCpu"),
       problem,
+      restarts:
+        this.restartAttempts > 0 && !this.gaveUp && (this.restartTask !== undefined || state === "starting")
+          ? {
+              attempts: this.restartAttempts,
+              max: RESTART_MAX_ATTEMPTS,
+              nextAt: this.restartNextAt === null ? null : new Date(this.restartNextAt).toISOString(),
+            }
+          : null,
     };
   }
 
@@ -457,10 +484,18 @@ export class LocalEngineManager {
     if (this.installing && this.progress?.step === "approve") this.stopWaiting?.abort();
   }
 
-  /** Starts the installed engine, or starts it again after a stop. */
+  /** The switch on the engines page. Turning it on while it is on changes nothing, unless the manager gave up. */
+  async setEnabled(enabled: boolean): Promise<PackageResult<void>> {
+    if (this.settings.get("local.package") === null) return fail("local.not_installed");
+    if (this.settings.get("local.enabled") === enabled && !(enabled && this.gaveUp)) return ok(undefined);
+    return enabled ? this.start() : this.stop();
+  }
+
+  /** Starts the installed engine, or starts it again after a stop. Also what the operator does after the manager gave up. */
   async start(): Promise<PackageResult<void>> {
     if (this.busy) return fail("install.already_running");
     this.busy = true;
+    this.operatorActed();
     // A start on its own is not an install, so there is no install progress to show.
     this.progress = null;
     try {
@@ -475,6 +510,7 @@ export class LocalEngineManager {
   async stop(): Promise<PackageResult<void>> {
     if (this.busy) return fail("install.already_running");
     this.busy = true;
+    this.operatorActed();
     try {
       const installed = this.settings.get("local.package");
       const engine = this.store.local();
@@ -486,7 +522,9 @@ export class LocalEngineManager {
       // The log ends by itself when the container does; this only makes sure.
       await this.engineLog.stop();
       this.token = null;
+      this.failure = null;
       this.store.update(engine.id, { enabled: false });
+      this.settings.set("local.enabled", false);
       this.settings.set("local.applied", null);
       this.monitor.setLocalState(engine.id, "stopped");
       this.publish();
@@ -496,7 +534,12 @@ export class LocalEngineManager {
     }
   }
 
-  /** After aidm-ui starts again: follows the log of an engine that is still running. */
+  /**
+   * After aidm-ui starts: looks for the container by its fixed name. One that
+   * still runs keeps its address and token and gets its log followed again. One
+   * that is stopped or gone is started again, unless the operator switched the
+   * engine off. Nothing here runs at boot: it runs only because aidm-ui started.
+   */
   async resume(): Promise<void> {
     try {
       await this.recheckGpuNote();
@@ -505,16 +548,27 @@ export class LocalEngineManager {
     }
     const installed = this.settings.get("local.package");
     const engine = this.store.local();
-    if (installed === null || engine === null || !engine.enabled || engine.address === "") return;
+    if (installed === null || engine === null || !this.settings.get("local.enabled")) return;
     try {
       const pkg = this.packageFor(installed);
       if (pkg === null) return;
       const status = await pkg.status();
-      if (this.closed || !status.ok || status.value.state !== "running") return;
-      this.token = engine.token;
-      this.engineLog.follow(pkg, { fresh: false });
+      if (this.closed) return;
+      if (status.ok && status.value.state === "running" && engine.enabled && engine.address !== "") {
+        this.token = engine.token;
+        this.engineLog.follow(pkg, { fresh: false });
+        return;
+      }
+      if (this.busy) return;
+      this.busy = true;
+      try {
+        this.progress = null;
+        await this.startEngine();
+      } finally {
+        this.busy = false;
+      }
     } catch (error) {
-      this.deps.log(`Following the engine log again failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.deps.log(`Bringing the engine back after the start failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -525,6 +579,7 @@ export class LocalEngineManager {
     this.unsubscribeMonitor();
     this.listeners.clear();
     await this.background.catch(() => {});
+    await this.restartTask?.catch(() => {});
     await this.engineLog.stop();
   }
 
@@ -787,6 +842,7 @@ export class LocalEngineManager {
     if (installed === null || engine === null) return fail("local.not_installed");
 
     this.failure = null;
+    this.settings.set("local.enabled", true);
     if (this.progress !== null) this.progress = { ...this.progress, phase: "starting" };
     // No address until the new container is up, so nothing polls the old one.
     this.store.update(engine.id, { address: "", enabled: true });
@@ -856,6 +912,124 @@ export class LocalEngineManager {
     this.publish();
     await this.monitor.pollNow(engine.id);
     return ok(undefined);
+  }
+
+  /** The operator started or stopped the engine: whatever the manager was doing about a crash is out of date. */
+  private operatorActed(): void {
+    this.epoch++;
+    this.restartAttempts = 0;
+    this.restartNextAt = null;
+    this.gaveUp = false;
+  }
+
+  /** Looks at every change the monitor reports: a restart that worked ends the count, a crash starts the restarts. */
+  private watch(views: EngineView[]): void {
+    if (this.closed) return;
+    try {
+      const engine = this.store.local();
+      const state = views.find((candidate) => candidate.id === engine?.id)?.state;
+      if (engine === null || state === undefined) return;
+      if ((state === "ready" || state === "busy") && this.restartAttempts > 0) {
+        this.restartAttempts = 0;
+        this.restartNextAt = null;
+        this.publish();
+        return;
+      }
+      if (
+        state === "unreachable" &&
+        this.restartTask === undefined &&
+        !this.busy &&
+        !this.installing &&
+        !this.gaveUp &&
+        engine.enabled &&
+        engine.address !== "" &&
+        this.settings.get("local.enabled") &&
+        this.settings.get("local.package") !== null
+      ) {
+        this.restartTask = this.restartLoop().finally(() => {
+          this.restartTask = undefined;
+          this.publish();
+        });
+      }
+    } catch (error) {
+      this.deps.log(`Watching the local engine failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Brings back a local engine that does not answer, when its container is
+   * stopped or gone: after 2, 4, 8, 16 and 32 seconds, at most five tries in a
+   * row. A container that runs but does not answer is left alone, the engine
+   * shows as not answering. The runtime's own restart policy is never used.
+   */
+  private async restartLoop(): Promise<void> {
+    const epoch = this.epoch;
+    const wanted = () => !this.closed && this.epoch === epoch && this.settings.get("local.enabled");
+    try {
+      while (wanted()) {
+        const installed = this.settings.get("local.package");
+        const engine = this.store.local();
+        const pkg = installed === null ? null : this.packageFor(installed);
+        if (engine === null || pkg === null) return;
+        const status = await pkg.status();
+        if (!wanted()) return;
+        if (!status.ok) {
+          this.deps.log(`Looking at the engine container failed (${status.error.code}).`);
+          return;
+        }
+        if (status.value.state === "running") return;
+
+        if (this.restartAttempts >= RESTART_MAX_ATTEMPTS) {
+          await this.giveUp(engine.id);
+          return;
+        }
+        const delayMs = (RESTART_BACKOFF_SECONDS[this.restartAttempts] ?? 32) * 1000;
+        this.restartAttempts++;
+        this.restartNextAt = (this.deps.now ?? Date.now)() + delayMs;
+        this.deps.log(`The engine container is ${status.value.state}. Starting it again, try ${this.restartAttempts} of ${RESTART_MAX_ATTEMPTS}.`);
+        this.publish();
+        await this.pause(delayMs);
+        if (!wanted()) return;
+        this.restartNextAt = null;
+        // The operator may be starting or stopping the engine right now.
+        if (this.busy) return;
+        this.busy = true;
+        let started: PackageResult<void>;
+        try {
+          this.progress = null;
+          started = await this.startEngine();
+        } finally {
+          this.busy = false;
+        }
+        this.publish();
+        // A start that worked is judged by the engine: ready ends the count, silence starts the next try.
+        if (started.ok) return;
+      }
+    } catch (error) {
+      this.deps.log(`Restarting the engine failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async giveUp(engineId: number): Promise<void> {
+    this.gaveUp = true;
+    this.restartNextAt = null;
+    const error: ApiError = { code: "local.restart_gave_up", data: { attempts: this.restartAttempts } };
+    this.deps.log(`The engine did not come back after ${this.restartAttempts} tries. It stays stopped until the operator starts it.`);
+    this.failure = error;
+    // No address, so nothing polls a container that is gone and turns the failure into "not answering".
+    this.store.update(engineId, { address: "" });
+    this.settings.set("local.applied", null);
+    this.token = null;
+    this.monitor.setLocalState(engineId, "failed", error);
+    await this.engineLog.stop();
+    this.publish();
+  }
+
+  /** Waits, but not past close(). */
+  private pause(ms: number): Promise<void> {
+    if (this.abort.signal.aborted) return Promise.resolve();
+    const closing = new Promise<void>((resolve) => this.abort.signal.addEventListener("abort", () => resolve(), { once: true }));
+    return Promise.race([(this.deps.sleep ?? ((wait) => Bun.sleep(wait)))(ms), closing]);
   }
 
   /** Stops and removes a container that must not keep running. Whatever fails here is logged, since the start has failed already. */
