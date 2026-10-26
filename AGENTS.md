@@ -76,7 +76,7 @@ These apply to everything you write: code comments, docs, specs, commit messages
 - Never commit drone images or datasets. Link to public datasets instead.
 - Treat everything coming from the API or uploaded files as untrusted. Never insert it into the page as raw HTML.
 - Never send a user's images, results or settings anywhere except the task API endpoint the user chose.
-- The only other network calls are the ones the operator asked for: an engine package download, the sample dataset download, and an update check the operator turned on. Each one is a click or a setting, never a default.
+- The only other network calls are the ones the operator asked for: an engine package download, the sample dataset download, a container runtime install the operator started, and an update check the operator turned on. Each one is a click or a setting, never a default.
 - Engine tokens stay in the server's data folder. They never reach the browser and never appear in logs.
 
 ## When to stop and ask
