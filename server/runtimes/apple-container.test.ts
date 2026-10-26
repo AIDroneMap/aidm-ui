@@ -478,3 +478,10 @@ describe("stop, remove and removeImage", () => {
 test("the version the tool prints on its own is the recorded line", () => {
   expect(recordedText("apple-container", "cli-version")).toMatch(/^container CLI version 1\.6\.1 \(build: release, commit: [0-9a-f]{7}\)\n$/);
 });
+
+test("a one-off run is refused without running anything, since no Mac package needs one", async () => {
+  const { runtime, runner } = make([]);
+  const result = await runtime.runOnce({ name: "aidm-gpu-check", image: IMAGE, platform: null, gpu: true, args: ["nvidia-smi"] }, 1000);
+  expect(result).toEqual({ ok: false, error: { code: "runtime.command_failed", data: { operation: "run_once", exitCode: null } } });
+  expect(runner.calls).toEqual([]);
+});

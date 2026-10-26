@@ -237,6 +237,13 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       return fail("runtime.start_failed", { exitCode: result.exitCode });
     },
 
+    // The one-off container is the test run inside the graphics card package,
+    // and only the Linux NVIDIA package has one. Apple's tool gives its VMs no
+    // graphics card, so no Mac package asks for it, and no flags are guessed.
+    async runOnce() {
+      return fail("runtime.command_failed", { operation: "run_once", exitCode: null });
+    },
+
     async stop(name, timeoutSeconds) {
       // The tool waits 5 seconds by default. A caller that names a time gets it.
       const argv = [APPLE_TOOL, "stop", ...(timeoutSeconds === undefined ? [] : ["-t", String(timeoutSeconds)]), name];
