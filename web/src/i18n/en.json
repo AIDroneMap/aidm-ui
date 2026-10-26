@@ -261,7 +261,7 @@
   "runtime.not_installed": "No container tool is installed on this computer.",
   "runtime.docker_daemon_unreachable": "Docker is installed but not running. Start Docker, then check again.",
   "runtime.docker_permission_denied": "Docker is installed, but your user account may not use it. Ask the administrator to give you access, then check again.",
-  "runtime.apple_not_started": "Apple's container tool is installed but not started. Start it, then check again.",
+  "runtime.apple_not_started": "Apple's container tool is installed, but its service is not running.",
   "runtime.unusable": "The container tool on this computer does not work.",
   "wizard.install.loading": "Looking for an engine package for this computer...",
   "wizard.install.offer": "AIDM engine {packageVersion} for this computer",
