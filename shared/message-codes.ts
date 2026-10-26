@@ -80,6 +80,18 @@ export const MESSAGE_CODES = [
   "runtime.port_in_use",
   "runtime.start_failed",
   "runtime.command_failed",
+  "install.not_offered",
+  "install.no_runtime",
+  "install.not_enough_space",
+  "install.pull_failed",
+  "install.start_failed",
+  "install.already_running",
+  "local.not_installed",
+  "local.memory_cap_not_enforced",
+  "caps.memory_invalid",
+  "caps.cpus_invalid",
+  "runtime.not_available",
+  "engine.local_not_editable",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];
