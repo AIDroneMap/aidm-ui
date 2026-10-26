@@ -347,3 +347,15 @@ export interface CapsRequest {
 export interface RuntimeChoiceRequest {
   runtime: RuntimeId | null;
 }
+
+// Setting up a container tool (ticket #12).
+
+/** Where the setup of Podman stands. The first three are the steps, in order. */
+export const SETUP_PHASES = ["approval", "installing", "checking", "done", "failed"] as const;
+export type SetupPhase = (typeof SETUP_PHASES)[number];
+
+export interface RuntimeSetupView {
+  phase: SetupPhase;
+  /** Why it failed, when it did. */
+  problem: ApiError | null;
+}

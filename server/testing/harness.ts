@@ -14,6 +14,10 @@ import type { RuntimeId } from "../runtimes/runtime.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { ManifestService, type ManifestServiceDeps } from "../manifest/manifest-service.ts";
+import { MachineChecks } from "../machine/machine-checks.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
+import { RuntimeSetup, type PrivilegedRunner } from "../runtimes/podman-setup.ts";
+import { OS_RELEASE_FILE, type SystemFiles } from "../runtimes/setup-command.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { RunTracker } from "../runs/run-tracker.ts";
@@ -24,7 +28,9 @@ import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
+import { FakePrivilegedRunner, FakeSystemFiles } from "../../test-support/fake-privileged.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
+import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
 
 const GiB = 1024 ** 3;
@@ -41,6 +47,10 @@ export interface Harness {
   engines: EngineMonitor;
   engineStore: EngineStore;
   localEngine: LocalEngineManager;
+  /** The setup of Podman, which never reaches a real prompt in a test. */
+  runtimeSetup: RuntimeSetup;
+  /** The privileged runner the setup uses; by default it is not authorised. */
+  privileged: PrivilegedRunner;
   /** The container runtimes the local engine can use, in memory. */
   runtimes: Partial<Record<RuntimeId, FakeRuntime>>;
   runs: RunStore;
@@ -103,6 +113,8 @@ export function openHarness(
     machine?: RouteContext["machine"];
     /** process.arch of the computer, for the reference time. */
     architecture?: string;
+    /** Swaps parts of the Podman setup: the privileged runner, the files and the programs run as the operator. */
+    setup?: { privileged?: PrivilegedRunner; files?: SystemFiles; runner?: CommandRunner; operator?: string };
     /**
      * A data folder to keep, with a database file in it, so that a second
      * harness on the same folder is a restart. Default: a folder of its own,
@@ -194,6 +206,24 @@ export function openHarness(
     log,
   });
 
+  const machine = options.machine ?? recordedMachine();
+  const machineChecks = new MachineChecks({
+    machine,
+    settings,
+    now: () => clock.now,
+  });
+  const privileged = options.setup?.privileged ?? new FakePrivilegedRunner();
+  const runtimeSetup = new RuntimeSetup({
+    platform: options.localMachine?.platform ?? "linux",
+    operator: options.setup?.operator ?? "operator",
+    privileged,
+    files: options.setup?.files ?? new FakeSystemFiles({ [OS_RELEASE_FILE]: recordedText("os-release", "debian-13") }),
+    runner: options.setup?.runner ?? new ScriptedRunner([]),
+    checks: machineChecks,
+    install: () => localEngine.install(),
+    log,
+  });
+
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     assets: options.assets ?? new Map(),
@@ -206,7 +236,9 @@ export function openHarness(
     tracker,
     sample,
     manifests,
-    machine: options.machine ?? recordedMachine(),
+    machine,
+    machineChecks,
+    runtimeSetup,
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {
@@ -235,6 +267,8 @@ export function openHarness(
     engines,
     engineStore,
     localEngine,
+    runtimeSetup,
+    privileged,
     runtimes,
     runs,
     tracker,

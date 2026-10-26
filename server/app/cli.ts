@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { isValidUserName } from "../runtimes/setup-command.ts";
 
 export interface CommandLine {
   port?: number;
@@ -43,4 +44,26 @@ function badPort(value: string): ParseResult {
 
 function firstLine(text: string): string {
   return text.split("\n")[0] ?? text;
+}
+
+export type SetupParseResult = { ok: true; user: string } | { ok: false; problem: string };
+
+/**
+ * `setup-podman --user <name>`, the step that runs as the administrator.
+ * Null when the command line is not that command, so the normal start reads it
+ * as before. It takes the user name and nothing else.
+ */
+export function parseSetupCommand(argv: string[]): SetupParseResult | null {
+  if (argv[0] !== "setup-podman") return null;
+  let user: string | undefined;
+  try {
+    ({
+      values: { user },
+    } = parseArgs({ args: argv.slice(1), options: { user: { type: "string" } }, strict: true, allowPositionals: false }));
+  } catch (error) {
+    return { ok: false, problem: error instanceof Error ? firstLine(error.message) : String(error) };
+  }
+  if (user === undefined) return { ok: false, problem: "setup-podman needs --user <name>" };
+  if (!isValidUserName(user)) return { ok: false, problem: "--user must be a user name made of letters, digits, dots, hyphens and underscores" };
+  return { ok: true, user };
 }

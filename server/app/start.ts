@@ -1,6 +1,6 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
-import { parseCommandLine } from "./cli.ts";
+import { parseCommandLine, parseSetupCommand } from "./cli.ts";
 import { resolveDataFolder } from "./data-folder.ts";
 import {
   instanceId,
@@ -20,8 +20,11 @@ import { EngineStore } from "../engines/engine-store.ts";
 import { LocalEngineManager } from "../local-engine/manager.ts";
 import { freeBytes } from "../machine/disk.ts";
 import { systemRunner } from "../process/command-runner.ts";
+import { RuntimeSetup, pkexecRunner } from "../runtimes/podman-setup.ts";
 import { allRuntimes, containerRuntime } from "../runtimes/registry.ts";
+import { runSetupFromCommandLine, SETUP_EXIT, systemFiles } from "../runtimes/setup-command.ts";
 import { EventStreams } from "../http/event-streams.ts";
+import { MachineChecks } from "../machine/machine-checks.ts";
 import { systemMachine } from "../machine/system.ts";
 import { ManifestService } from "../manifest/manifest-service.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
@@ -57,6 +60,15 @@ export type StartResult =
 
 function urlFor(port: number): string {
   return `http://${LOOPBACK}:${port}/`;
+}
+
+function operatorName(): string {
+  try {
+    return os.userInfo().username;
+  } catch {
+    // No entry for this user: the setup step then says it cannot run.
+    return "";
+  }
 }
 
 function isAddressInUse(error: unknown): boolean {
@@ -147,6 +159,18 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       log: options.log,
       localMemoryCap: () => localEngine.memoryCap(),
     });
+    const machine = systemMachine(dataFolder);
+    const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
+    const runtimeSetup = new RuntimeSetup({
+      platform: process.platform,
+      operator: operatorName(),
+      privileged: pkexecRunner(process.execPath),
+      files: systemFiles(),
+      runner,
+      checks: machineChecks,
+      install: () => localEngine.install(),
+      log: options.log,
+    });
     const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: options.log });
     let listener: Listener | undefined;
 
@@ -162,7 +186,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       tracker,
       sample,
       manifests,
-      machine: systemMachine(dataFolder),
+      machine,
+      machineChecks,
+      runtimeSetup,
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
       rebind: async (hostname) => {
@@ -230,6 +256,16 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 }
 
 export async function runFromCommandLine(assets: AssetMap, version: string): Promise<void> {
+  // The step that runs as the administrator touches nothing of the operator's: it is handled before the data folder is read.
+  const setup = parseSetupCommand(process.argv.slice(2));
+  if (setup !== null) {
+    if (!setup.ok) {
+      console.error(setup.problem);
+      process.exit(SETUP_EXIT.badArguments);
+    }
+    process.exit(await runSetupFromCommandLine(setup.user));
+  }
+
   const log = (line: string) => console.log(line);
   const result = await startAidmUi({
     argv: process.argv.slice(2),

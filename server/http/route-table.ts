@@ -5,9 +5,11 @@ import type { InstanceIdentity } from "../app/instance.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
 import type { LocalEngineManager } from "../local-engine/manager.ts";
+import type { RuntimeSetup } from "../runtimes/podman-setup.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
 import type { SampleJob } from "../sample/sample-job.ts";
 import type { MachineFacts } from "../machine/facts.ts";
+import type { MachineChecks } from "../machine/machine-checks.ts";
 import type { ManifestService } from "../manifest/manifest-service.ts";
 import type { Settings } from "../settings/settings.ts";
 import type { EventStreams } from "./event-streams.ts";
@@ -42,6 +44,10 @@ export interface RouteContext {
   manifests: ManifestService;
   /** Reads the computer the machine check decides by. */
   machine: { gather(): Promise<MachineFacts> };
+  /** The machine check: reads the computer and keeps the last answer for a minute. */
+  machineChecks: MachineChecks;
+  /** The step that installs Podman where no container tool works. */
+  runtimeSetup: RuntimeSetup;
   /** A function because the hook changes when the LAN switch moves. */
   auth: () => AuthHook;
   /** The port the server listens on now. */

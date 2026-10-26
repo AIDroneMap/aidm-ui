@@ -95,6 +95,14 @@ export const MESSAGE_CODES = [
   "caps.cpus_invalid",
   "runtime.not_available",
   "engine.local_not_editable",
+  "setup.not_needed",
+  "setup.not_offered",
+  "setup.already_running",
+  "setup.dismissed",
+  "setup.not_authorised",
+  "setup.unsupported_distribution",
+  "setup.failed",
+  "setup.runtime_not_working",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

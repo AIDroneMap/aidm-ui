@@ -30,11 +30,18 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
         rc.server.timeout(req, 0);
         return ctx.streams.respond(rc.client, (send) => {
           const sendView = (view: unknown) => send(`event: local-engine\ndata: ${JSON.stringify(view)}\n\n`);
+          const sendSetup = (view: unknown) => send(`event: runtime-setup\ndata: ${JSON.stringify(view)}\n\n`);
           const unsubscribe = localEngine.subscribe(sendView);
+          const unsubscribeSetup = ctx.runtimeSetup.subscribe(sendSetup);
           sendView(localEngine.view());
+          const setup = ctx.runtimeSetup.view();
+          if (setup !== null) sendSetup(setup);
           // The runtimes may have changed since the last look. The listener hears about it if they did.
           void localEngine.refreshRuntimes(DETECTION_MAX_AGE_MS);
-          return unsubscribe;
+          return () => {
+            unsubscribe();
+            unsubscribeSetup();
+          };
         });
       },
     },
@@ -44,6 +51,15 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
         const outcome = await localEngine.install();
         if (!outcome.ok) return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
         return Response.json(localEngine.view(), { status: 202 });
+      },
+    },
+
+    "/api/local-engine/setup-runtime": {
+      // Answers at once; the steps (approval, install, check) come as "runtime-setup" events.
+      POST: async () => {
+        const started = await ctx.runtimeSetup.start();
+        if (!started.ok) return errorResponse(started.status, started.error.code, started.error.data);
+        return Response.json(ctx.runtimeSetup.view(), { status: 202 });
       },
     },
 
