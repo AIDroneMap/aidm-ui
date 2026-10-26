@@ -14,6 +14,7 @@ export const MESSAGE_CODES = [
   "auth.passphrase_required",
   "auth.passphrase_wrong",
   "auth.too_many_attempts",
+  "settings.lan_local_only",
   "settings.port_invalid",
   "settings.passphrase_too_short",
 ] as const;

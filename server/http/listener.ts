@@ -2,6 +2,8 @@ import type { Method } from "./route-table.ts";
 
 export const ALL_INTERFACES = "0.0.0.0";
 export const LOOPBACK = "127.0.0.1";
+/** Every request this server reads is small JSON. Uploads get their own limit when they exist. */
+export const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 /** What Bun.serve takes as routes: every handler already wrapped by the guard. */
 export type ServeRoutes = Record<string, GuardedHandler | Partial<Record<Method, GuardedHandler>>>;
@@ -29,7 +31,16 @@ export function listen(options: ListenOptions): Listener {
     // Outside development mode Bun shares a port between listeners (SO_REUSEPORT)
     // unless told otherwise, which would hide a second copy behind the first.
     // The idle timeout is short because only a few routes stream; those switch it off for their requests.
-    Bun.serve({ hostname, port, development: false, reusePort: false, idleTimeout: 30, routes, fetch });
+    Bun.serve({
+      hostname,
+      port,
+      development: false,
+      reusePort: false,
+      idleTimeout: 30,
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+      routes,
+      fetch,
+    });
 
   let server: Bun.Server<undefined> | undefined = serve(options.hostname, options.port);
   let hostname = options.hostname;

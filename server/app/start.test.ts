@@ -192,7 +192,7 @@ test("an unknown API path is a coded 404", async () => {
   started(await start("a", port));
   const response = await fetch(`http://127.0.0.1:${port}/api/nothing`);
   expect(response.status).toBe(404);
-  expect(await response.text()).toBe(JSON.stringify({ error: { code: "api.not_found" } }));
+  expect(await response.text()).toBe(JSON.stringify({ error: { code: "api.not_found", data: {} } }));
 });
 
 test("a bad command line fails with a problem and starts nothing", async () => {

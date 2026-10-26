@@ -56,11 +56,12 @@ export function loopbackAuth(): AuthHook {
   };
 }
 
-/** What a computer on the network may do before it has signed in. */
+/** What a computer on the network may do before it has signed in: read the interface files and ask to sign in. */
 function isOpenToVisitors(req: Request): boolean {
   const { pathname } = new URL(req.url);
-  if (!pathname.startsWith("/api/")) return true;
-  if (req.method === "GET") return pathname === "/api/health" || pathname === "/api/auth/session";
+  if (req.method === "GET") {
+    return !pathname.startsWith("/api/") || pathname === "/api/health" || pathname === "/api/auth/session";
+  }
   return req.method === "POST" && pathname === "/api/auth/login";
 }
 

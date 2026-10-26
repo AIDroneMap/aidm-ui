@@ -40,7 +40,7 @@ test.skipIf(lan === undefined)("with the LAN switch off, a request from another 
   harness = openHarness({ hostname: "0.0.0.0" });
   const response = await fetch(`http://${lan}:${harness.port}/api/settings`);
   expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: { code: "auth.lan_disabled" } });
+  expect(await response.json()).toEqual({ error: { code: "auth.lan_disabled", data: {} } });
 
   const page = await fetch(`http://${lan}:${harness.port}/`);
   expect(page.status).toBe(403);
@@ -56,7 +56,7 @@ test.skipIf(lan === undefined)("with the LAN switch on, another address needs th
 
   const refused = await fetch(`${remote}/api/settings`);
   expect(refused.status).toBe(401);
-  expect(await refused.json()).toEqual({ error: { code: "auth.passphrase_required" } });
+  expect(await refused.json()).toEqual({ error: { code: "auth.passphrase_required", data: {} } });
 
   // The interface and the few routes it needs to ask for the passphrase stay open.
   expect((await fetch(`${remote}/some/page`)).status).not.toBe(401);
@@ -65,7 +65,7 @@ test.skipIf(lan === undefined)("with the LAN switch on, another address needs th
 
   const wrong = await fetch(`${remote}/api/auth/login`, json({ passphrase: "not the passphrase" }));
   expect(wrong.status).toBe(401);
-  expect(await wrong.json()).toEqual({ error: { code: "auth.passphrase_wrong" } });
+  expect(await wrong.json()).toEqual({ error: { code: "auth.passphrase_wrong", data: {} } });
 
   const login = await fetch(`${remote}/api/auth/login`, json({ passphrase: PASSPHRASE }));
   expect(login.status).toBe(204);
@@ -110,21 +110,21 @@ test.skipIf(lan === undefined)("turning the LAN switch off or changing the passp
   await fetch(`${harness.base}/api/settings/lan`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
   const afterOff = await fetch(`${remote}/api/settings`, { headers: { cookie: second } });
   expect(afterOff.status).toBe(403);
-  expect(await afterOff.json()).toEqual({ error: { code: "auth.lan_disabled" } });
+  expect(await afterOff.json()).toEqual({ error: { code: "auth.lan_disabled", data: {} } });
 });
 
 test("a login with the LAN switch off is refused", async () => {
   harness = openHarness();
   const response = await fetch(`${harness.base}/api/auth/login`, json({ passphrase: PASSPHRASE }));
   expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: { code: "auth.lan_disabled" } });
+  expect(await response.json()).toEqual({ error: { code: "auth.lan_disabled", data: {} } });
 });
 
 test("a request to loopback under a foreign host name is refused", async () => {
   harness = openHarness();
   const response = await fetch(`${harness.base}/api/settings`, { headers: { host: "evil.example:8823" } });
   expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: { code: "auth.host_not_allowed" } });
+  expect(await response.json()).toEqual({ error: { code: "auth.host_not_allowed", data: {} } });
 
   for (const host of [`localhost:${harness.port}`, `127.0.0.1:${harness.port}`, "localhost", `[::1]:${harness.port}`]) {
     const allowed = await fetch(`${harness.base}/api/health`, { headers: { host } });
@@ -139,7 +139,7 @@ test("a write from another web site is refused, a write with no origin is served
 
   const foreign = await fetch(url, { method: "PUT", body, headers: { origin: "http://evil.example" } });
   expect(foreign.status).toBe(403);
-  expect(await foreign.json()).toEqual({ error: { code: "auth.origin_not_allowed" } });
+  expect(await foreign.json()).toEqual({ error: { code: "auth.origin_not_allowed", data: {} } });
   expect(harness.settings.get("server.port")).toBeNull();
 
   const own = await fetch(url, { method: "PUT", body, headers: { origin: `http://127.0.0.1:${harness.port}` } });
@@ -179,7 +179,7 @@ test("five wrong logins block the address until ten minutes have passed", async 
   }
   const blocked = await login(PASSPHRASE);
   expect(blocked.status).toBe(429);
-  expect(await blocked.json()).toEqual({ error: { code: "auth.too_many_attempts" } });
+  expect(await blocked.json()).toEqual({ error: { code: "auth.too_many_attempts", data: {} } });
 
   harness.clock.now += 9 * 60 * 1000;
   expect((await login(PASSPHRASE)).status).toBe(429);
@@ -209,4 +209,58 @@ test.skipIf(lan === undefined)("odd spellings of an API path do not get past the
     const text = await response.text();
     expect(text).not.toContain("9321");
   }
+});
+
+test("ten wrong logins fired at once cannot all be tried: five are judged, the rest are turned away", async () => {
+  harness = openHarness();
+  await switchLanOn(harness);
+  const login = (passphrase: string) => fetch(`${harness!.base}/api/auth/login`, json({ passphrase }));
+
+  const answers = await Promise.all(Array.from({ length: 10 }, () => login("wrong guess")));
+  const codes = await Promise.all(answers.map(async (answer) => ((await answer.json()) as { error: { code: string } }).error.code));
+  expect(codes.filter((code) => code === "auth.passphrase_wrong").length).toBeLessThanOrEqual(5);
+  expect(codes.filter((code) => code === "auth.too_many_attempts").length).toBeGreaterThanOrEqual(5);
+  expect(answers.map((answer) => answer.status).every((status) => status === 401 || status === 429)).toBe(true);
+
+  expect((await login(PASSPHRASE)).status).toBe(429);
+});
+
+test("a passphrase longer than 1024 characters is refused before it is hashed", async () => {
+  harness = openHarness();
+  await switchLanOn(harness);
+  const response = await fetch(`${harness.base}/api/auth/login`, json({ passphrase: "x".repeat(1025) }));
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
+
+  const longest = await fetch(`${harness.base}/api/auth/login`, json({ passphrase: "x".repeat(1024) }));
+  expect(longest.status).toBe(401);
+});
+
+test.skipIf(lan === undefined)("only the operator's own computer can change the LAN switch, even with a session", async () => {
+  harness = openHarness({ hostname: "0.0.0.0" });
+  await switchLanOn(harness);
+  const remote = `http://${lan}:${harness.port}`;
+  const cookie = await signIn(remote);
+
+  for (const body of [{ enabled: false }, { enabled: true, passphrase: "another long passphrase" }]) {
+    const response = await fetch(`${remote}/api/settings/lan`, { method: "PUT", body: JSON.stringify(body), headers: { cookie } });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: { code: "settings.lan_local_only", data: {} } });
+  }
+  expect(harness.settings.get("lan.enabled")).toBe(true);
+  expect((await fetch(`${remote}/api/settings`, { headers: { cookie } })).status).toBe(200);
+});
+
+test.skipIf(lan === undefined)("a computer on the network without a session may only read the interface and ask to sign in", async () => {
+  harness = openHarness({ hostname: "0.0.0.0" });
+  await switchLanOn(harness);
+  const remote = `http://${lan}:${harness.port}`;
+
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    const response = await fetch(`${remote}/some/page`, { method, body: "{}" });
+    expect(response.status, method).toBe(401);
+    expect(await response.json()).toEqual({ error: { code: "auth.passphrase_required", data: {} } });
+  }
+  expect((await fetch(`${remote}/some/page`)).status).not.toBe(401);
+  expect((await fetch(`${remote}/api/health`, { method: "POST", body: "{}" })).status).toBe(401);
 });

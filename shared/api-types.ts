@@ -34,5 +34,7 @@ export interface SessionView {
 /** The port the server tries first when neither --port nor the setting names one. */
 export const DEFAULT_PORT = 8823;
 export const PASSPHRASE_MIN_LENGTH = 8;
+/** Longer passphrases are refused before hashing, so one request cannot keep the CPU busy. */
+export const PASSPHRASE_MAX_LENGTH = 1024;
 export const PORT_MIN = 1;
 export const PORT_MAX = 65535;

@@ -1,11 +1,13 @@
 import { errorResponse } from "../../shared/api-error.ts";
 import {
+  PASSPHRASE_MAX_LENGTH,
   PASSPHRASE_MIN_LENGTH,
   PORT_MAX,
   PORT_MIN,
   type SettingsView,
 } from "../../shared/api-types.ts";
 import { ALL_INTERFACES, LOOPBACK } from "../http/listener.ts";
+import { isLoopbackAddress } from "../auth/hook.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
 import { lanAddresses } from "./network.ts";
 
@@ -21,13 +23,22 @@ function isValidPort(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= PORT_MIN && (value as number) <= PORT_MAX;
 }
 
-/** Moves the listener once the answer is on its way, so the browser still gets it. */
-function rebindSoon(ctx: RouteContext, hostname: string): void {
+/** Long enough for the answer to reach the browser before the listener closes its connections. */
+const REBIND_DELAY_MS = 200;
+
+/**
+ * Moves the listener once the answer is on its way. If it cannot move, the
+ * setting goes back to what it was, so the screen never says the network is
+ * open (or closed) when it is not.
+ */
+function rebindSoon(ctx: RouteContext, hostname: string, undo: () => void): void {
   setTimeout(() => {
     ctx.rebind(hostname).catch((error: unknown) => {
-      ctx.log(`Could not listen on ${hostname}: ${error instanceof Error ? error.message : String(error)}`);
+      undo();
+      const reason = error instanceof Error ? error.message : String(error);
+      ctx.log(`Could not listen on ${hostname}: ${reason}. The local network setting is back to what it was.`);
     });
-  }, 0);
+  }, REBIND_DELAY_MS);
 }
 
 export function settingsRoutes(ctx: RouteContext): RouteTable {
@@ -51,25 +62,36 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
     },
 
     "/api/settings/lan": {
-      PUT: async (req) => {
+      PUT: async (req, { client }) => {
+        // A device on the network that knows the passphrase must not be able to
+        // open the door wider, or lock the operator's own computer out of the switch.
+        if (!isLoopbackAddress(client.address)) return errorResponse(403, "settings.lan_local_only");
         const parsed = await readJson(req);
         if (!parsed.ok) return parsed.response;
         const { enabled, passphrase } = parsed.body;
         if (typeof enabled !== "boolean") return errorResponse(400, "api.invalid_body");
 
+        let newHash: string | null = null;
         if (enabled) {
-          if (typeof passphrase !== "string") return errorResponse(400, "api.invalid_body");
+          if (typeof passphrase !== "string" || passphrase.length > PASSPHRASE_MAX_LENGTH) {
+            return errorResponse(400, "api.invalid_body");
+          }
           if ([...passphrase].length < PASSPHRASE_MIN_LENGTH) {
             return errorResponse(400, "settings.passphrase_too_short", { min: PASSPHRASE_MIN_LENGTH });
           }
-          ctx.settings.set("lan.passphraseHash", await Bun.password.hash(passphrase, "argon2id"));
-        } else {
-          ctx.settings.set("lan.passphraseHash", null);
+          newHash = await Bun.password.hash(passphrase, "argon2id");
         }
+
+        const before = { enabled: ctx.settings.get("lan.enabled"), hash: ctx.settings.get("lan.passphraseHash") };
+        ctx.settings.set("lan.passphraseHash", newHash);
         ctx.settings.set("lan.enabled", enabled);
         // Anyone signed in with the old passphrase, or while the switch was on, signs in again.
         ctx.sessions.clear();
-        rebindSoon(ctx, enabled ? ALL_INTERFACES : LOOPBACK);
+        rebindSoon(ctx, enabled ? ALL_INTERFACES : LOOPBACK, () => {
+          ctx.settings.set("lan.passphraseHash", before.hash);
+          ctx.settings.set("lan.enabled", before.enabled);
+          ctx.sessions.clear();
+        });
         return Response.json(settingsView(ctx, enabled));
       },
     },

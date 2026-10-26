@@ -31,7 +31,14 @@ export interface Harness {
  * the same guard and the same hook choice as the real server, but the listener
  * never moves when the LAN switch does, so a test picks the interface itself.
  */
-export function openHarness(options: { hostname?: string; assets?: AssetMap } = {}): Harness {
+export function openHarness(
+  options: {
+    hostname?: string;
+    assets?: AssetMap;
+    /** What a rebind does after it is recorded; throw to make the listener fail to move. */
+    rebind?: (hostname: string) => Promise<void>;
+  } = {},
+): Harness {
   const db = new Database(":memory:", { strict: true });
   applyMigrations(db, migrations);
   const settings = new Settings(db);
@@ -50,6 +57,7 @@ export function openHarness(options: { hostname?: string; assets?: AssetMap } = 
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {
       rebinds.push(hostname);
+      await options.rebind?.(hostname);
     },
     now: () => clock.now,
     log: (line) => logs.push(line),

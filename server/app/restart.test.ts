@@ -120,7 +120,7 @@ test.skipIf(address === undefined)("the LAN switch moves the running server to t
   await eventually(async () => !(await refusesConnections(port)));
   const remote = await fetch(`http://${address}:${port}/api/settings`);
   expect(remote.status).toBe(401);
-  expect(await remote.json()).toEqual({ error: { code: "auth.passphrase_required" } });
+  expect(await remote.json()).toEqual({ error: { code: "auth.passphrase_required", data: {} } });
   // The operator's own computer is still served on the same port.
   expect((await fetch(`http://127.0.0.1:${port}/api/settings`)).status).toBe(200);
 

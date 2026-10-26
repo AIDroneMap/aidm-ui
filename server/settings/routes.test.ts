@@ -57,7 +57,7 @@ test("a port request without a port is an invalid body", async () => {
   harness = openHarness();
   const response = await put(harness, "/api/settings/port", {});
   expect(response.status).toBe(400);
-  expect(await response.json()).toEqual({ error: { code: "api.invalid_body" } });
+  expect(await response.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
 });
 
 test("the LAN switch needs a passphrase of the minimum length", async () => {
@@ -116,4 +116,53 @@ test("the passphrase hash is in no response", async () => {
     expect(body).not.toContain("argon2");
     expect(body).not.toContain(passphrase);
   }
+});
+
+test("a rebind that fails puts the LAN setting back and says so in the log", async () => {
+  harness = openHarness({
+    rebind: async () => {
+      throw new Error("port is busy");
+    },
+  });
+  const response = await put(harness, "/api/settings/lan", { enabled: true, passphrase: "long enough passphrase" });
+  expect(response.status).toBe(200);
+
+  await eventually(async () => {
+    const view = (await (await fetch(`${harness!.base}/api/settings`)).json()) as SettingsView;
+    return !view.lan.enabled;
+  });
+  expect(harness.settings.get("lan.passphraseHash")).toBeNull();
+  expect(harness.logs.join("\n")).toContain("port is busy");
+});
+
+test("a rebind that fails when the switch goes off keeps the switch on with the old passphrase", async () => {
+  let fail = false;
+  harness = openHarness({
+    rebind: async () => {
+      if (fail) throw new Error("port is busy");
+    },
+  });
+  await put(harness, "/api/settings/lan", { enabled: true, passphrase: "long enough passphrase" });
+  const hash = harness.settings.get("lan.passphraseHash");
+  fail = true;
+  await put(harness, "/api/settings/lan", { enabled: false });
+
+  await eventually(async () => harness!.logs.length > 0);
+  expect(harness.settings.get("lan.enabled")).toBe(true);
+  expect(harness.settings.get("lan.passphraseHash")).toBe(hash);
+});
+
+test("the listener moves only after the answer has had time to arrive", async () => {
+  harness = openHarness();
+  await put(harness, "/api/settings/lan", { enabled: true, passphrase: "long enough passphrase" });
+  expect(harness.rebinds).toEqual([]);
+  await eventually(async () => harness!.rebinds.length === 1);
+});
+
+test("a passphrase longer than 1024 characters is an invalid body and nothing changes", async () => {
+  harness = openHarness();
+  const response = await put(harness, "/api/settings/lan", { enabled: true, passphrase: "x".repeat(1025) });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
+  expect(harness.settings.get("lan.enabled")).toBe(false);
 });

@@ -1,5 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
-import type { SessionView } from "../../shared/api-types.ts";
+import { PASSPHRASE_MAX_LENGTH, type SessionView } from "../../shared/api-types.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
 import { isLoopbackAddress } from "./hook.ts";
 import { LoginThrottle } from "./login-throttle.ts";
@@ -24,17 +24,19 @@ export function authRoutes(ctx: RouteContext): RouteTable {
       POST: async (req, { client }) => {
         const hash = ctx.settings.get("lan.passphraseHash");
         if (!ctx.settings.get("lan.enabled") || hash === null) return errorResponse(403, "auth.lan_disabled");
-        if (throttle.isBlocked(client.address)) return errorResponse(429, "auth.too_many_attempts");
 
         const parsed = await readJson(req);
         if (!parsed.ok) return parsed.response;
         const { passphrase } = parsed.body;
-        if (typeof passphrase !== "string") return errorResponse(400, "api.invalid_body");
+        if (typeof passphrase !== "string" || passphrase.length > PASSPHRASE_MAX_LENGTH) {
+          return errorResponse(400, "api.invalid_body");
+        }
 
-        // Counted before the check, so a burst of parallel guesses cannot all slip past the limit.
-        throttle.recordFailure(client.address);
+        // Nothing is awaited between the check and the count. The verify below
+        // is slow, so a burst of parallel guesses would otherwise all pass the check.
+        if (!throttle.reserve(client.address)) return errorResponse(429, "auth.too_many_attempts");
         if (!(await Bun.password.verify(passphrase, hash))) return errorResponse(401, "auth.passphrase_wrong");
-        throttle.recordSuccess(client.address);
+        throttle.clear(client.address);
         const headers = new Headers({ "Set-Cookie": ctx.sessions.cookieFor(ctx.sessions.create()) });
         return new Response(null, { status: 204, headers });
       },

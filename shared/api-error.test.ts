@@ -5,7 +5,7 @@ test("an error response carries the status and a code", async () => {
   const response = errorResponse(404, "api.not_found");
   expect(response.status).toBe(404);
   expect(response.headers.get("content-type")).toContain("application/json");
-  expect(await response.json()).toEqual({ error: { code: "api.not_found" } });
+  expect(await response.json()).toEqual({ error: { code: "api.not_found", data: {} } });
 });
 
 test("an error response can carry data next to the code", async () => {

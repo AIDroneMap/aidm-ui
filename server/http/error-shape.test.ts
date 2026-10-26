@@ -40,8 +40,8 @@ async function expectCodedError(response: Response, what: string): Promise<void>
   expect(Object.keys(body as object), what).toEqual(["error"]);
   const error = (body as { error: { code: unknown; data?: unknown } }).error;
   expect(MESSAGE_CODES as readonly unknown[], what).toContain(error.code);
-  expect(Object.keys(error).every((key) => key === "code" || key === "data"), what).toBe(true);
-  if ("data" in error) expect(typeof error.data === "object" && error.data !== null, what).toBe(true);
+  expect(Object.keys(error).sort(), what).toEqual(["code", "data"]);
+  expect(typeof error.data === "object" && error.data !== null && !Array.isArray(error.data), what).toBe(true);
   expect(response.headers.get("content-type"), what).toContain("application/json");
 }
 
@@ -85,13 +85,13 @@ test("a body that is not JSON is an invalid body on every route that reads one",
   for (const path of ["/api/settings/port", "/api/settings/lan"]) {
     const response = await fetch(`${harness.base}${path}`, { method: "PUT", body: "nope" });
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: { code: "api.invalid_body" } });
+    expect(await response.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
   }
   harness.settings.set("lan.enabled", true);
   harness.settings.set("lan.passphraseHash", await Bun.password.hash("whatever it is", "argon2id"));
   const login = await fetch(`${harness.base}/api/auth/login`, { method: "POST", body: "nope" });
   expect(login.status).toBe(400);
-  expect(await login.json()).toEqual({ error: { code: "api.invalid_body" } });
+  expect(await login.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
 });
 
 test("a handler that throws gives a coded 500 and the details go to the log only", async () => {
@@ -104,7 +104,7 @@ test("a handler that throws gives a coded 500 and the details go to the log only
   try {
     const response = await fetch(`http://127.0.0.1:${listener.port}/api/boom`);
     expect(response.status).toBe(500);
-    expect(await response.text()).toBe(JSON.stringify({ error: { code: "server.internal_error" } }));
+    expect(await response.text()).toBe(JSON.stringify({ error: { code: "server.internal_error", data: {} } }));
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(harness.logs.join("\n")).toContain("the database is on fire");
   } finally {
@@ -121,7 +121,7 @@ test("a handler that rejects gives a coded 500 too", async () => {
   try {
     const response = await fetch(`http://127.0.0.1:${listener.port}/api/boom`);
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: { code: "server.internal_error" } });
+    expect(await response.json()).toEqual({ error: { code: "server.internal_error", data: {} } });
   } finally {
     await listener.stop();
   }

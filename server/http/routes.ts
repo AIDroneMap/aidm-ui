@@ -36,13 +36,13 @@ function guarded(ctx: RouteContext, handler: RouteHandler): GuardedHandler {
       const refusal = await ctx.auth().authorize(req, client);
       return withSecurityHeaders(refusal ?? (await handler(req, { client })));
     } catch (error) {
-      ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describe(error)}`);
+      ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describeError(error)}`);
       return withSecurityHeaders(errorResponse(500, "server.internal_error"));
     }
   };
 }
 
-function describe(error: unknown): string {
+function describeError(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 

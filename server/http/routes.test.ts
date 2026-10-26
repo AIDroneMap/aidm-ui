@@ -35,14 +35,14 @@ test("an unknown API path is a coded 404", async () => {
   const base = await open(true);
   const response = await fetch(`${base}/api/nothing/here`);
   expect(response.status).toBe(404);
-  expect(await response.json()).toEqual({ error: { code: "api.not_found" } });
+  expect(await response.json()).toEqual({ error: { code: "api.not_found", data: {} } });
 });
 
 test("a POST to health is a coded 404 and not the interface", async () => {
   const base = await open(true);
   const response = await fetch(`${base}/api/health`, { method: "POST" });
   expect(response.status).toBe(404);
-  expect(await response.json()).toEqual({ error: { code: "api.not_found" } });
+  expect(await response.json()).toEqual({ error: { code: "api.not_found", data: {} } });
 });
 
 test("pages are served from the asset map", async () => {
@@ -54,14 +54,14 @@ test("without a built interface pages are a coded 404", async () => {
   const base = await open(false);
   const response = await fetch(`${base}/`);
   expect(response.status).toBe(404);
-  expect(await response.json()).toEqual({ error: { code: "interface.not_built" } });
+  expect(await response.json()).toEqual({ error: { code: "interface.not_built", data: {} } });
 });
 
 test("a non-GET request on a page is a coded 405", async () => {
   const base = await open(true);
   const response = await fetch(`${base}/projects`, { method: "POST" });
   expect(response.status).toBe(405);
-  expect(await response.json()).toEqual({ error: { code: "api.method_not_allowed" } });
+  expect(await response.json()).toEqual({ error: { code: "api.method_not_allowed", data: {} } });
 });
 
 test("every kind of response carries the security headers", async () => {

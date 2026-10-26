@@ -73,3 +73,18 @@ test("stopping frees the port, and a rebind after it does nothing", async () => 
   await listener.rebind(ALL_INTERFACES);
   expect(await body(`http://127.0.0.1:${port}/hello`)).toBeNull();
 });
+
+test("a request body over 1 MiB is refused", async () => {
+  const listener = listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    routes: { "/echo": { POST: async (req) => new Response(String((await req.text()).length)) } },
+    fetch: () => new Response("fallback"),
+  });
+  open.push(listener);
+  const url = `http://127.0.0.1:${listener.port}/echo`;
+  const small = await fetch(url, { method: "POST", body: "x".repeat(1024) });
+  expect(await small.text()).toBe("1024");
+  const big = await fetch(url, { method: "POST", body: "x".repeat(1024 * 1024 + 1) });
+  expect(big.status).toBe(413);
+});
