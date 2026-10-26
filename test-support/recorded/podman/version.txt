@@ -1,1 +1,1 @@
-{"Client":{"APIVersion":"5.8.9","Version":"5.8.9","GoVersion":"go1.26.9-X:nodwarf5","GitCommit":"40030f4073bd4e1bf4f2fd9df2f6952b4d9d350a","BuiltTime":"Mon Oct 12 00:00:00 2026","Built":1791763200,"BuildOrigin":"Fedora Project","OsArch":"linux/amd64","Os":"linux"}}
+{"Client":{"APIVersion":"5.8.9","Version":"5.8.9","GoVersion":"go1.26.9-X:nodwarf5","GitCommit":"40030f4073bd4e1bf4f2fd9df2f6952b4d9d350a","BuiltTime":"Thu Jan  1 00:00:00 2026","Built":1767225600,"BuildOrigin":"Fedora Project","OsArch":"linux/amd64","Os":"linux"}}

@@ -31,12 +31,10 @@ export function dockerRuntime(runner: CommandRunner): ContainerRuntime {
 
       const info = await runner.run(["docker", "info", "--format", "json"]);
       const details = info.exitCode === 0 ? asRecord(parseJson(info.stdout)) : undefined;
-      const options = Array.isArray(details?.SecurityOptions) ? details.SecurityOptions : undefined;
       return {
         id: "docker",
         available: true,
         version: server.Version,
-        rootless: options === undefined ? null : options.includes("name=rootless"),
         memoryCapEnforced: typeof details?.MemoryLimit === "boolean" ? details.MemoryLimit : null,
         problem: null,
       };

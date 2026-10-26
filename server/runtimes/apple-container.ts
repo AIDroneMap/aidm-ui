@@ -38,7 +38,6 @@ export function appleContainerRuntime(runner: CommandRunner): ContainerRuntime {
         id: "apple-container",
         available: true,
         version: cli.version,
-        rootless: null,
         memoryCapEnforced: true,
         problem: null,
       };

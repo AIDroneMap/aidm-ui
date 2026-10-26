@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { CheckLine, MachineCheckView, WizardView } from "../../shared/api-types.ts";
 import {
   NVIDIA_RULE,
+  appleRules,
   dockerRules,
   linuxInputs,
   podmanRules,
@@ -10,7 +11,7 @@ import {
   type RecordedMachine,
 } from "../../test-support/recorded-machine.ts";
 import { recorded, recordedText } from "../../test-support/scripted-runner.ts";
-import { openHarness, type Harness } from "../testing/harness.ts";
+import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import { RAM_REFUSE_BELOW, RAM_WARN_BELOW, RUN_FREE_DISK } from "./thresholds.ts";
 
 const GiB = 1024 ** 3;
@@ -156,7 +157,7 @@ test("with no runtime detected the runtime line says so in one code and the inst
   expect(lineOf(view, "runtime")).toEqual({
     id: "runtime",
     result: "warn",
-    message: { code: "machine.runtime_none", data: { problems: [] } },
+    message: { code: "machine.runtime_none", data: {} },
   });
   expect(view.localEngine).toEqual({ offered: true, reason: null });
   // Every runtime was asked, and none was there.
@@ -164,14 +165,35 @@ test("with no runtime detected the runtime line says so in one code and the inst
   expect(machine.calls.map((call) => call[0])).toContain("docker");
 });
 
-test("a runtime that is installed but cannot be used is named in the same one code", async () => {
+test("a runtime that is installed but cannot be used says so with its own problem code and data", async () => {
   const { h } = open(linuxInputs({ rules: dockerRules("version-no-daemon") }));
   const view = await check(h);
-  expect(lineOf(view, "runtime").message).toEqual({
-    code: "machine.runtime_none",
-    data: { problems: ["runtime.docker_daemon_unreachable"] },
+  expect(lineOf(view, "runtime")).toEqual({
+    id: "runtime",
+    result: "warn",
+    message: { code: "runtime.docker_daemon_unreachable", data: { runtime: "docker" } },
   });
   expect(view.localEngine.offered).toBe(true);
+});
+
+test("Docker that the user may not use says so with the permission code", async () => {
+  const { h } = open(linuxInputs({ rules: dockerRules("version-permission-denied") }));
+  expect(lineOf(await check(h), "runtime").message).toEqual({
+    code: "runtime.docker_permission_denied",
+    data: { runtime: "docker" },
+  });
+});
+
+test("Apple's container tool that is not started says so, and nothing installed is still runtime_none", async () => {
+  const mac = open(macInputs("26", { rules: [...macInputs("26").rules, ...appleRules(false)] }));
+  expect(lineOf(await check(mac.h), "runtime").message).toEqual({
+    code: "runtime.apple_not_started",
+    data: {},
+  });
+  await harness?.stop();
+
+  const bare = open(macInputs("26"));
+  expect(lineOf(await check(bare.h), "runtime").message.code).toBe("machine.runtime_none");
 });
 
 test("the runtime line names the preferred runtime and its version", async () => {
@@ -219,6 +241,68 @@ test("Check again after changing the recorded inputs returns the new lines; a re
   expect(lineOf(again, "runtime").message.code).toBe("machine.runtime_none");
   expect(again.localEngine.offered).toBe(false);
   expect(await check(h)).toEqual(again);
+});
+
+test("a read after 60 seconds runs the check again and a read within 60 seconds does not", async () => {
+  const { h, machine } = open(linuxInputs({ rules: withRuntime }));
+  h.clock.now = Date.parse("2026-10-26T12:00:00Z");
+  const first = await check(h);
+  expect(lineOf(first, "ram").result).toBe("pass");
+
+  machine.inputs = linuxInputs({ totalMemory: 6 * GiB, rules: withRuntime });
+  h.clock.now += 60_000;
+  expect(await check(h)).toEqual(first);
+
+  h.clock.now += 1;
+  const later = await check(h);
+  expect(lineOf(later, "ram").result).toBe("fail");
+  expect(later.checkedAt).toBe("2026-10-26T12:01:00.001Z");
+});
+
+/** A computer whose answers wait until the test lets them through, one call at a time. */
+function gatedMachine(inner: RecordedMachine) {
+  const waiting: Array<() => void> = [];
+  return {
+    inputs: inner.inputs,
+    get calls() {
+      return waiting.length;
+    },
+    release(index: number) {
+      waiting[index]?.();
+    },
+    gather: () => {
+      // What the computer is like is read when the call starts.
+      const facts = inner.gather();
+      return new Promise<Awaited<typeof facts>>((resolve) => {
+        waiting.push(() => resolve(facts));
+      });
+    },
+  };
+}
+
+test("a new check never joins one in flight: it runs after that one finishes and sees the computer as it is then", async () => {
+  const inner = recordedMachine(linuxInputs({ rules: withRuntime }));
+  const gated = gatedMachine(inner);
+  harness = openHarness({ machine: gated });
+  const h = harness;
+  const post = () => fetch(`${h.base}/api/machine-check`, { method: "POST" }).then((r) => r.json() as Promise<MachineCheckView>);
+
+  const reading = fetch(`${h.base}/api/machine-check`).then((r) => r.json() as Promise<MachineCheckView>);
+  await eventually(async () => gated.calls === 1);
+
+  inner.inputs = linuxInputs({ totalMemory: 6 * GiB, rules: withRuntime });
+  const again = post();
+  // The new check waits for the one in flight.
+  await Bun.sleep(50);
+  expect(gated.calls).toBe(1);
+
+  gated.release(0);
+  const first = await reading;
+  expect(lineOf(first, "ram").result).toBe("pass");
+  await eventually(async () => gated.calls === 2);
+  gated.release(1);
+  const second = await again;
+  expect(lineOf(second, "ram").result).toBe("fail");
 });
 
 test("the check reports when it ran", async () => {
@@ -275,7 +359,7 @@ test("macOS before 26 fails with the version it found and the one it needs", asy
   const view = await check(h);
   expect(lineOf(view, "platform").message).toEqual({
     code: "machine.macos_too_old",
-    data: { version: "15.6.1", minimum: 26 },
+    data: { version: "15.6.1", minimumVersion: 26 },
   });
   expect(view.localEngine.offered).toBe(false);
 });

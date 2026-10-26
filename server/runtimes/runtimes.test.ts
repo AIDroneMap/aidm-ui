@@ -32,7 +32,6 @@ test("rootless Podman with the memory controller is available and can cap memory
     id: "podman",
     available: true,
     version: "5.8.9",
-    rootless: true,
     memoryCapEnforced: true,
     problem: null,
   });
@@ -42,14 +41,12 @@ test("rootless Podman without the memory controller cannot cap memory", async ()
   const runner = new ScriptedRunner([podmanVersion, podmanInfo("info-rootless-no-memory")]);
   const detection = await podmanRuntime(runner).detect();
   expect(detection.available).toBe(true);
-  expect(detection.rootless).toBe(true);
   expect(detection.memoryCapEnforced).toBe(false);
 });
 
 test("rootful Podman owns its cgroup, with or without the memory controller listed", async () => {
   for (const name of ["info-rootful", "info-rootful-no-memory"]) {
     const detection = await podmanRuntime(new ScriptedRunner([podmanVersion, podmanInfo(name)])).detect();
-    expect(detection.rootless).toBe(false);
     expect(detection.memoryCapEnforced).toBe(true);
   }
 });
@@ -59,7 +56,6 @@ test("a computer without Podman gives runtime.not_installed", async () => {
     id: "podman",
     available: false,
     version: null,
-    rootless: null,
     memoryCapEnforced: null,
     problem: { code: "runtime.not_installed", data: { runtime: "podman" } },
   });
@@ -83,22 +79,15 @@ test("Docker with a reachable daemon gives the server version", async () => {
     id: "docker",
     available: true,
     version: "29.9.2",
-    rootless: false,
     memoryCapEnforced: true,
     problem: null,
   });
-});
-
-test("rootless Docker is told apart by its security options", async () => {
-  const runner = new ScriptedRunner([dockerVersion("version"), dockerInfo("info-rootless")]);
-  expect((await dockerRuntime(runner).detect()).rootless).toBe(true);
 });
 
 test("Docker whose info fails is still available, with what is unknown left null", async () => {
   const runner = new ScriptedRunner([dockerVersion("version")]);
   const detection = await dockerRuntime(runner).detect();
   expect(detection.available).toBe(true);
-  expect(detection.rootless).toBeNull();
   expect(detection.memoryCapEnforced).toBeNull();
 });
 
@@ -128,7 +117,6 @@ test("Apple's container with its service running is available", async () => {
     id: "apple-container",
     available: true,
     version: "1.6.1",
-    rootless: null,
     memoryCapEnforced: true,
     problem: null,
   });
@@ -160,7 +148,7 @@ test("each platform asks about its own runtimes", () => {
 });
 
 function detection(id: RuntimeDetection["id"], available = true): RuntimeDetection {
-  return { id, available, version: "1", rootless: null, memoryCapEnforced: null, problem: null };
+  return { id, available, version: "1", memoryCapEnforced: null, problem: null };
 }
 
 test("Podman is preferred over Docker when both answer", () => {

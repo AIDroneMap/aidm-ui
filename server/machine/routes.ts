@@ -7,28 +7,54 @@ function wizardView(ctx: RouteContext): WizardView {
   return { completed: ctx.settings.get("wizard.completed") };
 }
 
-export function machineRoutes(ctx: RouteContext): RouteTable {
-  let last: MachineCheckView | null = null;
-  // Two screens asking at once share one run.
-  let running: Promise<MachineCheckView> | null = null;
+/** A read older than this runs the check again. */
+export const MACHINE_CHECK_MAX_AGE_MS = 60_000;
 
-  const run = (): Promise<MachineCheckView> => {
-    running ??= (async () => {
-      try {
-        const facts = await ctx.machine.gather();
-        last = checkMachine(facts, { preferredRuntime: ctx.settings.get("runtime.preferred"), now: ctx.now() });
-        return last;
-      } finally {
-        running = null;
-      }
-    })();
-    return running;
+export function machineRoutes(ctx: RouteContext): RouteTable {
+  let last: { view: MachineCheckView; at: number } | null = null;
+  let running: Promise<MachineCheckView> | null = null;
+  // The check that waits for the one in flight to finish.
+  let queued: Promise<MachineCheckView> | null = null;
+
+  const execute = async (): Promise<MachineCheckView> => {
+    const facts = await ctx.machine.gather();
+    const at = ctx.now();
+    const view = checkMachine(facts, { preferredRuntime: ctx.settings.get("runtime.preferred"), now: at });
+    last = { view, at };
+    return view;
+  };
+
+  const start = (): Promise<MachineCheckView> => {
+    const run = execute().finally(() => {
+      if (running === run) running = null;
+    });
+    running = run;
+    return run;
+  };
+
+  // A read takes the last answer while it is fresh, and joins a check that is already running.
+  const read = (): Promise<MachineCheckView> | MachineCheckView => {
+    if (last !== null && ctx.now() - last.at <= MACHINE_CHECK_MAX_AGE_MS) return last.view;
+    return running ?? start();
+  };
+
+  // "Check again" must see the computer as it is after the click, so it never shares an answer that began before it.
+  const fresh = (): Promise<MachineCheckView> => {
+    if (running === null) return start();
+    queued ??= running
+      .catch(() => {})
+      .then(() => {
+        queued = null;
+        // A read that began in the gap also began after the click, so it may be joined.
+        return running ?? start();
+      });
+    return queued;
   };
 
   return {
     "/api/machine-check": {
-      GET: async () => Response.json(last ?? (await run())),
-      POST: async () => Response.json(await run()),
+      GET: async () => Response.json(await read()),
+      POST: async () => Response.json(await fresh()),
     },
 
     "/api/wizard": {

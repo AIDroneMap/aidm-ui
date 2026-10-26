@@ -7,7 +7,6 @@ export interface RuntimeDetection {
   /** The tool answers and can run containers. */
   available: boolean;
   version: string | null;
-  rootless: boolean | null;
   /** Whether a memory cap would be enforced (rootless Podman without cgroup delegation cannot). Null when unknown. */
   memoryCapEnforced: boolean | null;
   /** Why it is not available, as a code with its data. */
@@ -21,7 +20,7 @@ export interface ContainerRuntime {
 }
 
 export function unavailable(id: RuntimeId, problem: ApiError): RuntimeDetection {
-  return { id, available: false, version: null, rootless: null, memoryCapEnforced: null, problem };
+  return { id, available: false, version: null, memoryCapEnforced: null, problem };
 }
 
 export function notInstalled(id: RuntimeId): RuntimeDetection {

@@ -19,11 +19,11 @@
       "path": "/usr/bin/conmon",
       "version": "conmon version 2.2.1, commit: "
     },
-    "cpus": 24,
+    "cpus": 8,
     "cpuUtilization": {
-      "userPercent": 2.06,
-      "systemPercent": 0.32,
-      "idlePercent": 97.62
+      "userPercent": 2.00,
+      "systemPercent": 0.50,
+      "idlePercent": 97.50
     },
     "databaseBackend": "sqlite",
     "distribution": {
@@ -70,10 +70,10 @@
         }
       ]
     },
-    "kernel": "6.8.0-147-generic",
+    "kernel": "6.8.0-generic",
     "logDriver": "k8s-file",
-    "memFree": 37100826624,
-    "memTotal": 64895025152,
+    "memFree": 17179869184,
+    "memTotal": 34359738368,
     "networkBackend": "netavark",
     "networkBackendInfo": {
       "backend": "netavark",
@@ -118,9 +118,9 @@
       "package": "passt-0^20261002.gcba3570-1.fc44.x86_64",
       "version": "pasta 0^20261002.gcba3570-1.fc44.x86_64\nCopyright Red Hat\nGNU General Public License, version 2 or later\n  \u003chttps://www.gnu.org/licenses/old-licenses/gpl-2.0.html\u003e\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n"
     },
-    "swapFree": 4059869184,
-    "swapTotal": 4294963200,
-    "uptime": "112h 23m 25.00s (Approximately 4.67 days)",
+    "swapFree": 2147483648,
+    "swapTotal": 4294967296,
+    "uptime": "24h 0m 0.00s (Approximately 1.00 days)",
     "variant": "",
     "linkmode": "dynamic"
   },
@@ -137,8 +137,8 @@
       
     },
     "graphRoot": "/home/operator/.local/share/containers/storage",
-    "graphRootAllocated": 1966736678912,
-    "graphRootUsed": 72224747520,
+    "graphRootAllocated": 1000000000000,
+    "graphRootUsed": 100000000000,
     "graphStatus": {
       "Backing Filesystem": "extfs",
       "Native Overlay Diff": "true",
@@ -184,8 +184,8 @@
     "Version": "5.8.9",
     "GoVersion": "go1.26.9-X:nodwarf5",
     "GitCommit": "40030f4073bd4e1bf4f2fd9df2f6952b4d9d350a",
-    "BuiltTime": "Mon Oct 12 00:00:00 2026",
-    "Built": 1791763200,
+    "BuiltTime": "Thu Jan  1 00:00:00 2026",
+    "Built": 1767225600,
     "BuildOrigin": "Fedora Project",
     "OsArch": "linux/amd64",
     "Os": "linux"

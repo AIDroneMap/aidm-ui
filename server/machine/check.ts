@@ -27,7 +27,7 @@ function platformLine(facts: MachineFacts): CheckLine {
     const major = facts.macosVersion === null ? Number.NaN : Number.parseInt(facts.macosVersion, 10);
     // An unreadable version is not held against the operator; the install step checks again.
     if (major < MACOS_MINIMUM) {
-      return line("platform", "fail", "machine.macos_too_old", { version: facts.macosVersion, minimum: MACOS_MINIMUM });
+      return line("platform", "fail", "machine.macos_too_old", { version: facts.macosVersion, minimumVersion: MACOS_MINIMUM });
     }
     return line("platform", "pass", "machine.platform_ok");
   }
@@ -75,11 +75,13 @@ function runtimeLine(facts: MachineFacts, chosen: RuntimeId | null): CheckLine |
   if (facts.platform !== "linux" && facts.platform !== "darwin") return null;
   const preferred = preferredRuntime(facts.runtimes, chosen);
   if (preferred === null) {
-    // Tools that are there but cannot be used are worth a word; tools that are not there are not.
-    const problems = facts.runtimes.flatMap((runtime) =>
-      runtime.problem === null || runtime.problem.code === "runtime.not_installed" ? [] : [runtime.problem.code],
+    // A tool that is installed but cannot be used is named with its own problem; "none" means nothing is installed.
+    const broken = facts.runtimes.filter(
+      (runtime) => runtime.problem !== null && runtime.problem.code !== "runtime.not_installed",
     );
-    return line("runtime", "warn", "machine.runtime_none", { problems });
+    const named = broken.find((runtime) => runtime.id === chosen) ?? broken[0];
+    if (named?.problem) return line("runtime", "warn", named.problem.code, named.problem.data);
+    return line("runtime", "warn", "machine.runtime_none");
   }
   if (preferred.memoryCapEnforced === false) {
     return line("runtime", "warn", "machine.runtime_no_memory_cap", { runtime: preferred.id });

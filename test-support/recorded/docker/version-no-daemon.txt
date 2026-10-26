@@ -1,1 +1,1 @@
-{"Client":{"Platform":{"Name":"Docker Engine - Community"},"Version":"29.9.2","ApiVersion":"1.56","DefaultAPIVersion":"1.56","GitCommit":"a82e528","GoVersion":"go1.26.10","Os":"linux","Arch":"amd64","BuildTime":"Tue Oct 20 18:44:40 2026","Context":"default"},"Server":null}
+{"Client":{"Platform":{"Name":"Docker Engine - Community"},"Version":"29.9.2","ApiVersion":"1.56","DefaultAPIVersion":"1.56","GitCommit":"a82e528","GoVersion":"go1.26.10","Os":"linux","Arch":"amd64","BuildTime":"Thu Jan  1 00:00:00 2026","Context":"default"},"Server":null}

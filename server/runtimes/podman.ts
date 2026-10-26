@@ -27,7 +27,7 @@ export function podmanRuntime(runner: CommandRunner): ContainerRuntime {
       // it lists the controllers it was handed.
       const controllers = Array.isArray(host?.cgroupControllers) ? host.cgroupControllers : [];
       const memoryCapEnforced = rootless ? host?.cgroupVersion === "v2" && controllers.includes("memory") : true;
-      return { id: "podman", available: true, version: client.Version, rootless, memoryCapEnforced, problem: null };
+      return { id: "podman", available: true, version: client.Version, memoryCapEnforced, problem: null };
     },
   };
 }

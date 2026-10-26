@@ -38,10 +38,10 @@ export function podmanRules(info: PodmanInfo): ScriptedRule[] {
 
 type DockerVersion = "version" | "version-no-daemon" | "version-permission-denied";
 
-export function dockerRules(version: DockerVersion, info: "info" | "info-rootless" = "info"): ScriptedRule[] {
+export function dockerRules(version: DockerVersion): ScriptedRule[] {
   return [
     { argv: ["docker", "version", "--format", "json"], result: recorded("docker", version) },
-    { argv: ["docker", "info", "--format", "json"], result: recorded("docker", info) },
+    { argv: ["docker", "info", "--format", "json"], result: recorded("docker", "info") },
   ];
 }
 
