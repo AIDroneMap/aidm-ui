@@ -112,7 +112,12 @@ test("the command line of the program names its config file and holds no token",
   if (process.platform !== "linux") return;
   const { pkg, starts } = packageWith();
   expect((await pkg.start(startOptions)).ok).toBe(true);
-  const shown = readFileSync(`/proc/${starts[0]}/cmdline`, "utf8").split("\0");
+  // Right after the spawn the new process may not have its command line yet.
+  let shown: string[] = [];
+  for (let tries = 0; tries < 100 && !shown.join(" ").includes("--config"); tries++) {
+    shown = readFileSync(`/proc/${starts[0]}/cmdline`, "utf8").split("\0");
+    if (!shown.join(" ").includes("--config")) await Bun.sleep(20);
+  }
   expect(shown.join(" ")).toContain(`--config ${join(dataFolder, "engine-config", "native-2.6.0.json")}`);
   expect(shown.join(" ")).not.toContain(startOptions.token);
 });
