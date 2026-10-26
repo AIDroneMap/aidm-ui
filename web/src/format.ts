@@ -31,9 +31,10 @@ export function formatDuration(seconds: number): string {
     : t("unit.duration.min_s", { min: countFormat.format(minutes), s: rest });
 }
 
-const clockFormat = new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" });
+// No locale is named, so the time follows the one this computer is set to: "14:05" in Italy, "02:05 PM" in the United States.
+const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
-/** The time of day of an ISO 8601 instant on this computer's clock, for example "02:05 PM". */
+/** The time of day of an ISO 8601 instant on this computer's clock, in this computer's locale. */
 export function formatClock(iso: string): string {
   return clockFormat.format(new Date(iso));
 }
