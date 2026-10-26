@@ -78,3 +78,11 @@ test("a warning from the server shows next to the progress", () => {
   expect(html).toContain('class="warning"');
   expect(html).toContain(en["local.memory_cap_not_enforced"]);
 });
+
+test("the warning that the test run could not use the graphics card carries a plain link to the guide", () => {
+  const guideUrl = "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html";
+  const html = render({ ...pulling, warnings: [{ code: "gpu.in_image_failed", data: { guideUrl } }] });
+  expect(html).toContain(en["gpu.in_image_failed"]);
+  expect(html).toContain(`<a href="${guideUrl}" target="_blank" rel="noreferrer noopener">`);
+  expect(untranslatedText(html, ["2.5.0"])).toEqual([]);
+});

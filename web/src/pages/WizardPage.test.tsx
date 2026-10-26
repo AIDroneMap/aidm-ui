@@ -223,10 +223,13 @@ const builtIn: PackagesView = {
     source: "builtin",
     tag: null,
   },
+  gpu: { state: "not_used", reason: null, guideUrl: null },
   reason: null,
   updateCheck: "daily",
   lastCheck: null,
 };
+
+const GUIDE = "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html";
 
 function renderInstall(
   packages: PackagesView | null,
@@ -644,4 +647,59 @@ test("the setup text never uses the system's own words", () => {
 test("a finished setup shows nothing more once the tool works", () => {
   const html = renderInstall(builtIn, { local: fresh, setup: setupView("done") });
   expect(html).not.toContain("Podman");
+});
+
+test("the install screen says the engine will use the graphics card when the checks pass", () => {
+  const html = renderInstall({ ...builtIn, gpu: { state: "used", reason: null, guideUrl: null } });
+  expect(html).toContain(en["wizard.install.gpu.used"]);
+  expect(html).not.toContain("<a ");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the install screen gives the one reason and a plain link when the card cannot be used", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: {
+      state: "not_used",
+      reason: { code: "gpu.no_passthrough", data: { runtime: "docker", guideUrl: GUIDE } },
+      guideUrl: GUIDE,
+    },
+  });
+  expect(html).toContain(en["gpu.no_passthrough"]);
+  expect(html).toContain(`<a href="${GUIDE}" target="_blank" rel="noreferrer noopener">How to set up the NVIDIA Container Toolkit</a>`);
+  expect(html).not.toContain(en["wizard.install.gpu.used"]);
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the install screen says nothing about the graphics card on a computer without one, or where it is not checked", () => {
+  for (const gpu of [
+    { state: "not_used", reason: null, guideUrl: null },
+    { state: "not_checked", reason: null, guideUrl: null },
+  ] as const) {
+    const html = renderInstall({ ...builtIn, gpu });
+    expect(html).not.toContain("graphics card");
+    expect(html).not.toContain("<a ");
+  }
+});
+
+test("forcing the processor shows its reason without a link", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: { state: "not_used", reason: { code: "gpu.forced_cpu", data: {} }, guideUrl: null },
+  });
+  expect(html).toContain(en["gpu.forced_cpu"]);
+  expect(html).not.toContain("<a ");
+});
+
+test("a link that is not https is not shown", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: {
+      state: "not_used",
+      reason: { code: "gpu.in_image_failed", data: { guideUrl: "javascript:alert(1)" } },
+      guideUrl: "javascript:alert(1)",
+    },
+  });
+  expect(html).toContain(en["gpu.in_image_failed"]);
+  expect(html).not.toContain("<a ");
 });

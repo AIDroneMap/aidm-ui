@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { GuideLink } from "../components/GuideLink.tsx";
 import { LocalInstallStatus } from "../components/LocalInstall.tsx";
 import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
@@ -233,6 +234,17 @@ export interface InstallScreenProps {
   onNext: () => void;
 }
 
+/** One sentence on the graphics card. A computer with no NVIDIA card gets none: that is the usual case. */
+function GpuNote({ gpu }: { gpu: PackagesView["gpu"] }) {
+  if (gpu.state === "used") return <p>{t("wizard.install.gpu.used")}</p>;
+  if (gpu.reason === null) return null;
+  return (
+    <p>
+      <Sentence error={gpu.reason} /> <GuideLink url={gpu.guideUrl} />
+    </p>
+  );
+}
+
 function Offer({ packages }: { packages: PackagesView }) {
   const { offer } = packages;
   if (!offer) {
@@ -252,6 +264,7 @@ function Offer({ packages }: { packages: PackagesView }) {
             : t("wizard.install.source.downloaded", { tag: offer.tag ?? "" })}
         </li>
       </ul>
+      <GpuNote gpu={packages.gpu} />
       {/* A newer release may be waiting for a newer AIDM UI while this one can still be installed. */}
       {packages.reason && (
         <p>

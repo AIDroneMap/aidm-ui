@@ -5,7 +5,7 @@ import { t } from "../i18n/translate.ts";
 import { capsRequest, gibDraft, memoryInputMax } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { BusyButton } from "./BusyButton.tsx";
-import type { LocalEngineView, RuntimeChoiceRequest, RuntimeId } from "../../../shared/api-types.ts";
+import type { ForceCpuRequest, LocalEngineView, RuntimeChoiceRequest, RuntimeId } from "../../../shared/api-types.ts";
 
 /** The words for a refusal. The server sends memory limits in bytes; the operator reads GiB. */
 export function failureText(failure: ApiFailure): string {
@@ -47,6 +47,10 @@ export interface AdvancedFormProps {
   runtimeSaved: boolean;
   runtimeFailure: ApiFailure | null;
   onRuntimeChange: (runtime: RuntimeId | null) => void;
+  forceCpuSaving: boolean;
+  forceCpuSaved: boolean;
+  forceCpuFailure: ApiFailure | null;
+  onForceCpuChange: (forceCpu: boolean) => void;
 }
 
 const MIN_MEMORY_GIB = 1;
@@ -119,6 +123,31 @@ export function AdvancedForm(props: AdvancedFormProps) {
         <p role="status">{props.saved ? t("local.advanced.saved") : ""}</p>
       </form>
 
+      <div className="field">
+        <div className="check">
+          <input
+            id="local-force-cpu"
+            type="checkbox"
+            checked={view.forceCpu}
+            aria-describedby="local-force-cpu-hint"
+            aria-disabled={props.forceCpuSaving ? "true" : undefined}
+            onChange={(event) => {
+              if (!props.forceCpuSaving) props.onForceCpuChange(event.target.checked);
+            }}
+          />
+          <label htmlFor="local-force-cpu">{t("local.advanced.force_cpu")}</label>
+        </div>
+        <p id="local-force-cpu-hint" className="hint">
+          {t("local.advanced.force_cpu_hint")}
+        </p>
+        {props.forceCpuFailure && (
+          <p role="alert" className="error">
+            {failureText(props.forceCpuFailure)}
+          </p>
+        )}
+        <p role="status">{props.forceCpuSaved ? t("local.advanced.force_cpu_saved") : ""}</p>
+      </div>
+
       {choices.length > 1 && (
         <fieldset aria-describedby="local-runtime-hint">
           <legend>{t("local.runtime.legend")}</legend>
@@ -171,6 +200,9 @@ export function LocalAdvanced(props: {
   const [runtimeSaving, setRuntimeSaving] = useState(false);
   const [runtimeSaved, setRuntimeSaved] = useState(false);
   const [runtimeFailure, setRuntimeFailure] = useState<ApiFailure | null>(null);
+  const [forceCpuSaving, setForceCpuSaving] = useState(false);
+  const [forceCpuSaved, setForceCpuSaved] = useState(false);
+  const [forceCpuFailure, setForceCpuFailure] = useState<ApiFailure | null>(null);
 
   // What the server holds is the truth: a saved change, or one made elsewhere, replaces the drafts.
   useEffect(() => {
@@ -219,6 +251,21 @@ export function LocalAdvanced(props: {
     }
   };
 
+  const chooseForceCpu = async (forceCpu: boolean) => {
+    setForceCpuSaving(true);
+    setForceCpuSaved(false);
+    setForceCpuFailure(null);
+    try {
+      const body: ForceCpuRequest = { forceCpu };
+      props.onView(await api<LocalEngineView>("PUT", "/api/local-engine/force-cpu", body));
+      setForceCpuSaved(true);
+    } catch (error) {
+      setForceCpuFailure(fail(error));
+    } finally {
+      setForceCpuSaving(false);
+    }
+  };
+
   return (
     <AdvancedForm
       view={view}
@@ -242,6 +289,10 @@ export function LocalAdvanced(props: {
       runtimeSaved={runtimeSaved}
       runtimeFailure={runtimeFailure}
       onRuntimeChange={(runtime) => void chooseRuntime(runtime)}
+      forceCpuSaving={forceCpuSaving}
+      forceCpuSaved={forceCpuSaved}
+      forceCpuFailure={forceCpuFailure}
+      onForceCpuChange={(forceCpu) => void chooseForceCpu(forceCpu)}
     />
   );
 }

@@ -2,13 +2,16 @@ import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { installStatus } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
+import { GuideLink } from "./GuideLink.tsx";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
 import type { ApiError } from "../../../shared/api-error.ts";
 
 function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" }) {
   return (
     <div className={kind === "problem" ? "error" : "warning"}>
-      <p>{t(error.code, messageParams(error))}</p>
+      <p>
+        {t(error.code, messageParams(error))} <GuideLink url={error.data.guideUrl} />
+      </p>
     </div>
   );
 }
