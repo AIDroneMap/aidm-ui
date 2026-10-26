@@ -4,9 +4,9 @@ import { ApiFailure } from "../api.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
 import { LoginView } from "./LoginPage.tsx";
 
-function render(failure: ApiFailure | null): string {
+function render(failure: ApiFailure | null, signingIn = false): string {
   return renderToStaticMarkup(
-    <LoginView passphrase="" onPassphraseChange={() => {}} failure={failure} signingIn={false} onSubmit={() => {}} />,
+    <LoginView passphrase="" onPassphraseChange={() => {}} failure={failure} signingIn={signingIn} onSubmit={() => {}} />,
   );
 }
 
@@ -23,4 +23,9 @@ test("a wrong passphrase shows its text in an alert", () => {
   expect(html).toContain('role="alert"');
   expect(html).toContain("That passphrase is not right. Check it and try again.");
   expect(untranslatedText(html)).toEqual([]);
+});
+
+test("a status area is always in the page and announces that the sign in is running", () => {
+  expect(render(null)).toContain('<p role="status"></p>');
+  expect(render(null, true)).toContain('<p role="status">Signing in...</p>');
 });

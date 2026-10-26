@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure } from "../api.ts";
 import type { SettingsView as SettingsData } from "../../../shared/api-types.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
-import { SettingsView, type SettingsViewProps } from "./SettingsPage.tsx";
+import { SettingsForm, type SettingsFormProps } from "./SettingsPage.tsx";
 
 const lanOff: SettingsData = { port: null, listeningPort: 8823, lan: { enabled: false, addresses: [] } };
 
-function render(overrides: Partial<SettingsViewProps> = {}, settings: SettingsData | null = lanOff): string {
-  const props: SettingsViewProps = {
+function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsData | null = lanOff): string {
+  const props: SettingsFormProps = {
     settings,
     failure: null,
     saving: null,
@@ -24,7 +24,7 @@ function render(overrides: Partial<SettingsViewProps> = {}, settings: SettingsDa
     onTurnLanOff: () => {},
     ...overrides,
   };
-  return renderToStaticMarkup(<SettingsView {...props} />);
+  return renderToStaticMarkup(<SettingsForm {...props} />);
 }
 
 test("with the local network off, the port field is labelled and there is no passphrase field", () => {
@@ -85,4 +85,29 @@ test("a failed load shows the error", () => {
   const html = render({ failure: { section: "load", error: new ApiFailure(0, "network.unreachable") } }, null);
   expect(html).toContain('role="alert"');
   expect(untranslatedText(html)).toEqual([]);
+});
+
+test("each section has a status area that is in the page even when empty, and a save fills it", () => {
+  const empty = render();
+  expect(empty.match(/<p role="status"><\/p>/g)?.length).toBe(2);
+
+  const portSaved = render({ saved: "port" });
+  expect(portSaved).toContain('<p role="status">Port saved.');
+  expect(portSaved.match(/role="status"/g)?.length).toBe(2);
+
+  const lanSaved = render({ saved: "lan-off" });
+  expect(lanSaved).toContain('<p role="status">AIDM UI is now closed to your local network.</p>');
+  expect(lanSaved.match(/role="status"/g)?.length).toBe(2);
+});
+
+test("a bad port marks the field invalid and points it at the hint and the error", () => {
+  const failure = new ApiFailure(400, "settings.port_invalid", { min: 1, max: 65535 });
+  const html = render({ failure: { section: "port", error: failure }, portDraft: "99999" });
+  expect(html).toContain('aria-invalid="true"');
+  expect(html).toContain('aria-describedby="settings-port-hint settings-port-error"');
+  expect(html).toContain('<p id="settings-port-error" role="alert"');
+
+  const fine = render();
+  expect(fine).not.toContain("aria-invalid");
+  expect(fine).toContain('aria-describedby="settings-port-hint"');
 });

@@ -10,9 +10,9 @@ function params(data: Record<string, unknown>): Record<string, string | number> 
   return out;
 }
 
-export function ErrorMessage({ failure }: { failure: ApiFailure }) {
+export function ErrorMessage({ failure, id }: { failure: ApiFailure; id?: string }) {
   return (
-    <p role="alert" className="error">
+    <p id={id} role="alert" className="error">
       {t(failure.code, params(failure.data))}
     </p>
   );

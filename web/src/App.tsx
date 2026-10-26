@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiFailure } from "./api.ts";
+import { api, asApiFailure, type ApiFailure } from "./api.ts";
 import { ErrorMessage } from "./components/ErrorMessage.tsx";
 import { Layout } from "./components/Layout.tsx";
 import { t } from "./i18n/translate.ts";
@@ -23,7 +23,7 @@ export function App() {
         if (current) setSession(view.passphraseRequired ? "login" : "ready");
       },
       (error: unknown) => {
-        if (current) setFailure(error instanceof ApiFailure ? error : new ApiFailure(0, "server.internal_error"));
+        if (current) setFailure(asApiFailure(error));
       },
     );
     return () => {

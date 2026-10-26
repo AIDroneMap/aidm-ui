@@ -21,7 +21,7 @@
   "settings.port.save": "Save port",
   "settings.port.saved": "Port saved. It applies the next time you start AIDM UI.",
   "settings.lan.title": "Local network",
-  "settings.lan.explain": "When this is on, every device on the network needs the passphrase to use AIDM UI.",
+  "settings.lan.explain": "When this is on, other devices on the network need the passphrase to use AIDM UI. This computer does not.",
   "settings.lan.switch": "Open AIDM UI to my local network",
   "settings.lan.passphrase_label": "Passphrase for the network",
   "settings.lan.passphrase_hint": "At least {min} characters. Write it down, because AIDM UI cannot show it again.",
@@ -43,6 +43,7 @@
   "auth.passphrase_required": "Enter the passphrase to use AIDM UI from this device.",
   "auth.passphrase_wrong": "That passphrase is not right. Check it and try again.",
   "auth.too_many_attempts": "Too many wrong passphrases. Wait a few minutes, then try again.",
+  "settings.lan_local_only": "Only the computer that runs AIDM UI can change this setting.",
   "settings.port_invalid": "Enter a port between {min} and {max}, or leave it empty.",
   "settings.passphrase_too_short": "The passphrase needs at least {min} characters.",
   "network.unreachable": "AIDM UI does not answer. Check that it is still running, then try again."

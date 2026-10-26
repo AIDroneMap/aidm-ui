@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, ApiFailure } from "../api.ts";
+import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { t } from "../i18n/translate.ts";
 import {
@@ -14,7 +14,7 @@ import {
 
 export type Section = "load" | "port" | "lan";
 
-export interface SettingsViewProps {
+export interface SettingsFormProps {
   /** Null while the settings are loading. */
   settings: SettingsData | null;
   /** The last failure and the section it belongs to, so it shows next to the cause. */
@@ -35,11 +35,11 @@ export interface SettingsViewProps {
   onTurnLanOff: () => void;
 }
 
-function Failure({ props, section }: { props: SettingsViewProps; section: Section }) {
-  return props.failure?.section === section ? <ErrorMessage failure={props.failure.error} /> : null;
+function Failure({ props, section, id }: { props: SettingsFormProps; section: Section; id?: string }) {
+  return props.failure?.section === section ? <ErrorMessage failure={props.failure.error} id={id} /> : null;
 }
 
-export function SettingsView(props: SettingsViewProps) {
+export function SettingsForm(props: SettingsFormProps) {
   const { settings } = props;
   if (!settings) {
     return (
@@ -51,6 +51,7 @@ export function SettingsView(props: SettingsViewProps) {
   }
 
   const lanOn = settings.lan.enabled;
+  const portInvalid = props.failure?.section === "port" && props.failure.error.code === "settings.port_invalid";
   const submitPort = (event: FormEvent) => {
     event.preventDefault();
     props.onSavePort();
@@ -77,7 +78,8 @@ export function SettingsView(props: SettingsViewProps) {
               min={PORT_MIN}
               max={PORT_MAX}
               placeholder={String(DEFAULT_PORT)}
-              aria-describedby="settings-port-hint"
+              aria-invalid={portInvalid ? "true" : undefined}
+              aria-describedby={portInvalid ? "settings-port-hint settings-port-error" : "settings-port-hint"}
               value={props.portDraft}
               onChange={(event) => props.onPortDraftChange(event.target.value)}
             />
@@ -85,11 +87,11 @@ export function SettingsView(props: SettingsViewProps) {
               {t("settings.port.hint", { port: DEFAULT_PORT })}
             </p>
           </div>
-          <Failure props={props} section="port" />
+          <Failure props={props} section="port" id="settings-port-error" />
           <button type="submit" disabled={props.saving === "port"}>
             {props.saving === "port" ? t("common.saving") : t("settings.port.save")}
           </button>
-          {props.saved === "port" && <p role="status">{t("settings.port.saved")}</p>}
+          <p role="status">{props.saved === "port" ? t("settings.port.saved") : ""}</p>
         </form>
       </section>
 
@@ -157,8 +159,9 @@ export function SettingsView(props: SettingsViewProps) {
             </button>
           </>
         )}
-        {props.saved === "lan-on" && <p role="status">{t("settings.lan.saved_on")}</p>}
-        {props.saved === "lan-off" && <p role="status">{t("settings.lan.saved_off")}</p>}
+        <p role="status">
+          {props.saved === "lan-on" ? t("settings.lan.saved_on") : props.saved === "lan-off" ? t("settings.lan.saved_off") : ""}
+        </p>
       </section>
     </>
   );
@@ -166,15 +169,15 @@ export function SettingsView(props: SettingsViewProps) {
 
 export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void }) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
-  const [failure, setFailure] = useState<SettingsViewProps["failure"]>(null);
-  const [saving, setSaving] = useState<SettingsViewProps["saving"]>(null);
-  const [saved, setSaved] = useState<SettingsViewProps["saved"]>(null);
+  const [failure, setFailure] = useState<SettingsFormProps["failure"]>(null);
+  const [saving, setSaving] = useState<SettingsFormProps["saving"]>(null);
+  const [saved, setSaved] = useState<SettingsFormProps["saved"]>(null);
   const [portDraft, setPortDraft] = useState("");
   const [lanWantsOn, setLanWantsOn] = useState(false);
   const [passphrase, setPassphrase] = useState("");
 
   const fail = (section: Section, error: unknown) => {
-    const failure = error instanceof ApiFailure ? error : new ApiFailure(0, "server.internal_error");
+    const failure = asApiFailure(error);
     if (failure.code === "auth.passphrase_required") onAuthRequired();
     setFailure({ section, error: failure });
   };
@@ -204,7 +207,7 @@ export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void })
     section: "port" | "lan",
     path: string,
     body: PortSettingRequest | LanSettingRequest,
-    done: NonNullable<SettingsViewProps["saved"]>,
+    done: NonNullable<SettingsFormProps["saved"]>,
   ) => {
     setSaving(section);
     setFailure(null);
@@ -230,7 +233,7 @@ export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void })
   };
 
   return (
-    <SettingsView
+    <SettingsForm
       settings={settings}
       failure={failure}
       saving={saving}

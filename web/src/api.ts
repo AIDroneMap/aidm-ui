@@ -17,6 +17,11 @@ export class ApiFailure extends Error {
   }
 }
 
+/** What a thrown value means to the interface: an API failure as it is, anything else as an internal error. */
+export function asApiFailure(error: unknown): ApiFailure {
+  return error instanceof ApiFailure ? error : new ApiFailure(0, "server.internal_error");
+}
+
 // Empty in the browser, so every call goes to the page's own origin. Tests
 // point it at a local server.
 let base = "";

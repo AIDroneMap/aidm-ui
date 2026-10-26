@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, ApiFailure } from "../api.ts";
+import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { t } from "../i18n/translate.ts";
 import type { LoginRequest } from "../../../shared/api-types.ts";
@@ -37,6 +37,7 @@ export function LoginView(props: LoginViewProps) {
         <button type="submit" disabled={props.signingIn}>
           {props.signingIn ? t("login.working") : t("login.submit")}
         </button>
+        <p role="status">{props.signingIn ? t("login.working") : ""}</p>
       </form>
     </main>
   );
@@ -56,7 +57,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: () => void }) {
       setPassphrase("");
       onSignedIn();
     } catch (error) {
-      setFailure(error instanceof ApiFailure ? error : new ApiFailure(0, "server.internal_error"));
+      setFailure(asApiFailure(error));
     } finally {
       setSigningIn(false);
     }
