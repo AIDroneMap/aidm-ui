@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-export type Route = "home" | "settings";
+export type Route = "home" | "engines" | "settings";
 
 export function routeFromHash(hash: string): Route {
-  return hash === "#/settings" ? "settings" : "home";
+  if (hash === "#/settings") return "settings";
+  return hash === "#/engines" ? "engines" : "home";
 }
 
 function subscribe(onChange: () => void): () => void {

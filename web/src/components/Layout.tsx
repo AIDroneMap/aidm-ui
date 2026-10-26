@@ -11,6 +11,9 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
           <a href="#/" aria-current={route === "home" ? "page" : undefined}>
             {t("nav.home")}
           </a>
+          <a href="#/engines" aria-current={route === "engines" ? "page" : undefined}>
+            {t("nav.engines")}
+          </a>
           <a href="#/settings" aria-current={route === "settings" ? "page" : undefined}>
             {t("nav.settings")}
           </a>

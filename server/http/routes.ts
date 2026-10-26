@@ -1,5 +1,6 @@
 import { errorResponse } from "../../shared/api-error.ts";
 import { authRoutes } from "../auth/routes.ts";
+import { engineRoutes } from "../engines/routes.ts";
 import { settingsRoutes } from "../settings/routes.ts";
 import type { GuardedHandler, ServeRoutes } from "./listener.ts";
 import type { Method, RouteContext, RouteHandler, RouteTable } from "./route-table.ts";
@@ -19,9 +20,9 @@ function healthRoutes(ctx: RouteContext): RouteTable {
   return { "/api/health": { GET: () => Response.json(ctx.identity) } };
 }
 
-/** Every API route. Engines and the other routes join this table in later tickets. */
+/** Every API route. The routes of projects and runs join this table in later tickets. */
 export function apiRoutes(ctx: RouteContext): RouteTable {
-  return { ...healthRoutes(ctx), ...settingsRoutes(ctx), ...authRoutes(ctx) };
+  return { ...healthRoutes(ctx), ...settingsRoutes(ctx), ...authRoutes(ctx), ...engineRoutes(ctx) };
 }
 
 /**
@@ -34,7 +35,7 @@ function guarded(ctx: RouteContext, handler: RouteHandler): GuardedHandler {
     const client = { address: server.requestIP(req)?.address ?? "" };
     try {
       const refusal = await ctx.auth().authorize(req, client);
-      return withSecurityHeaders(refusal ?? (await handler(req, { client })));
+      return withSecurityHeaders(refusal ?? (await handler(req, { client, server })));
     } catch (error) {
       ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describeError(error)}`);
       return withSecurityHeaders(errorResponse(500, "server.internal_error"));

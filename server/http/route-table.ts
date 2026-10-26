@@ -2,11 +2,16 @@ import { errorResponse } from "../../shared/api-error.ts";
 import type { AuthHook, ClientInfo } from "../auth/hook.ts";
 import type { Sessions } from "../auth/sessions.ts";
 import type { InstanceIdentity } from "../app/instance.ts";
+import type { EngineMonitor } from "../engines/engine-monitor.ts";
+import type { EngineStore } from "../engines/engine-store.ts";
 import type { Settings } from "../settings/settings.ts";
+import type { EventStreams } from "./event-streams.ts";
 import type { AssetMap } from "./static-assets.ts";
 
 export interface RequestContext {
   client: ClientInfo;
+  /** For the few routes that stream and must switch off the idle timeout. */
+  server: Bun.Server<undefined>;
 }
 
 export type RouteHandler = (req: Bun.BunRequest, rc: RequestContext) => Response | Promise<Response>;
@@ -20,6 +25,10 @@ export interface RouteContext {
   assets: AssetMap;
   settings: Settings;
   sessions: Sessions;
+  engines: EngineMonitor;
+  engineStore: EngineStore;
+  /** Where every server-sent event stream is opened. */
+  streams: EventStreams;
   /** A function because the hook changes when the LAN switch moves. */
   auth: () => AuthHook;
   /** The port the server listens on now. */
