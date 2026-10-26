@@ -6,9 +6,10 @@ import type { InstallStepId, InstallStepView } from "../../shared/api-types.ts";
 import { downloadVerified, type DownloadOptions } from "../downloads/downloader.ts";
 import { downloadImage, imageFolder, removeImageDownload, type ImageDownloadOptions, type PinnedImage } from "../images/image-download.ts";
 import type { FreeBytes } from "../machine/disk.ts";
-import { describeCommand, type CommandRunner } from "../process/command-runner.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
 import { APPLE_TOOL, loadIntoAppleTool, parseToolVersion } from "./apple-container.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
 
 export interface InstallerPin {
   version: string;
@@ -259,7 +260,7 @@ export class MacSetup {
     return (this.deps.kernelPresent ?? (() => kernelPresent()))();
   }
 
-  private downloadOptions(run: MacSetupRun): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress"> {
+  private downloadOptions(run: MacSetupRun): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress" | "log"> {
     return {
       fetch: this.deps.fetch,
       signal: run.signal,
@@ -268,6 +269,7 @@ export class MacSetup {
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
       onProgress: (received) => run.onReceived(received),
+      log: this.deps.log,
     };
   }
 
@@ -278,14 +280,13 @@ export class MacSetup {
     // Nothing below runs unless that check passed.
     const downloaded = await downloadVerified(
       { url: this.installer.url, size: this.installer.size, sha256: this.installer.sha256, path },
-      this.downloadOptions(run),
+      { ...this.downloadOptions(run), label: `Apple's installer ${this.installer.version}` },
     );
     if (!downloaded.ok) return { ok: false, step: "installer", error: downloaded.error };
 
     run.onStep("approve");
     // Opening the package makes macOS ask for the administrator password, once.
     const opening = ["open", downloaded.path];
-    this.deps.log(describeCommand(opening));
     const opened = await this.deps.runner.run(opening);
     if (opened.exitCode !== 0) return this.notFinished("open_failed");
 
@@ -343,7 +344,6 @@ export class MacSetup {
     const argv = [APPLE_TOOL, "system", "start", ownKernel ? "--enable-kernel-install" : "--disable-kernel-install"];
     const step: InstallStepId = ownKernel ? "kernel" : "service";
     run.onStep(step);
-    this.deps.log(describeCommand(argv));
     const result = await this.deps.runner.stream(argv, {
       signal: run.signal,
       onLine: (line) => {
@@ -355,6 +355,7 @@ export class MacSetup {
     });
     if (result.exitCode === 0) return { ok: true };
     if (run.signal?.aborted) return { ok: false, step, error: { code: "download.cancelled", data: {} } };
+    this.deps.log(`Service check failed: expected "container system start" to exit 0, found exit ${result.exitCode}`);
     return { ok: false, step, error: { code: "mac.start_failed", data: { step, exitCode: result.exitCode } } };
   }
 
@@ -370,14 +371,13 @@ export class MacSetup {
     const path = join(this.deps.dataFolder, "downloads", `kata-static-${this.kernel.version}-arm64.tar.zst`);
     const downloaded = await downloadVerified(
       { url: this.kernel.url, size: this.kernel.size, sha256: this.kernel.sha256, path },
-      this.downloadOptions(run),
+      { ...this.downloadOptions(run), label: `Linux system for Apple's tool (Kata ${this.kernel.version})` },
     );
     if (!downloaded.ok) return { ok: false, step: "kernel", error: downloaded.error };
     const argv = [APPLE_TOOL, "system", "kernel", "set", "--tar", path, "--binary", this.kernel.member, "--digest", `sha256:${this.kernel.sha256}`];
-    this.deps.log(describeCommand(argv));
     const result = await this.deps.runner.run(argv, { timeoutMs: KERNEL_SET_TIMEOUT_MS });
     if (result.exitCode !== 0) {
-      this.deps.log(`The tool did not take the kernel (exit code ${result.exitCode}): ${result.stderr.trim().split("\n").slice(-3).join(" / ")}`);
+      this.deps.log(`Kernel check failed: expected the tool's kernel set to exit 0, found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
       return { ok: false, step: "kernel", error: { code: "mac.kernel_failed", data: { exitCode: result.exitCode } } };
     }
     rmSync(path, { force: true });
@@ -398,6 +398,7 @@ export class MacSetup {
     const result = await this.deps.runner.run(argv, { timeoutMs: INSPECT_TIMEOUT_MS });
     if (result.exitCode === 0) return { state: "present" };
     if (IMAGE_NOT_FOUND.test(`${result.stderr}\n${result.stdout}`)) return { state: "absent" };
+    this.deps.log(`Startup files check failed: expected exit 0 (there) or "image not found" (missing), found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
     return { state: "unknown", exitCode: result.exitCode };
   }
 
@@ -426,6 +427,7 @@ export class MacSetup {
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
       onProgress: (progress) => run.onReceived(progress.received, progress.bytesPerSecond),
+      log: this.deps.log,
     };
     const downloaded = await downloadImage(pinned, folder, options);
     if (!downloaded.ok) return { ok: false, step: "init", error: downloaded.error };
@@ -437,7 +439,7 @@ export class MacSetup {
       return { ok: false, step: "init", error: { code: "mac.init_load_failed", data: { exitCode: loaded.error.data.exitCode ?? null } } };
     }
     if (!loaded.references.includes(this.initImage.reference)) {
-      this.deps.log(`The tool loaded the startup files but named ${loaded.references.join(", ") || "nothing"}, not ${this.initImage.reference}.`);
+      this.deps.log(`Startup files check failed: expected the load to name ${this.initImage.reference}, found ${loaded.references.join(", ") || "no name"}`);
       return { ok: false, step: "init", error: { code: "mac.init_not_named", data: {} } };
     }
     removeImageDownload(folder);

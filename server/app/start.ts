@@ -39,6 +39,8 @@ import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listene
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
+import { loggingRunner } from "../process/logging-runner.ts";
+import { openDiagnosisLog } from "./diagnosis-log.ts";
 import { DEFAULT_PORT } from "../../shared/api-types.ts";
 
 /** 8823, 8824, ... 8832 */
@@ -112,28 +114,35 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   const lock = readLock(dataFolder);
   if (lock && isProcessAlive(lock.pid) && (await isOurs(lock.port))) return attach(lock.port);
 
+  // The readable log for diagnosis, on by default: the terminal and logs/aidm-ui.log. No engine token reaches it.
+  let tokens: () => string[] = () => [];
+  const log = openDiagnosisLog({ dataFolder, terminal: options.log, secrets: () => tokens() });
+  log(`aidm-ui ${options.version} starts, on ${process.platform} ${process.arch}, with the data folder ${dataFolder}`);
+
   const db = openDatabase(dataFolder);
   let databaseBelongsToServer = false;
   try {
     const settings = new Settings(db);
     const sessions = new Sessions();
-    const engineStore = new EngineStore(db, options.log);
-    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: options.log });
+    const engineStore = new EngineStore(db, log);
+    tokens = () => engineStore.list().map((engine) => engine.token);
+    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log });
     const runStore = new RunStore(db);
     const tracker = new RunTracker({
       runs: runStore,
       engines: engineStore,
       dataFolder,
       intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
-      log: options.log,
+      log: log,
     });
     const manifests = new ManifestService({
       settings,
       uiVersion: options.version,
       now: Date.now,
-      log: options.log,
+      log: log,
     });
-    let runner = systemRunner();
+    // Every command a runtime or a check runs gets a line in the diagnosis log.
+    let runner = loggingRunner(systemRunner(), log);
     if (commandLine.recordRuntimeCommands) {
       // A diagnostic for the maintainer, so the line goes to the terminal and the interface never hears of it.
       const file = join(dataFolder, "diagnostics", "runtime-commands.jsonl");
@@ -142,9 +151,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         version: options.version,
         secrets: () => engineStore.list().filter((engine) => engine.kind === "local").map((engine) => engine.token),
       });
-      options.log(`Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`);
+      log(`Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`);
     }
-    const machine = systemMachine(dataFolder);
+    const machine = systemMachine(dataFolder, runner);
     const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
     const onMac = process.platform === "darwin";
     const localEngine = new LocalEngineManager({
@@ -153,7 +162,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       monitor: engines,
       manifests,
       runs: runStore,
-      runtimes: (id) => containerRuntime(id, runner, options.log),
+      runtimes: (id) => containerRuntime(id, runner, log),
       detectRuntimes: () => Promise.all(allRuntimes(runner, process.platform).map((runtime) => runtime.detect())),
       runner,
       machine: {
@@ -164,8 +173,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       },
       dataFolder,
       freeBytes,
-      log: options.log,
-      macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: options.log }) : undefined,
+      log: log,
+      macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: log }) : undefined,
       localEngineOffer: async () => (await machineChecks.read()).localEngine,
       nativeRunner: runner,
     });
@@ -177,7 +186,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engines,
       engineStore,
       architecture: process.arch,
-      log: options.log,
+      log: log,
       localMemoryCap: () => localEngine.memoryCap(),
     });
     const runtimeSetup = new RuntimeSetup({
@@ -188,9 +197,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       runner,
       checks: machineChecks,
       install: () => localEngine.install(),
-      log: options.log,
+      log: log,
     });
-    const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: options.log });
+    const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: log });
     let listener: Listener | undefined;
 
     const routes = createRoutes({
@@ -214,7 +223,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         await listener?.rebind(hostname);
       },
       now: Date.now,
-      log: options.log,
+      log: log,
     });
     const fetch = fallbackFetch();
     // The command line wins over the stored setting, which wins over the default.
@@ -234,7 +243,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       const running = listener;
       writeLock(dataFolder, { pid: process.pid, port });
       const url = urlFor(port);
-      options.log(`aidm-ui is running at ${url}`);
+      log(`aidm-ui is running at ${url}`);
       databaseBelongsToServer = true;
       engines.start();
       tracker.start();

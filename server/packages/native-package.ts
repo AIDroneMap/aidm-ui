@@ -299,6 +299,8 @@ export class NativePackage implements EnginePackage {
       { url: variant.url, size: variant.size, sha256: variant.sha256, path: archive },
       {
         fetch: this.deps.fetch,
+        log: this.deps.log,
+        label: `engine program ${this.deps.version}`,
         signal: options.signal,
         freeBytes: this.deps.freeBytes,
         backoffMs: this.deps.backoffMs,

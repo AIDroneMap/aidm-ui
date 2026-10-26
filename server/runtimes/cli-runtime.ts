@@ -1,5 +1,6 @@
 import type { DownloadedImage } from "../images/image-download.ts";
-import { describeCommand, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
+import type { CommandResult, CommandRunner } from "../process/command-runner.ts";
 import {
   asRecord,
   fail,
@@ -63,7 +64,6 @@ export function cliRuntime(
   const binary: string = tool.id;
 
   async function run(argv: string[], timeoutMs?: number): Promise<CommandResult> {
-    log(describeCommand(argv));
     return runner.run(argv, timeoutMs === undefined ? {} : { timeoutMs });
   }
 
@@ -82,7 +82,6 @@ export function cliRuntime(
       const result = await tool.load(image, {
         signal: options.signal,
         stream: (argv, stdin) => {
-          log(describeCommand(argv));
           return runner.stream(argv, {
             signal: options.signal,
             ...(stdin === undefined ? {} : { stdin }),
@@ -96,7 +95,7 @@ export function cliRuntime(
       });
       if (result.exitCode === 0) return ok(undefined);
       if (options.signal?.aborted) return fail("download.cancelled");
-      log(`The load ended with exit code ${result.exitCode}: ${kept.slice(-5).join(" / ")}`);
+      log(`Load check failed for ${image.name}: expected exit 0, found exit ${result.exitCode}: ${excerpt(kept.slice(-5).join(" / "))}`);
       return fail("runtime.load_failed", { exitCode: result.exitCode });
     },
 
@@ -104,7 +103,9 @@ export function cliRuntime(
       const result = await run([binary, "image", "inspect", image.name]);
       const parsed = parseJson(result.stdout);
       const entry = asRecord(Array.isArray(parsed) ? parsed[0] : undefined);
+      const expected = `manifest ${image.manifest.digest} or config ${image.config.digest}`;
       if (result.exitCode !== 0 || entry === undefined || typeof entry.Id !== "string") {
+        log(`Image check failed for ${image.name}: expected exit 0 and an image with ${expected}, found exit ${result.exitCode}: ${excerpt(`${result.stdout} ${result.stderr}`)}`);
         return fail("runtime.image_not_verified", { name: image.name });
       }
       // Podman gives the ID without its algorithm; it reads the full form too.
@@ -113,7 +114,10 @@ export function cliRuntime(
       // and the manifest digest in Docker's containerd store. Podman also
       // keeps the manifest digest it was given.
       const matches = id === image.config.digest || id === image.manifest.digest || entry.Digest === image.manifest.digest;
-      if (!matches) return fail("runtime.image_not_verified", { name: image.name });
+      if (!matches) {
+        log(`Image check failed for ${image.name}: expected ${expected}, found ID ${id} and digest ${String(entry.Digest ?? "none")}`);
+        return fail("runtime.image_not_verified", { name: image.name });
+      }
       return ok(id);
     },
 
@@ -145,7 +149,6 @@ export function cliRuntime(
       const argv = oneOffArgv(binary, spec, tool.gpuFlags);
       // A check container left by a crash would make this one fail on its name.
       await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
-      log(describeCommand(argv));
       const out: string[] = [];
       const err: string[] = [];
       const result = await runner.stream(argv, {
@@ -188,7 +191,6 @@ export function cliRuntime(
         ...(options.tail === undefined ? [] : ["--tail", String(options.tail)]),
         name,
       ];
-      log(describeCommand(argv));
       // The tool reports a missing container on the stream the container's own
       // lines use, so that one message is kept back from the caller.
       let missing = false;

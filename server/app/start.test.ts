@@ -109,15 +109,27 @@ test("without --record-runtime-commands no diagnostics folder appears", async ()
   expect(existsSync(join(result.dataFolder, "diagnostics"))).toBe(false);
 });
 
+test("the diagnosis log is on by default: each line has its time, goes to the terminal and to logs/aidm-ui.log, and names every runtime command", async () => {
+  const port = await freePort();
+  const lines: string[] = [];
+  const result = started(await start("a", port, [], (line) => lines.push(line)));
+  const file = join(result.dataFolder, "logs", "aidm-ui.log");
+  await eventually(async () => existsSync(file) && readFileSync(file, "utf8").includes(" Command: "));
+  expect(lines[0]).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z aidm-ui \S+ starts, on /);
+  const written = readFileSync(file, "utf8");
+  expect(written).toContain(lines[0] ?? "no line");
+  // A command line, its exit code and how long it took.
+  expect(written).toMatch(/ Command: \S+ .* -> exit -?\d+ after \d+\.\d s\n/);
+});
+
 test("--record-runtime-commands says where it records, and the runtime commands end up there", async () => {
   const port = await freePort();
   const lines: string[] = [];
   const result = started(await start("a", port, ["--record-runtime-commands"], (line) => lines.push(line)));
   const file = join(result.dataFolder, "diagnostics", "runtime-commands.jsonl");
 
-  expect(lines).toContain(
-    `Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`,
-  );
+  // Each line of the log starts with its time.
+  expect(lines.some((line) => line.endsWith(` Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`))).toBe(true);
   // On start the server asks each container runtime whether it answers. The programs may be missing here,
   // and a missing program is recorded too, so this holds on any machine.
   await eventually(async () => existsSync(file) && readFileSync(file, "utf8").includes('"kind":"run"'));

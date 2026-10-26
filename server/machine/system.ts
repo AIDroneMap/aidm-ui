@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
-import { systemRunner } from "../process/command-runner.ts";
+import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
 import { freeBytes } from "./disk.ts";
 import { gatherMachineFacts, type MachineFacts } from "./facts.ts";
 
-/** The real computer, for the running server. */
-export function systemMachine(dataFolder: string): { gather(): Promise<MachineFacts> } {
-  const runner = systemRunner();
+/** The real computer, for the running server. The runner is the server's, so the machine check's commands are logged and recorded like the others. */
+export function systemMachine(dataFolder: string, runner: CommandRunner = systemRunner()): { gather(): Promise<MachineFacts> } {
   return {
     gather: () =>
       gatherMachineFacts({

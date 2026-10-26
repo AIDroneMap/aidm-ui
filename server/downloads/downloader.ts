@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import { freeBytes as defaultFreeBytes, type FreeBytes } from "../machine/disk.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, DOWNLOAD_IDLE_MS, DOWNLOAD_STALL_MS } from "../machine/thresholds.ts";
@@ -41,9 +41,24 @@ export interface DownloadOptions {
   checkSpace?: boolean;
   /** Milliseconds since the epoch. */
   now?: () => number;
+  /** The diagnosis log: the start, every resume and the end of the download. */
+  log?: (line: string) => void;
+  /** What the download is, for the log, e.g. "Apple's installer 1.6.1". Default: the file's name. */
+  label?: string;
 }
 
 export type DownloadOutcome = { ok: true; path: string } | { ok: false; error: ApiError };
+
+/** Seconds with one decimal. */
+function seconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Bytes per second in MiB/s or KiB/s, for the log. */
+export function formatRate(bytesPerSecond: number): string {
+  if (bytesPerSecond >= 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(2)} MiB/s`;
+  return `${(bytesPerSecond / 1024).toFixed(1)} KiB/s`;
+}
 
 function defaultBackoff(attempt: number): number {
   return Math.min(1000 * 2 ** (attempt - 1), 30_000);
@@ -127,13 +142,20 @@ export async function downloadVerified(
   const idleMs = options.idleMs ?? DOWNLOAD_IDLE_MS;
   const now = options.now ?? Date.now;
   const part = `${target.path}.part`;
+  const log = options.log ?? (() => {});
+  const label = options.label ?? basename(target.path);
+  const began = now();
 
   mkdirSync(dirname(target.path), { recursive: true });
 
   if (existsSync(target.path)) {
     const existing = await sha256Of(target.path, signal);
     if (existing === null) return fail("download.cancelled");
-    if (existing === target.sha256) return { ok: true, path: target.path };
+    if (existing === target.sha256) {
+      log(`Download ${label}: already on disk and checked, ${target.size} bytes`);
+      return { ok: true, path: target.path };
+    }
+    log(`Download ${label}: check failed for the file on disk: expected SHA-256 ${target.sha256}, found ${existing}. It is downloaded again.`);
     remove(target.path);
   }
 
@@ -142,6 +164,22 @@ export async function downloadVerified(
     const free = (options.freeBytes ?? defaultFreeBytes)(dirname(target.path));
     if (free < needed) return fail("download.not_enough_space", { needed, free });
   }
+
+  const onDisk = sizeOf(part);
+  log(`Download ${label}: started, ${target.size} bytes${onDisk > 0 ? `, going on from byte ${onDisk} already on disk` : ""}`);
+  let interruptions = 0;
+  const ended = (outcome: DownloadOutcome): DownloadOutcome => {
+    const took = now() - began;
+    if (outcome.ok) {
+      const average = took > 0 ? (target.size - onDisk) / (took / 1000) : 0;
+      log(
+        `Download ${label}: finished, ${target.size} bytes in ${seconds(took)}, ${formatRate(average)} on average, ${interruptions} interruption${interruptions === 1 ? "" : "s"}`,
+      );
+    } else {
+      log(`Download ${label}: failed after ${seconds(took)} at byte ${sizeOf(part)} of ${target.size}: ${outcome.error.code}${Object.keys(outcome.error.data).length === 0 ? "" : ` ${JSON.stringify(outcome.error.data)}`}`);
+    }
+    return outcome;
+  };
 
   // A host that cannot serve the range we ask for gets one fresh start from byte 0.
   let startedOver = false;
@@ -233,34 +271,38 @@ export async function downloadVerified(
   }
 
   for (let tries = 0; ; tries++) {
-    if (signal?.aborted) return fail("download.cancelled");
+    if (signal?.aborted) return ended(fail("download.cancelled"));
     const before = sizeOf(part);
     const outcome = await attempt();
-    if (outcome.result === "cancelled") return fail("download.cancelled");
-    if (outcome.result === "refused") return fail("download.failed");
+    if (outcome.result === "cancelled") return ended(fail("download.cancelled"));
+    if (outcome.result === "refused") return ended(fail("download.failed"));
     if (outcome.result === "restart") {
       tries--;
       continue;
     }
     if (outcome.result === "too_long") {
       remove(part);
-      return fail("download.checksum_mismatch");
+      log(`Download ${label}: the host sent more than the ${target.size} bytes pinned; the part was discarded`);
+      return ended(fail("download.checksum_mismatch"));
     }
     if (outcome.result === "complete") break;
     // A link that keeps making progress starts its backoff again.
     if (sizeOf(part) > before) tries = 0;
     const left = stallMs - (now() - lastByteAt);
-    if (left <= 0) return fail("download.stalled", { seconds: Math.round(stallMs / 1000) });
+    if (left <= 0) return ended(fail("download.stalled", { seconds: Math.round(stallMs / 1000) }));
+    interruptions++;
+    log(`Download ${label}: interruption ${interruptions} (${outcome.reason.code}), goes on from byte ${sizeOf(part)}`);
     options.onRetry?.(outcome.reason);
     await sleep(Math.min(backoff(tries + 1), left), signal);
   }
 
   const checksum = await sha256Of(part, signal);
-  if (checksum === null) return fail("download.cancelled");
+  if (checksum === null) return ended(fail("download.cancelled"));
   if (checksum !== target.sha256) {
     remove(part);
-    return fail("download.checksum_mismatch");
+    log(`Download ${label}: check failed: expected SHA-256 ${target.sha256}, found ${checksum}. The file was discarded.`);
+    return ended(fail("download.checksum_mismatch"));
   }
   renameSync(part, target.path);
-  return { ok: true, path: target.path };
+  return ended({ ok: true, path: target.path });
 }

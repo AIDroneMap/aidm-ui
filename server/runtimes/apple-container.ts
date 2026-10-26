@@ -1,6 +1,7 @@
 import type { ApiError } from "../../shared/api-error.ts";
 import os from "node:os";
-import { describeCommand, EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
 import { imageArchive } from "../images/image-archive.ts";
 import type { DownloadedImage } from "../images/image-download.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
@@ -115,7 +116,6 @@ export async function loadIntoAppleTool(
 ): Promise<AppleLoadResult> {
   const log = options.log ?? (() => {});
   const argv = [APPLE_TOOL, "image", "load"];
-  log(describeCommand(argv));
   const kept: string[] = [];
   const references: string[] = [];
   let said: number | null = null;
@@ -133,7 +133,7 @@ export async function loadIntoAppleTool(
   if (options.signal?.aborted) return { ok: false, error: { code: "download.cancelled", data: {} } };
   if (SERVICE_DOWN.test(kept.join("\n"))) return { ok: false, error: { code: "runtime.apple_not_started", data: {} } };
   const percent = said === null ? "" : `, after the tool said ${said}%`;
-  log(`The load ended with exit code ${result.exitCode}${percent}: ${kept.slice(-5).join(" / ")}`);
+  log(`Load check failed for ${image.name}: expected exit 0, found exit ${result.exitCode}${percent}: ${excerpt(kept.slice(-5).join(" / "))}`);
   return { ok: false, error: { code: "runtime.load_failed", data: { exitCode: result.exitCode } } };
 }
 
@@ -149,7 +149,6 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
   const defaults = options.defaults ?? hostDefaults;
 
   async function run(argv: string[], timeoutMs?: number): Promise<CommandResult> {
-    log(describeCommand(argv));
     return runner.run(argv, timeoutMs === undefined ? {} : { timeoutMs });
   }
 
@@ -214,6 +213,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       const result = await run([APPLE_TOOL, "image", "inspect", image.name]);
       if (result.exitCode !== 0) {
         const down = serviceDown(result);
+        if (down === null) log(`Image check failed for ${image.name}: expected exit 0 and the manifest ${image.manifest.digest}, found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
         return down ?? fail("runtime.image_not_verified", { name: image.name });
       }
       // The tool wraps a loaded manifest in an index of its own, so the
@@ -223,7 +223,10 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       const descriptor = asRecord(asRecord(entry?.configuration)?.descriptor);
       const variants = Array.isArray(entry?.variants) ? entry.variants : [];
       const digests = [descriptor?.digest, ...variants.map((variant) => asRecord(variant)?.digest)];
-      if (!digests.includes(image.manifest.digest)) return fail("runtime.image_not_verified", { name: image.name });
+      if (!digests.includes(image.manifest.digest)) {
+        log(`Image check failed for ${image.name}: expected the manifest ${image.manifest.digest} among the image's digests, found ${digests.filter((digest) => digest !== undefined).join(", ") || "none"}: ${excerpt(result.stdout)}`);
+        return fail("runtime.image_not_verified", { name: image.name });
+      }
       // The tool runs an image by its name.
       return ok(image.name);
     },
@@ -293,7 +296,6 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
         ...(logOptions.tail === undefined ? [] : ["-n", String(logOptions.tail)]),
         name,
       ];
-      log(describeCommand(argv));
       // The tool reports a missing container on the stream the container's own
       // lines use, so that one message is kept back from the caller.
       let missing = false;

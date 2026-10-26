@@ -709,10 +709,13 @@ test("startup files the tool refuses to load are mac.init_load_failed with the e
   expect(existsSync(initFolder())).toBe(true);
 });
 
-test("an inspect that neither finds nor misses the startup files is mac.init_check_failed, and nothing is downloaded", async () => {
-  const { run } = setup([{ argv: INSPECT_INIT, result: { exitCode: 1, stdout: "", stderr: "Error: internalError: XPC connection error\n" } }]);
+test("an inspect that neither finds nor misses the startup files is mac.init_check_failed, nothing is downloaded, and the log says what was expected and found", async () => {
+  const { run, log: logs } = setup([{ argv: INSPECT_INIT, result: { exitCode: 1, stdout: "", stderr: "Error: internalError: XPC connection error\n" } }]);
   expect(await run(INIT_ONLY)).toEqual({ ok: false, step: "init", error: { code: "mac.init_check_failed", data: { exitCode: 1 } } });
   expect(registry.requests).toEqual([]);
+  expect(logs).toContain(
+    'Startup files check failed: expected exit 0 (there) or "image not found" (missing), found exit 1: Error: internalError: XPC connection error',
+  );
 });
 
 // The whole way.
