@@ -6,6 +6,7 @@ import type {
   LocalEngineView,
   MachineCheckView as MachineCheckData,
   PackagesView,
+  RuntimeSetupView,
 } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
 import { fresh } from "../localEngine.fixtures.ts";
@@ -243,6 +244,9 @@ function renderInstall(
       installBusy={false}
       installFailure={null}
       onInstallLocal={() => {}}
+      setup={null}
+      remoteBusy={false}
+      onRemote={() => {}}
       onBack={() => {}}
       onNext={() => {}}
       {...overrides}
@@ -521,4 +525,123 @@ test("the warning about the memory limit shows on the install screen", () => {
     local: { ...pulling, warnings: [{ code: "local.memory_cap_not_enforced", data: {} }] },
   });
   expect(html).toContain("cannot limit the memory the engine uses");
+});
+
+// The install of Podman where no container tool works (ticket #12).
+
+const noRuntime: LocalEngineView = { ...fresh, runtime: { chosen: null, available: [], preferred: null } };
+const DATA = ["2.5.0", "651 MiB"];
+
+const setupView = (phase: RuntimeSetupView["phase"], problem: RuntimeSetupView["problem"] = null): RuntimeSetupView => ({
+  phase,
+  problem,
+});
+
+test("with no container tool on Linux the install screen keeps one button, Install on this computer, with the explanation of the password prompt above it", () => {
+  const html = renderInstall(builtIn, { local: noRuntime });
+  expect(html).toContain(">Install on this computer</button>");
+  expect(html).not.toContain("Install Podman");
+  expect(html.match(/<button[^>]*>Install on this computer<\/button>/g)).toHaveLength(1);
+  expect(html).toContain("AIDM UI will install Podman, the free tool that runs the engine.");
+  expect(html).toContain("This computer will ask you once for the administrator password.");
+  expect(html.indexOf("administrator password")).toBeLessThan(html.indexOf("Install on this computer"));
+  expect(html).toContain(">Next</button>");
+  expect(untranslatedText(html, DATA)).toEqual([]);
+});
+
+// Criterion: when a runtime already works, the setup step is not offered.
+test("when a container tool already works nothing about Podman appears", () => {
+  const html = renderInstall(builtIn, { local: fresh });
+  expect(html).not.toContain("Podman");
+  expect(html).not.toContain("administrator password");
+  expect(html).toContain(">Install on this computer</button>");
+});
+
+test("the setup is not offered without a package, on a computer that is not Linux, or once an engine is installed", () => {
+  expect(renderInstall({ ...builtIn, offer: null }, { local: noRuntime })).not.toContain("administrator password");
+  const mac = { ...builtIn, offer: { ...builtIn.offer!, variant: "darwin-arm64" as const } };
+  expect(renderInstall(mac, { local: noRuntime })).not.toContain("administrator password");
+  const installed = { packageVersion: "2.5.0", variant: "linux-amd64-cpu", kind: "container", runtime: "podman" } as const;
+  expect(renderInstall(builtIn, { local: { ...noRuntime, installed } })).not.toContain("administrator password");
+  // Before the server has said what runs on this computer, there is nothing to offer yet.
+  expect(renderInstall(builtIn, { local: null })).not.toContain("administrator password");
+});
+
+test.each([
+  ["approval", "Waiting for your approval. Enter the administrator password in the window that opened."],
+  ["installing", "Still working: installing Podman. This can take several minutes, and it cannot be stopped from here."],
+  ["checking", "Checking that Podman works."],
+] as const)("while the setup is at %s the screen says so in a status area and the button stays, busy", (phase, words) => {
+  const html = renderInstall(builtIn, { local: noRuntime, setup: setupView(phase) });
+  expect(html).toContain(`<div role="status"><p>${words}</p></div>`);
+  expect(html).toContain("aria-disabled");
+  expect(html).toContain(">Installing...</button>");
+  expect(html).not.toContain(">Install on this computer</button>");
+  expect(untranslatedText(html, DATA)).toEqual([]);
+});
+
+test("the status area is present before the setup begins, so that a screen reader hears the first step", () => {
+  expect(renderInstall(builtIn, { local: noRuntime })).toContain('<div role="status"></div>');
+});
+
+test("while the request to begin is on its way the button is busy", () => {
+  const html = renderInstall(builtIn, { local: noRuntime, installBusy: true });
+  expect(html).toContain("aria-disabled");
+  expect(html).toContain(">Installing...</button>");
+});
+
+// Criteria: a dismissed prompt, an unsupported distribution and every other failure end in a message and the remote engine offer.
+test.each([
+  [{ code: "setup.dismissed", data: {} }, "The password window was closed, so Podman was not installed."],
+  [{ code: "setup.not_authorised", data: {} }, "or it had no way to ask for the administrator password."],
+  [
+    { code: "setup.not_available", data: {} },
+    "This computer cannot ask for the administrator password from AIDM UI. Add a remote engine, or install Podman yourself.",
+  ],
+  [{ code: "setup.unsupported_distribution", data: { id: "gentoo" } }, "this kind of Linux (gentoo)"],
+  [{ code: "setup.failed", data: { code: 4 } }, "Podman could not be installed (code 4)."],
+  [{ code: "setup.runtime_not_working", data: {} }, "Podman was installed but does not work yet."],
+] as const)("the failure %p shows its sentence and the way to a remote engine", (problem, sentence) => {
+  const html = renderInstall(builtIn, { local: noRuntime, setup: setupView("failed", problem) });
+  expect(html).toContain('role="alert"');
+  expect(html).toContain(sentence);
+  expect(html).toContain("You can also use an engine that runs on another computer.");
+  expect(html).toContain(">Add a remote engine</button>");
+  // And the operator can try again with the same button.
+  expect(html).toContain(">Install on this computer</button>");
+  expect(untranslatedText(html, DATA)).toEqual([]);
+});
+
+test("a failure with a tool that works by now still shows the way out, and the engine install is back", () => {
+  const html = renderInstall(builtIn, {
+    local: fresh,
+    setup: setupView("failed", { code: "install.not_offered", data: {} }),
+  });
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(html).toContain(">Install on this computer</button>");
+});
+
+test("a refusal of the click shows beside the button", () => {
+  const html = renderInstall(builtIn, {
+    local: noRuntime,
+    installFailure: new ApiFailure(409, "setup.already_running", {}),
+  });
+  expect(html).toContain("Podman is already being installed.");
+});
+
+test("the way out is busy while the end of the wizard is being saved", () => {
+  const html = renderInstall(builtIn, { local: noRuntime, setup: setupView("failed", { code: "setup.dismissed", data: {} }), remoteBusy: true });
+  expect(html).toMatch(/aria-disabled="true"[^>]*>Add a remote engine</);
+});
+
+test("the setup text never uses the system's own words", () => {
+  for (const [key, text] of Object.entries(en)) {
+    if (!key.startsWith("setup.")) continue;
+    expect(text, key).not.toMatch(/polkit|pkexec|subuid|subgid|\broot\b|sudo/i);
+  }
+});
+
+test("a finished setup shows nothing more once the tool works", () => {
+  const html = renderInstall(builtIn, { local: fresh, setup: setupView("done") });
+  expect(html).not.toContain("Podman");
 });

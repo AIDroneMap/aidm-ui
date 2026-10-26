@@ -6,6 +6,7 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { EngineView, LocalEngineView, RunView, SampleView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
+import { linuxInputs, podmanRules, recordedMachine } from "../../test-support/recorded-machine.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
 import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { TaskClient } from "../task-api/task-client.ts";
@@ -527,8 +528,12 @@ test("a runtime that is not available cannot be chosen", async () => {
   }
 });
 
-test("without a working runtime the install is refused", async () => {
-  const h = start({ runtimes: { podman: new FakeRuntime({ detection: { available: false } }) } });
+test("without a working runtime the install is refused where Podman cannot be set up", async () => {
+  // The machine check finds a working tool, so the setup is not needed and the install keeps its own refusal.
+  const h = start({
+    machine: recordedMachine(linuxInputs({ rules: podmanRules("info-rootless") })),
+    runtimes: { podman: new FakeRuntime({ detection: { available: false } }) },
+  });
   const response = await send(h, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
   expect((await errorOf(response)).code).toBe("install.no_runtime");

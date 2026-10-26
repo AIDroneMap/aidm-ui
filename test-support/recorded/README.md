@@ -100,6 +100,16 @@ differently. The adapter matches on short phrases for that reason.
 - `podman/run-image-not-found.*` (exit 125, `image not known`, which is what `podman run --pull=never` says for an image that is not stored)
 - `podman/pull-three-layers.*`: the recorded `podman/pull` with two more `Copying blob` lines, to test the layer count.
 
+## os-release files
+
+`os-release/*.txt` are the contents of `/etc/os-release` for the distributions
+the Podman setup step knows (and Gentoo, which it does not). They are
+hand-written from the values in the install research notes (Debian 13,
+Ubuntu 24.04, Linux Mint 21.2, Fedora 42, openSUSE Tumbleweed) and from the
+systemd `os-release(5)` description (Arch Linux and Gentoo, whose files carry
+only the fields the setup step reads and a few common ones). They hold no
+machine-specific values.
+
 ## What was scrubbed from the recordings
 
 The `docker/` and `podman/` files keep the JSON shapes of the real output. These

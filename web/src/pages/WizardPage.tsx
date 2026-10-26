@@ -3,10 +3,11 @@ import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { LocalInstallStatus } from "../components/LocalInstall.tsx";
+import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes, formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
-import { installStatus, useLocalEngine } from "../localEngine.ts";
+import { installStatus, needsRuntimeSetup, setupUnderWay, useLocalEngine } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
@@ -14,6 +15,7 @@ import type {
   LocalEngineView,
   MachineCheckView as MachineCheckData,
   PackagesView,
+  RuntimeSetupView,
   UpdateCheck,
   UpdateCheckRequest,
   WizardUpdateRequest,
@@ -222,6 +224,11 @@ export interface InstallScreenProps {
   /** Why the server refused to install, when it did. */
   installFailure: ApiFailure | null;
   onInstallLocal: () => void;
+  /** The setup of Podman as the server last said it, or null before one began. */
+  setup: RuntimeSetupView | null;
+  /** True while the end of the wizard is being saved, for the way out to a remote engine. */
+  remoteBusy: boolean;
+  onRemote: () => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -255,9 +262,9 @@ function Offer({ packages }: { packages: PackagesView }) {
   );
 }
 
-function InstallButton(props: Pick<InstallScreenProps, "local" | "installBusy" | "onInstallLocal">) {
+function InstallButton(props: Pick<InstallScreenProps, "local" | "setup" | "installBusy" | "onInstallLocal">) {
   const status = installStatus(props.local).kind;
-  const underWay = status === "downloading" || status === "starting";
+  const underWay = status === "downloading" || status === "starting" || setupUnderWay(props.setup);
   const done = props.local?.installed != null;
   // The button stays in place after the click, so keyboard focus stays on it.
   return (
@@ -275,14 +282,24 @@ function InstallButton(props: Pick<InstallScreenProps, "local" | "installBusy" |
 
 export function InstallScreen(props: InstallScreenProps) {
   const { packages } = props;
+  // Where no container tool works, the one button sets Podman up first and the install follows by itself.
+  const setupOffered = needsRuntimeSetup(props.local, packages?.offer ?? null) || setupUnderWay(props.setup);
+  const button = (
+    <InstallButton local={props.local} setup={props.setup} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
+  );
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
       {packages ? <Offer packages={packages} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
       <p>{t("wizard.install.body")}</p>
-      {packages?.offer && (
-        <InstallButton local={props.local} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
-      )}
+      {packages?.offer &&
+        (runtimeSetupShown(setupOffered, props.setup) ? (
+          <RuntimeSetupPanel offered={setupOffered} setup={props.setup} remoteBusy={props.remoteBusy} onRemote={props.onRemote}>
+            {button}
+          </RuntimeSetupPanel>
+        ) : (
+          button
+        ))}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
       <LocalInstallStatus view={props.local} />
       {packages && (packages.updateCheck === null || props.answeredHere) && (
@@ -533,6 +550,9 @@ export function WizardPage({
           installBusy={installBusy}
           installFailure={installFailure}
           onInstallLocal={() => void installLocal()}
+          setup={local.setup}
+          remoteBusy={finishing}
+          onRemote={() => void finish("#/engines")}
           onBack={back}
           onNext={next}
         />

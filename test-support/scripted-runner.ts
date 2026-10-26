@@ -24,7 +24,12 @@ export class ScriptedRunner implements CommandRunner {
       for (const line of linesOf(result.stdout)) options.onLine(line, "stdout");
       for (const line of linesOf(result.stderr)) options.onLine(line, "stderr");
     }
-    return Promise.resolve({ exitCode: result.exitCode, stdout: "", stderr: "" });
+    return Promise.resolve({
+      exitCode: result.exitCode,
+      stdout: "",
+      stderr: "",
+      ...(result.spawnFailure === undefined ? {} : { spawnFailure: result.spawnFailure }),
+    });
   }
 
   private answer(argv: string[]): CommandResult {
@@ -32,7 +37,7 @@ export class ScriptedRunner implements CommandRunner {
     const rule = this.rules.find(
       (candidate) => candidate.argv.length === argv.length && candidate.argv.every((part, i) => part === argv[i]),
     );
-    if (rule === undefined) return { exitCode: 127, stdout: "", stderr: "not found" };
+    if (rule === undefined) return { exitCode: 127, stdout: "", stderr: "not found", spawnFailure: "not_found" };
     return typeof rule.result === "function" ? rule.result(argv) : rule.result;
   }
 }

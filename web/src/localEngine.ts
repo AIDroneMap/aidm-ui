@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiFailure, asApiFailure } from "./api.ts";
-import { ENGINE_STATES, type CapsRequest, type CapsView, type LocalEngineView } from "../../shared/api-types.ts";
+import {
+  ENGINE_STATES,
+  SETUP_PHASES,
+  type CapsRequest,
+  type CapsView,
+  type EnginePackageOffer,
+  type LocalEngineView,
+  type RuntimeSetupView,
+} from "../../shared/api-types.ts";
 
 const GIB = 1024 ** 3;
 
@@ -26,6 +34,21 @@ export function parseLocalEngine(data: string): LocalEngineView | null {
   if (!isRecord(runtime) || !Array.isArray(runtime["available"])) return null;
   if (!Array.isArray(warnings)) return null;
   return parsed as unknown as LocalEngineView;
+}
+
+/** Reads the data of one "runtime-setup" server-sent event. Returns null when it is not a setup view. */
+export function parseRuntimeSetup(data: string): RuntimeSetupView | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  if (!(SETUP_PHASES as readonly unknown[]).includes(parsed["phase"])) return null;
+  const problem = parsed["problem"];
+  if (problem !== null && (!isRecord(problem) || typeof problem["code"] !== "string")) return null;
+  return parsed as unknown as RuntimeSetupView;
 }
 
 /** Reads the data of one "log" server-sent event: the new lines. Returns null when it holds no lines. */
@@ -84,6 +107,21 @@ export function canInstall(view: LocalEngineView | null): boolean {
   return view.install === null || view.install.phase === "failed";
 }
 
+/**
+ * True when the wizard should offer to install Podman: a Linux package is on
+ * offer, nothing is installed, and no container tool works. The server checks
+ * all of this again when the operator clicks.
+ */
+export function needsRuntimeSetup(local: LocalEngineView | null, offer: EnginePackageOffer | null): boolean {
+  if (local === null || offer === null) return false;
+  return offer.variant.startsWith("linux-") && local.installed === null && local.runtime.available.length === 0;
+}
+
+/** True while the approval, the install or the check of Podman is under way. */
+export function setupUnderWay(setup: RuntimeSetupView | null): boolean {
+  return setup !== null && setup.phase !== "failed" && setup.phase !== "done";
+}
+
 /** Memory in GiB as the number input shows it. */
 export function gibDraft(bytes: number): string {
   return String(Math.round((bytes / GIB) * 100) / 100);
@@ -123,6 +161,7 @@ export function capsRequest(
  */
 export function useLocalEngine(enabled: boolean, onAuthRequired: () => void) {
   const [view, setView] = useState<LocalEngineView | null>(null);
+  const [setup, setSetup] = useState<RuntimeSetupView | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const authRequired = useRef(onAuthRequired);
   authRequired.current = onAuthRequired;
@@ -146,13 +185,17 @@ export function useLocalEngine(enabled: boolean, onAuthRequired: () => void) {
       const next = parseLocalEngine((event as MessageEvent<string>).data);
       if (next && current) setView(next);
     });
+    source.addEventListener("runtime-setup", (event) => {
+      const next = parseRuntimeSetup((event as MessageEvent<string>).data);
+      if (next && current) setSetup(next);
+    });
     return () => {
       current = false;
       source.close();
     };
   }, [enabled]);
 
-  return { view, setView, failure };
+  return { view, setView, setup, setSetup, failure };
 }
 
 /** The engine log lines, streamed while `open` is true. Each new connection starts the list again. */

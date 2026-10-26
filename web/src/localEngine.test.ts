@@ -10,8 +10,11 @@ import {
   MAX_LOG_LINES,
   memoryBytesFromDraft,
   memoryInputMax,
+  needsRuntimeSetup,
   parseLocalEngine,
   parseLogLines,
+  parseRuntimeSetup,
+  setupUnderWay,
 } from "./localEngine.ts";
 
 const GIB = 1024 ** 3;
@@ -106,4 +109,43 @@ test("the caps request carries bytes and cores, and a wrong number is refused wi
   expect("failure" in half && half.failure.code).toBe("caps.cpus_invalid");
   const empty = capsRequest("", "4", caps);
   expect("failure" in empty && empty.failure.code).toBe("caps.memory_invalid");
+});
+
+test("a runtime-setup event holds a phase and a problem, anything else is ignored", () => {
+  expect(parseRuntimeSetup('{"phase":"installing","problem":null}')).toEqual({ phase: "installing", problem: null });
+  expect(parseRuntimeSetup('{"phase":"failed","problem":{"code":"setup.dismissed","data":{}}}')?.problem?.code).toBe(
+    "setup.dismissed",
+  );
+  expect(parseRuntimeSetup('{"phase":"later","problem":null}')).toBeNull();
+  expect(parseRuntimeSetup('{"phase":"failed","problem":"x"}')).toBeNull();
+  expect(parseRuntimeSetup("[]")).toBeNull();
+  expect(parseRuntimeSetup("not json")).toBeNull();
+});
+
+const offer = {
+  packageVersion: "2.5.0",
+  engineVersion: "2.5.0",
+  variant: "linux-amd64-cpu",
+  kind: "container",
+  size: 1,
+  source: "builtin",
+  tag: null,
+} as const;
+const none = { ...fresh, runtime: { chosen: null, available: [], preferred: null } };
+
+test("Podman is offered only on Linux with a package, no engine and no working tool", () => {
+  expect(needsRuntimeSetup(none, offer)).toBe(true);
+  expect(needsRuntimeSetup(fresh, offer)).toBe(false);
+  expect(needsRuntimeSetup(none, null)).toBe(false);
+  expect(needsRuntimeSetup(null, offer)).toBe(false);
+  expect(needsRuntimeSetup(none, { ...offer, variant: "darwin-arm64" })).toBe(false);
+  expect(needsRuntimeSetup(none, { ...offer, variant: "linux-amd64-gpu" })).toBe(true);
+  const installed = { packageVersion: "2.5.0", variant: "linux-amd64-cpu", kind: "container", runtime: "podman" } as const;
+  expect(needsRuntimeSetup({ ...none, installed }, offer)).toBe(false);
+});
+
+test("the setup is under way from the approval until it is done or has failed", () => {
+  expect(setupUnderWay(null)).toBe(false);
+  for (const phase of ["approval", "installing", "checking"] as const) expect(setupUnderWay({ phase, problem: null })).toBe(true);
+  for (const phase of ["done", "failed"] as const) expect(setupUnderWay({ phase, problem: null })).toBe(false);
 });
