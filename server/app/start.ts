@@ -139,6 +139,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       const file = join(dataFolder, "diagnostics", "runtime-commands.jsonl");
       runner = recordingRunner(runner, {
         file,
+        version: options.version,
         secrets: () => engineStore.list().filter((engine) => engine.kind === "local").map((engine) => engine.token),
       });
       options.log(`Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`);

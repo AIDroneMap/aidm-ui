@@ -245,24 +245,42 @@ test("a secrets function that fails stops the recording and not the commands", a
   expect(allRecords(file).map((record) => record.kind)).toEqual(["session"]);
 });
 
-test("a session record opens the file, once per recorder, and names only the kind of machine", async () => {
+test("a session record opens each start with its number, the time and the version, and names only the kind of machine", async () => {
   const file = join(tempFolder(), "commands.jsonl");
-  const first = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [], now: clock() });
+  const first = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [], now: clock(), version: "0.1.0" });
   await first.run(["one"]);
   await first.run(["two"]);
-  const second = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [] });
+  const second = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [], version: "0.1.1" });
   await second.run(["three"]);
 
   const all = allRecords(file);
   expect(all.map((record) => record.kind)).toEqual(["session", "run", "run", "session", "run"]);
   expect(all[0]).toEqual({
     kind: "session",
+    session: 1,
     at: "2026-01-01T00:00:00.010Z",
+    version: "0.1.0",
+    firstSeq: 1,
     platform: process.platform,
     arch: process.arch,
     osRelease: os.release(),
   });
-  expect(Object.keys(all[3] as object).sort()).toEqual(["arch", "at", "kind", "osRelease", "platform"]);
+  expect(all[3]).toMatchObject({ kind: "session", session: 2, version: "0.1.1", firstSeq: 3 });
+  expect(Object.keys(all[3] as object).sort()).toEqual(["arch", "at", "firstSeq", "kind", "osRelease", "platform", "session", "version"]);
+});
+
+test("the numbers of the commands go on across starts, so two runs in one file never share a number", async () => {
+  const file = join(tempFolder(), "commands.jsonl");
+  const first = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [] });
+  await first.run(["one"]);
+  await first.stream(["two"], { onLine: () => {} });
+  const second = recordingRunner(new ScriptedRunner([]), { file, secrets: () => [] });
+  await second.run(["three"]);
+
+  const numbers = allRecords(file)
+    .filter((record) => record.kind === "run" || record.kind === "stream-start")
+    .map((record) => record.seq);
+  expect(numbers).toEqual([1, 2, 3]);
 });
 
 test("no session record is written when the file cannot be used", async () => {
