@@ -20,14 +20,13 @@ The project has two goals, and every change should serve at least one of them:
 
 ## Current stage
 
-There is no code yet. Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Until the first specification is approved:
+Pre-alpha, not for use. The first specification, #2 (local server and engine manager), is built: the executable and its server, settings, remote engines, the machine check and the wizard, the sample job, and the local engine with its container and native packages. Projects, uploads, the job queue, the viewers and exports have no specification yet.
 
-- do not scaffold the application, add a framework or install dependencies;
-- limit work to specifications, mock-ups described in text, and documentation.
+Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Build only what an approved specification covers. For anything else, limit work to specifications, mock-ups described in text, and documentation.
 
 The settled vocabulary is in `GLOSSARY.md` and the settled decisions are in `docs/adr/`. Read both before proposing anything.
 
-The planned stack is a TypeScript server on Bun with SQLite, compiled into one executable per platform, which serves a static single-page interface (TypeScript, React, Vite, MapLibre GL, three.js) and holds the engine manager. The approved specification decides the details.
+The stack is a TypeScript server on Bun with SQLite, compiled into one executable per platform, which serves a static single-page interface (TypeScript, React, Vite) and holds the engine manager. MapLibre GL and three.js are planned for the viewers and come with the specification that needs them.
 
 ## Workflow
 
