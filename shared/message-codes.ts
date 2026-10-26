@@ -89,6 +89,7 @@ export const MESSAGE_CODES = [
   "install.already_installed",
   "local.not_installed",
   "local.engine_config_write_failed",
+  "local.busy",
   "local.memory_cap_not_enforced",
   "local.cpu_cap_not_enforced",
   "local.restart_gave_up",

@@ -91,7 +91,7 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
     },
 
     "/api/local-engine/start": {
-      // Also the way back after the manager gave up on a crashed engine.
+      // Also the way back from every failure while the switch is on, and it ends a restart that is waiting.
       POST: async () => {
         const started = await localEngine.start();
         if (!started.ok) return errorResponse(409, started.error.code, started.error.data);

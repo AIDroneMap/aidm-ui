@@ -41,6 +41,27 @@ const DETECTION_MAX_AGE_MS = 10_000;
 export const RESTART_BACKOFF_SECONDS = [2, 4, 8, 16, 32] as const;
 /** The most tries in a row. The next one waits for the operator. */
 export const RESTART_MAX_ATTEMPTS = RESTART_BACKOFF_SECONDS.length;
+/** The count of tries starts again only after the engine has answered this long without a break. A flapping engine keeps counting. */
+export const RESTART_COUNT_RESET_MS = 5 * 60_000;
+
+/** What the manager knows about the tries to bring back a crashed engine. */
+interface Restart {
+  /** The try that is waiting or running, from 1; 0 when there is none. */
+  attempts: number;
+  /** When the next try starts, on the manager's clock. */
+  nextAt: number | null;
+  /** True after the last try. Nothing restarts the engine again until the operator acts. */
+  gaveUp: boolean;
+  task: Promise<void> | undefined;
+  /** Counts the times the operator started or stopped the engine, so a restart that waited knows it is out of date. */
+  epoch: number;
+  /** Since when the engine has answered without a break, or null. */
+  answeringSince: number | null;
+  /** True once the container was looked at in the unreachable spell that is going on. A container that runs but is silent is not looked at again until the state changes. */
+  checked: boolean;
+  /** Ends the wait before the next try at once. */
+  endWait: (() => void) | null;
+}
 
 /** What an install pulls, and what it records once the pull works. */
 interface InstallPlan {
@@ -84,7 +105,7 @@ export interface LocalEngineDeps {
   freePort?: () => Promise<number>;
   /** Waits between pull attempts and before each restart; a test passes one that does not wait. */
   sleep?: (ms: number) => Promise<void>;
-  /** The clock for the time of the next restart. */
+  /** The clock for the time of the next restart and for how long the engine has answered. */
   now?: () => number;
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
 }
@@ -146,14 +167,16 @@ export class LocalEngineManager {
   private precheck: { at: number; runtime: RuntimeId | null; value: Promise<GpuPrecheck> } | undefined;
   /** Set when the graphics card package failed its test run and could not be deleted. Cleared by the next install. */
   private packageLeft: ApiError | null = null;
-  /** The try to bring back a crashed engine that is waiting or running, from 1; 0 when there is none. */
-  private restartAttempts = 0;
-  private restartNextAt: number | null = null;
-  /** True after the last try. Nothing restarts the engine again until the operator acts. */
-  private gaveUp = false;
-  private restartTask: Promise<void> | undefined;
-  /** Counts the times the operator started or stopped the engine, so a restart that waited knows it is out of date. */
-  private epoch = 0;
+  private readonly restart: Restart = {
+    attempts: 0,
+    nextAt: null,
+    gaveUp: false,
+    task: undefined,
+    epoch: 0,
+    answeringSince: null,
+    checked: false,
+    endWait: null,
+  };
 
   constructor(private readonly deps: LocalEngineDeps) {
     this.settings = deps.settings;
@@ -218,7 +241,8 @@ export class LocalEngineManager {
               runtime: installedPackage.runtime,
             },
       engineId: engine?.id ?? null,
-      enabled: this.settings.get("local.enabled"),
+      enabled: this.isEnabled(),
+      startAgain: installedPackage !== null && engine !== null && this.isEnabled() && state === "failed",
       state,
       install: this.progress,
       plan: this.plan,
@@ -234,11 +258,11 @@ export class LocalEngineManager {
       forceCpu: this.settings.get("local.forceCpu"),
       problem,
       restarts:
-        this.restartAttempts > 0 && !this.gaveUp && (this.restartTask !== undefined || state === "starting")
+        this.restart.attempts > 0 && !this.restart.gaveUp && (this.restart.task !== undefined || state === "starting")
           ? {
-              attempts: this.restartAttempts,
+              attempts: this.restart.attempts,
               max: RESTART_MAX_ATTEMPTS,
-              nextAt: this.restartNextAt === null ? null : new Date(this.restartNextAt).toISOString(),
+              nextAt: this.restart.nextAt === null ? null : new Date(this.restart.nextAt).toISOString(),
             }
           : null,
     };
@@ -381,9 +405,10 @@ export class LocalEngineManager {
 
   /** Answers once the install has started; the work goes on in the background. */
   async install(): Promise<InstallOutcome> {
-    if (this.busy) return refusal(409, "install.already_running");
     // An install over a running engine would pull a package next to it and swap tokens under it. Updates come with ticket #14.
+    // This comes first, so a restart in progress is never answered with "already being installed".
     if (this.settings.get("local.package") !== null) return refusal(409, "install.already_installed");
+    if (this.busy) return refusal(409, "install.already_running");
     this.busy = true;
     let started = false;
     try {
@@ -487,15 +512,14 @@ export class LocalEngineManager {
   /** The switch on the engines page. Turning it on while it is on changes nothing, unless the manager gave up. */
   async setEnabled(enabled: boolean): Promise<PackageResult<void>> {
     if (this.settings.get("local.package") === null) return fail("local.not_installed");
-    if (this.settings.get("local.enabled") === enabled && !(enabled && this.gaveUp)) return ok(undefined);
+    if (this.isEnabled() === enabled && !(enabled && this.restart.gaveUp)) return ok(undefined);
     return enabled ? this.start() : this.stop();
   }
 
   /** Starts the installed engine, or starts it again after a stop. Also what the operator does after the manager gave up. */
   async start(): Promise<PackageResult<void>> {
-    if (this.busy) return fail("install.already_running");
-    this.busy = true;
-    this.operatorActed();
+    const claimed = await this.claim();
+    if (!claimed.ok) return claimed;
     // A start on its own is not an install, so there is no install progress to show.
     this.progress = null;
     try {
@@ -508,9 +532,8 @@ export class LocalEngineManager {
 
   /** Stops the container and leaves the engine switched off. */
   async stop(): Promise<PackageResult<void>> {
-    if (this.busy) return fail("install.already_running");
-    this.busy = true;
-    this.operatorActed();
+    const claimed = await this.claim();
+    if (!claimed.ok) return claimed;
     try {
       const installed = this.settings.get("local.package");
       const engine = this.store.local();
@@ -523,8 +546,7 @@ export class LocalEngineManager {
       await this.engineLog.stop();
       this.token = null;
       this.failure = null;
-      this.store.update(engine.id, { enabled: false });
-      this.settings.set("local.enabled", false);
+      this.setSwitch(engine.id, false);
       this.settings.set("local.applied", null);
       this.monitor.setLocalState(engine.id, "stopped");
       this.publish();
@@ -548,13 +570,13 @@ export class LocalEngineManager {
     }
     const installed = this.settings.get("local.package");
     const engine = this.store.local();
-    if (installed === null || engine === null || !this.settings.get("local.enabled")) return;
+    if (installed === null || engine === null || !this.isEnabled()) return;
     try {
       const pkg = this.packageFor(installed);
       if (pkg === null) return;
       const status = await pkg.status();
       if (this.closed) return;
-      if (status.ok && status.value.state === "running" && engine.enabled && engine.address !== "") {
+      if (status.ok && status.value.state === "running" && engine.address !== "") {
         this.token = engine.token;
         this.engineLog.follow(pkg, { fresh: false });
         return;
@@ -579,7 +601,7 @@ export class LocalEngineManager {
     this.unsubscribeMonitor();
     this.listeners.clear();
     await this.background.catch(() => {});
-    await this.restartTask?.catch(() => {});
+    await this.restart.task?.catch(() => {});
     await this.engineLog.stop();
   }
 
@@ -842,10 +864,10 @@ export class LocalEngineManager {
     if (installed === null || engine === null) return fail("local.not_installed");
 
     this.failure = null;
-    this.settings.set("local.enabled", true);
+    this.setSwitch(engine.id, true);
     if (this.progress !== null) this.progress = { ...this.progress, phase: "starting" };
     // No address until the new container is up, so nothing polls the old one.
-    this.store.update(engine.id, { address: "", enabled: true });
+    this.store.update(engine.id, { address: "" });
     this.settings.set("local.applied", null);
     this.monitor.setLocalState(engine.id, "starting");
     await this.engineLog.stop();
@@ -914,40 +936,89 @@ export class LocalEngineManager {
     return ok(undefined);
   }
 
-  /** The operator started or stopped the engine: whatever the manager was doing about a crash is out of date. */
-  private operatorActed(): void {
-    this.epoch++;
-    this.restartAttempts = 0;
-    this.restartNextAt = null;
-    this.gaveUp = false;
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
   }
 
-  /** Looks at every change the monitor reports: a restart that worked ends the count, a crash starts the restarts. */
+  /**
+   * Whether the switch is on. The setting decides. An install from before the
+   * switch existed has no setting, and there the engine's own flag was the record.
+   */
+  private isEnabled(): boolean {
+    if (this.settings.getRaw("local.enabled") === null) {
+      const engine = this.store.local();
+      if (engine !== null) return engine.enabled;
+    }
+    return this.settings.get("local.enabled");
+  }
+
+  /** The one place the switch is written: the engine's flag first, then the setting that decides. */
+  private setSwitch(engineId: number, enabled: boolean): void {
+    this.store.update(engineId, { enabled });
+    this.settings.set("local.enabled", enabled);
+  }
+
+  /**
+   * Takes the manager for an operator action. A restart that is waiting or
+   * running is ended first, and the action goes on once it has let go. Refused
+   * with a code only when an install or another action holds the manager.
+   */
+  private async claim(): Promise<PackageResult<void>> {
+    if (this.installing) return fail("install.already_running");
+    if (this.busy && this.restart.task === undefined) return fail("local.busy");
+    await this.cancelRestart();
+    if (this.busy) return fail("local.busy");
+    this.busy = true;
+    return ok(undefined);
+  }
+
+  /** The operator started or stopped the engine: whatever the manager was doing about a crash is out of date. */
+  private async cancelRestart(): Promise<void> {
+    const restart = this.restart;
+    restart.epoch++;
+    restart.attempts = 0;
+    restart.nextAt = null;
+    restart.gaveUp = false;
+    restart.endWait?.();
+    await restart.task?.catch(() => {});
+  }
+
+  /** Looks at every change the monitor reports: a crash starts the restarts, and the count ends only after a long stay. */
   private watch(views: EngineView[]): void {
     if (this.closed) return;
     try {
       const engine = this.store.local();
       const state = views.find((candidate) => candidate.id === engine?.id)?.state;
       if (engine === null || state === undefined) return;
-      if ((state === "ready" || state === "busy") && this.restartAttempts > 0) {
-        this.restartAttempts = 0;
-        this.restartNextAt = null;
-        this.publish();
+      const restart = this.restart;
+      const now = this.now();
+      if (state === "ready" || state === "busy") {
+        restart.answeringSince ??= now;
+        restart.checked = false;
+        return;
+      }
+      if (restart.answeringSince !== null) {
+        // A break in answering. The count of tries starts again only if the engine had answered for long enough before it.
+        if (restart.task === undefined && now - restart.answeringSince >= RESTART_COUNT_RESET_MS) restart.attempts = 0;
+        restart.answeringSince = null;
+      }
+      if (state !== "unreachable") {
+        restart.checked = false;
         return;
       }
       if (
-        state === "unreachable" &&
-        this.restartTask === undefined &&
+        !restart.checked &&
+        restart.task === undefined &&
         !this.busy &&
         !this.installing &&
-        !this.gaveUp &&
-        engine.enabled &&
+        !restart.gaveUp &&
+        this.isEnabled() &&
         engine.address !== "" &&
-        this.settings.get("local.enabled") &&
         this.settings.get("local.package") !== null
       ) {
-        this.restartTask = this.restartLoop().finally(() => {
-          this.restartTask = undefined;
+        restart.checked = true;
+        restart.task = this.restartLoop().finally(() => {
+          restart.task = undefined;
           this.publish();
         });
       }
@@ -963,8 +1034,9 @@ export class LocalEngineManager {
    * shows as not answering. The runtime's own restart policy is never used.
    */
   private async restartLoop(): Promise<void> {
-    const epoch = this.epoch;
-    const wanted = () => !this.closed && this.epoch === epoch && this.settings.get("local.enabled");
+    const restart = this.restart;
+    const epoch = restart.epoch;
+    const wanted = () => !this.closed && restart.epoch === epoch && this.isEnabled();
     try {
       while (wanted()) {
         const installed = this.settings.get("local.package");
@@ -979,18 +1051,18 @@ export class LocalEngineManager {
         }
         if (status.value.state === "running") return;
 
-        if (this.restartAttempts >= RESTART_MAX_ATTEMPTS) {
+        if (restart.attempts >= RESTART_MAX_ATTEMPTS) {
           await this.giveUp(engine.id);
           return;
         }
-        const delayMs = (RESTART_BACKOFF_SECONDS[this.restartAttempts] ?? 32) * 1000;
-        this.restartAttempts++;
-        this.restartNextAt = (this.deps.now ?? Date.now)() + delayMs;
-        this.deps.log(`The engine container is ${status.value.state}. Starting it again, try ${this.restartAttempts} of ${RESTART_MAX_ATTEMPTS}.`);
+        const delayMs = (RESTART_BACKOFF_SECONDS[restart.attempts] ?? 32) * 1000;
+        restart.attempts++;
+        restart.nextAt = this.now() + delayMs;
+        this.deps.log(`The engine container is ${status.value.state}. Starting it again, try ${restart.attempts} of ${RESTART_MAX_ATTEMPTS}.`);
         this.publish();
         await this.pause(delayMs);
         if (!wanted()) return;
-        this.restartNextAt = null;
+        restart.nextAt = null;
         // The operator may be starting or stopping the engine right now.
         if (this.busy) return;
         this.busy = true;
@@ -1002,7 +1074,7 @@ export class LocalEngineManager {
           this.busy = false;
         }
         this.publish();
-        // A start that worked is judged by the engine: ready ends the count, silence starts the next try.
+        // A start that worked is judged by the engine: ready ends the loop, silence starts the next try.
         if (started.ok) return;
       }
     } catch (error) {
@@ -1011,10 +1083,10 @@ export class LocalEngineManager {
   }
 
   private async giveUp(engineId: number): Promise<void> {
-    this.gaveUp = true;
-    this.restartNextAt = null;
-    const error: ApiError = { code: "local.restart_gave_up", data: { attempts: this.restartAttempts } };
-    this.deps.log(`The engine did not come back after ${this.restartAttempts} tries. It stays stopped until the operator starts it.`);
+    this.restart.gaveUp = true;
+    this.restart.nextAt = null;
+    const error: ApiError = { code: "local.restart_gave_up", data: { attempts: this.restart.attempts } };
+    this.deps.log(`The engine did not come back after ${this.restart.attempts} tries. It stays stopped until the operator starts it.`);
     this.failure = error;
     // No address, so nothing polls a container that is gone and turns the failure into "not answering".
     this.store.update(engineId, { address: "" });
@@ -1025,11 +1097,22 @@ export class LocalEngineManager {
     this.publish();
   }
 
-  /** Waits, but not past close(). */
+  /** Waits, but not past close() or the end of a restart. The timer and the listener are gone when the wait ends. */
   private pause(ms: number): Promise<void> {
     if (this.abort.signal.aborted) return Promise.resolve();
-    const closing = new Promise<void>((resolve) => this.abort.signal.addEventListener("abort", () => resolve(), { once: true }));
-    return Promise.race([(this.deps.sleep ?? ((wait) => Bun.sleep(wait)))(ms), closing]);
+    return new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const end = () => {
+        clearTimeout(timer);
+        this.abort.signal.removeEventListener("abort", end);
+        if (this.restart.endWait === end) this.restart.endWait = null;
+        resolve();
+      };
+      this.abort.signal.addEventListener("abort", end, { once: true });
+      this.restart.endWait = end;
+      if (this.deps.sleep === undefined) timer = setTimeout(end, ms);
+      else this.deps.sleep(ms).then(end, end);
+    });
   }
 
   /** Stops and removes a container that must not keep running. Whatever fails here is logged, since the start has failed already. */

@@ -111,6 +111,8 @@ export function openHarness(
     startingGraceMs?: number;
     /** Waits between pull attempts and before each restart of a crashed local engine; default: no wait. */
     sleep?: LocalEngineDeps["sleep"];
+    /** The clock of the engine manager, for the time of the next restart and how long the engine has answered. */
+    localNow?: LocalEngineDeps["now"];
     /**
      * Where the manifest comes from. Without a fetch of its own the service
      * has no network at all, so a test can only reach a fake release server on purpose.
@@ -203,6 +205,7 @@ export function openHarness(
     macSetup: options.macSetup === undefined ? undefined : new MacSetup({ ...options.macSetup, dataFolder, log }),
     localEngineOffer: async () => (await machineChecks.read()).localEngine,
     sleep: options.sleep ?? (async () => {}),
+    now: options.localNow,
     freePort: options.freePort,
     logOptions: options.localLog,
   });

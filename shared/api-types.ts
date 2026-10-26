@@ -153,6 +153,8 @@ export interface RunView {
   problem: ApiError | null;
   /** True after the engine restarted and started the run over (ticket #10). */
   restarted: boolean;
+  /** Where in the run's log the output of the engine's latest restart begins, or null. A change means the page should ask the log route again. */
+  restartedAtLine: number | null;
   /** True when the results archive can be downloaded. */
   resultsAvailable: boolean;
   createdAt: string;
@@ -369,6 +371,11 @@ export interface LocalEngineView {
   engineId: number | null;
   /** The switch "Run the engine on this computer". Off means the engine is stopped and stays so. */
   enabled: boolean;
+  /**
+   * True when the engine is installed and switched on but failed, whatever the
+   * reason: the page offers "Start the engine again" (POST /api/local-engine/start).
+   */
+  startAgain: boolean;
   state: EngineState;
   install: InstallProgressView | null;
   /**

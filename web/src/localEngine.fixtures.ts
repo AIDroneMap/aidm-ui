@@ -15,6 +15,7 @@ export const fresh: LocalEngineView = {
   installed: null,
   engineId: null,
   enabled: true,
+  startAgain: false,
   state: "not_installed",
   install: null,
   plan: null,

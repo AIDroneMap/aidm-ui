@@ -1,16 +1,18 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { EngineView, LocalEngineView, RunLogView, RunView } from "../../shared/api-types.ts";
+import { DATABASE_FILE } from "../db/database.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import type { FakeTask } from "../../test-support/fake-task-api.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
 import { fail, type ContainerSpec, type RuntimeId } from "../runtimes/runtime.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
-import { RESTART_BACKOFF_SECONDS, RESTART_MAX_ATTEMPTS } from "./manager.ts";
+import { RESTART_BACKOFF_SECONDS, RESTART_COUNT_RESET_MS, RESTART_MAX_ATTEMPTS } from "./manager.ts";
 
 const open: Harness[] = [];
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -84,6 +86,21 @@ function heldSleep() {
       return new Promise<void>((resolve) => gates.push(resolve));
     },
   };
+}
+
+/** Holds a call until the test lets it go. */
+function gate() {
+  let open: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { held, release: () => open() };
+}
+
+/** A fetch that fails while `down.now` is true, the way a task API that does not answer fails. */
+function flakyFetch(down: { now: boolean }): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    down.now ? Promise.reject(new Error("no answer")) : fetch(input, init)) as unknown as typeof fetch;
 }
 
 /** Reads the local-engine events as they arrive. */
@@ -259,17 +276,38 @@ test("the waits between tries are 2, 4, 8, 16 and 32 seconds", () => {
   expect(RESTART_MAX_ATTEMPTS).toBe(5);
 });
 
-test("a successful restart that reaches ready starts the count again", async () => {
+test("a restart that reaches ready and stays there for five minutes starts the count again", async () => {
   const waits = recordingSleep();
-  const h = start({ sleep: waits.sleep, startingGraceMs: 0 });
+  const clock = { now: 1_000_000 };
+  const h = start({ sleep: waits.sleep, startingGraceMs: 0, localNow: () => clock.now });
   await installAndWaitReady(h);
   for (let round = 1; round <= 3; round++) {
     await podman(h).kill(CONTAINER_NAME);
     await eventually(async () => podman(h).starts.length === round + 1);
     await eventually(async () => (await localView(h)).state === "ready");
+    clock.now += RESTART_COUNT_RESET_MS;
   }
-  // Each crash waited the first wait, since each restart reached ready.
+  // Each crash waited the first wait, since each restart stayed ready long enough.
   expect(waits.delays).toEqual([2000, 2000, 2000]);
+});
+
+test("an engine that dies again soon after every restart is given up on after five tries", async () => {
+  const waits = recordingSleep();
+  const clock = { now: 1_000_000 };
+  const h = start({ sleep: waits.sleep, startingGraceMs: 0, localNow: () => clock.now });
+  await installAndWaitReady(h);
+  for (let round = 1; round <= RESTART_MAX_ATTEMPTS; round++) {
+    await podman(h).kill(CONTAINER_NAME);
+    await eventually(async () => podman(h).starts.length === round + 1);
+    await eventually(async () => (await localView(h)).state === "ready");
+    // Ready, but not for five minutes.
+    clock.now += RESTART_COUNT_RESET_MS - 1000;
+  }
+  await podman(h).kill(CONTAINER_NAME);
+  await eventually(async () => (await localView(h)).problem?.code === "local.restart_gave_up", SLOW);
+  expect(waits.delays).toEqual([2000, 4000, 8000, 16000, 32000]);
+  expect(podman(h).starts).toHaveLength(1 + RESTART_MAX_ATTEMPTS);
+  expect(await localView(h)).toMatchObject({ state: "failed", problem: { code: "local.restart_gave_up", data: { attempts: 5 } } });
 });
 
 test("a container that runs but does not answer is reported as not answering and is not restarted", async () => {
@@ -296,6 +334,39 @@ test("a container that runs but does not answer is reported as not answering and
   expect(await podman(h).status(CONTAINER_NAME)).toMatchObject({ ok: true, value: { state: "running" } });
 });
 
+test("a container that runs but does not answer is looked at once, and again only when the state changes", async () => {
+  const down = { now: false };
+  const h = start({
+    startingGraceMs: 0,
+    clientFor: (endpoint, options) => new TaskClient(endpoint, { ...options, fetch: flakyFetch(down) }),
+  });
+  await installAndWaitReady(h);
+  const runtime = podman(h);
+  let statusCalls = 0;
+  const original = runtime.status.bind(runtime);
+  runtime.status = async (name: string) => {
+    statusCalls++;
+    return original(name);
+  };
+
+  down.now = true;
+  await eventually(async () => (await localView(h)).state === "unreachable");
+  await eventually(async () => statusCalls >= 1);
+  // Other changes among the engines are no reason to look again.
+  const other = h.engineStore.addRemote({ name: "Barn", address: "", token: "token" });
+  for (let change = 1; change <= 3; change++) {
+    h.engineStore.update(other.id, { name: `Barn ${change}` });
+    await Bun.sleep(150);
+  }
+  expect(statusCalls).toBe(1);
+
+  down.now = false;
+  await eventually(async () => (await localView(h)).state === "ready");
+  down.now = true;
+  await eventually(async () => statusCalls === 2);
+  expect(podman(h).starts).toHaveLength(1);
+});
+
 // Criterion: after the attempt cap the engine shows failed with a message code and no further restart is tried until the operator acts.
 
 async function giveUp(h: Harness, waits: ReturnType<typeof recordingSleep>): Promise<() => void> {
@@ -314,7 +385,12 @@ test("after five tries the engine is failed with local.restart_gave_up, and noth
 
   expect(podman(h).starts).toHaveLength(1 + RESTART_MAX_ATTEMPTS);
   const view = await localView(h);
-  expect(view).toMatchObject({ state: "failed", restarts: null, problem: { code: "local.restart_gave_up", data: { attempts: 5 } } });
+  expect(view).toMatchObject({
+    state: "failed",
+    restarts: null,
+    startAgain: true,
+    problem: { code: "local.restart_gave_up", data: { attempts: 5 } },
+  });
   expect((await engineList(h))[0]).toMatchObject({ state: "failed", problem: { code: "local.restart_gave_up" } });
 
   await Bun.sleep(400);
@@ -478,6 +554,117 @@ test("closing aidm-ui while a restart waits does not wait for it and does not st
   expect(podman(h).starts).toHaveLength(1);
 });
 
+test("turning the engine off while a restart is starting it waits for that start, then stops the container and tries no more", async () => {
+  const waits = recordingSleep();
+  const h = start({ sleep: waits.sleep, startingGraceMs: 0 });
+  await installAndWaitReady(h);
+  const runtime = podman(h);
+  const original = runtime.start.bind(runtime);
+  const startHeld = gate();
+  let entered = false;
+  runtime.start = async (spec: ContainerSpec) => {
+    entered = true;
+    await startHeld.held;
+    return original(spec);
+  };
+  await runtime.kill(CONTAINER_NAME);
+  await eventually(async () => entered);
+
+  const off = send(h, "PUT", "/api/local-engine/enabled", { enabled: false });
+  await Bun.sleep(100);
+  startHeld.release();
+  const response = await off;
+  expect(response.status).toBe(200);
+  expect(await localView(h)).toMatchObject({ enabled: false, state: "stopped", restarts: null });
+  expect(await runtime.status(CONTAINER_NAME)).toMatchObject({ ok: true, value: { state: "stopped" } });
+
+  await Bun.sleep(300);
+  expect(runtime.starts).toHaveLength(2);
+  expect(waits.delays).toEqual([2000]);
+});
+
+test("an operator action that has to wait for another one is refused with local.busy", async () => {
+  const h = start({ startingGraceMs: 0 });
+  await installAndWaitReady(h);
+  expect((await send(h, "PUT", "/api/local-engine/enabled", { enabled: false })).status).toBe(200);
+  const runtime = podman(h);
+  const original = runtime.start.bind(runtime);
+  const startHeld = gate();
+  let entered = false;
+  runtime.start = async (spec: ContainerSpec) => {
+    entered = true;
+    await startHeld.held;
+    return original(spec);
+  };
+  const on = send(h, "PUT", "/api/local-engine/enabled", { enabled: true });
+  await eventually(async () => entered);
+
+  for (const [method, path, body] of [
+    ["POST", "/api/local-engine/start", undefined],
+    ["PUT", "/api/local-engine/enabled", { enabled: false }],
+  ] as const) {
+    const refused = await send(h, method, path, body);
+    expect(refused.status).toBe(409);
+    expect((await errorOf(refused)).code).toBe("local.busy");
+  }
+  startHeld.release();
+  expect((await on).status).toBe(200);
+  await eventually(async () => (await localView(h)).state === "ready");
+});
+
+// Criterion: the switch has one source of truth.
+
+test("an install from before the switch existed, with the engine's flag off and no setting, reads as off and is not started", async () => {
+  const folder = keptFolder();
+  const runtimes = { podman: new FakeRuntime() };
+  const first = start({ dataFolder: folder, runtimes });
+  await installAndWaitReady(first);
+  await first.stop({ leaveEngines: true });
+  await runtimes.podman.kill(CONTAINER_NAME);
+  const db = new Database(join(folder, DATABASE_FILE));
+  db.run("UPDATE engines SET enabled = 0, last_state = 'stopped' WHERE kind = 'local'");
+  db.run("DELETE FROM settings WHERE key = 'local.enabled'");
+  db.close();
+
+  const second = start({ dataFolder: folder, runtimes });
+  await Bun.sleep(300);
+  expect(await localView(second)).toMatchObject({ enabled: false, state: "stopped", startAgain: false });
+  expect(runtimes.podman.starts).toHaveLength(1);
+
+  // Switched on, the setting and the engine's flag say so together.
+  expect((await send(second, "PUT", "/api/local-engine/enabled", { enabled: true })).status).toBe(200);
+  await eventually(async () => (await localView(second)).state === "ready");
+  expect(await localView(second)).toMatchObject({ enabled: true });
+  expect(second.settings.get("local.enabled")).toBe(true);
+  expect(second.engineStore.local()?.enabled).toBe(true);
+});
+
+// Criterion: a failed engine that is switched on always has a way forward.
+
+test("a start that fails when aidm-ui starts again leaves the engine failed, with a way to start it again", async () => {
+  const folder = keptFolder();
+  const runtimes = { podman: new FakeRuntime() };
+  const first = start({ dataFolder: folder, runtimes });
+  await installAndWaitReady(first);
+  await first.stop({ leaveEngines: true });
+  await runtimes.podman.kill(CONTAINER_NAME);
+  const working = runtimes.podman.start.bind(runtimes.podman);
+  runtimes.podman.start = async () => fail("runtime.start_failed");
+
+  const second = start({ dataFolder: folder, runtimes });
+  await eventually(async () => (await localView(second)).state === "failed");
+  expect(await localView(second)).toMatchObject({
+    enabled: true,
+    startAgain: true,
+    problem: { code: "install.start_failed" },
+  });
+
+  runtimes.podman.start = working;
+  expect((await send(second, "POST", "/api/local-engine/start")).status).toBe(200);
+  await eventually(async () => (await localView(second)).state === "ready");
+  expect(await localView(second)).toMatchObject({ startAgain: false, problem: null });
+});
+
 // Criterion: the manager never passes a restart policy.
 
 test("no start the manager makes carries a restart policy, whether it is the first, a restart or a start after the switch", async () => {
@@ -576,4 +763,77 @@ test("where the new output begins is kept when aidm-ui is started again, and the
   runtimes.podman.engine(CONTAINER_NAME)?.setTask(uuid, { output: ["new one", "new two"] });
   await eventually(async () => (await logView(second, runId)).lines.length === 4);
   expect((await logView(second, runId)).lines).toEqual(["old one", "old two", "new one", "new two"]);
+});
+
+// The real crash path: the run was not told, it only saw the engine go quiet and come back.
+
+test("a task seen processing, then not answering for several polls, then queued again is a restart", async () => {
+  const down = { now: false };
+  const h = start({ runClientFor: (endpoint) => new TaskClient(endpoint, { fetch: flakyFetch(down) }) });
+  await installAndWaitReady(h);
+  const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two"] });
+  await eventually(async () => (await runView(h, runId)).state === "processing");
+  await eventually(async () => (await logView(h, runId)).lines.length === 2);
+
+  down.now = true;
+  await eventually(async () => (await runView(h, runId)).state === "engine_unreachable");
+  podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { statusCode: 10, processingTime: -1, progress: 0, output: ["new one"] });
+  down.now = false;
+
+  await eventually(async () => (await runView(h, runId)).restarted);
+  await eventually(async () => (await logView(h, runId)).lines.length === 3);
+  expect(await logView(h, runId)).toMatchObject({ lines: ["old one", "old two", "new one"], restartedAtLine: 2 });
+  expect(await runView(h, runId)).toMatchObject({ state: "queued", restarted: true, restartedAtLine: 2 });
+});
+
+test("a restart the run did not see is found when the task's output is shorter than the lines already received", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two", "old three"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 3);
+  expect(await runView(h, runId)).toMatchObject({ state: "processing", restarted: false });
+
+  // Still processing, with at least as much time as before, but only one line so far.
+  podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { output: ["new one"] });
+  await eventually(async () => (await runView(h, runId)).restarted);
+  await eventually(async () => (await logView(h, runId)).lines.length === 4);
+  expect(await logView(h, runId)).toMatchObject({ lines: ["old one", "old two", "old three", "new one"], next: 4, restartedAtLine: 3 });
+  expect(await runView(h, runId)).toMatchObject({ state: "processing", restartedAtLine: 3 });
+
+  podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { output: ["new one", "new two"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 5);
+  expect((await logView(h, runId)).lines.slice(3)).toEqual(["new one", "new two"]);
+});
+
+test("a restart the run did not see is found when the task's processing time went down", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two", "old three"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 3);
+
+  // More lines than before, so the length alone would not show it.
+  podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { processingTime: 100, output: ["a", "b", "c", "d"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 7);
+  expect(await logView(h, runId)).toMatchObject({ lines: ["old one", "old two", "old three", "a", "b", "c", "d"], restartedAtLine: 3 });
+  expect(await runView(h, runId)).toMatchObject({ restarted: true, restartedAtLine: 3 });
+});
+
+test("a second restart moves where the new output begins", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two", "old three"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 3);
+  const engine = podman(h).engine(CONTAINER_NAME);
+
+  engine?.setTask(uuid, { statusCode: 10, processingTime: -1, output: ["new one"] });
+  await eventually(async () => (await logView(h, runId)).restartedAtLine === 3);
+  engine?.setTask(uuid, { statusCode: 20, processingTime: 1000, output: ["new one", "new two"] });
+  await eventually(async () => (await runView(h, runId)).state === "processing");
+  await eventually(async () => (await logView(h, runId)).lines.length === 5);
+
+  engine?.setTask(uuid, { statusCode: 10, processingTime: -1, output: ["third one"] });
+  await eventually(async () => (await logView(h, runId)).restartedAtLine === 5);
+  await eventually(async () => (await logView(h, runId)).lines.length === 6);
+  expect((await logView(h, runId)).lines.slice(5)).toEqual(["third one"]);
+  expect(await runView(h, runId)).toMatchObject({ restartedAtLine: 5 });
 });

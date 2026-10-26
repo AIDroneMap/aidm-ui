@@ -16,6 +16,7 @@ const run: RunView = {
   engineMessage: null,
   problem: null,
   restarted: false,
+  restartedAtLine: null,
   resultsAvailable: false,
   createdAt: "2026-10-26T10:00:00Z",
 };

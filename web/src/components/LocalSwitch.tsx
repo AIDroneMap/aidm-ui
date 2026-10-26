@@ -1,5 +1,6 @@
 import { useRef, useState, type Ref } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
+import { formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { BusyButton } from "./BusyButton.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
@@ -17,10 +18,9 @@ export interface SwitchProps {
 
 /**
  * The switch that turns the engine on this computer on and off, the tries to
- * bring it back after a crash, and the way out after the manager gave up.
+ * bring it back after a crash, and the way out of every failure while it is on.
  */
 export function SwitchView({ view, busy, failure, onToggle, onStartAgain, switchRef }: SwitchProps) {
-  const gaveUp = view.problem?.code === "local.restart_gave_up";
   return (
     <div className="local-switch">
       <div className="check">
@@ -42,9 +42,19 @@ export function SwitchView({ view, busy, failure, onToggle, onStartAgain, switch
         {t("local.switch.hint")}
       </p>
       <div role="status">
-        {view.restarts && <p>{t("local.restarting", { attempt: view.restarts.attempts, max: view.restarts.max })}</p>}
+        {view.restarts && (
+          <p>
+            {view.restarts.nextAt === null
+              ? t("local.restarting", { attempt: view.restarts.attempts, max: view.restarts.max })
+              : t("local.restarting_next", {
+                  attempt: view.restarts.attempts,
+                  max: view.restarts.max,
+                  time: formatClock(view.restarts.nextAt),
+                })}
+          </p>
+        )}
       </div>
-      {gaveUp && (
+      {view.startAgain && (
         <div className="actions">
           <BusyButton busy={busy} onClick={onStartAgain}>
             {busy ? t("local.start_again_busy") : t("local.start_again")}

@@ -340,7 +340,7 @@ export function SampleJobPage({
     setLog(EMPTY_LOG);
     setRestartedAtLine(null);
     logCount.current = 0;
-    let wasRestarted = false;
+    let seenRestartedAtLine: number | null = null;
     const catchUp = (start?: number) => {
       const from = start ?? logCount.current;
       api<RunLogView>("GET", `/api/runs/${runId}/log?from=${from}`).then(
@@ -365,9 +365,10 @@ export function SampleJobPage({
       if (!view || !current) return;
       setRun(view);
       setConnectionLost(false);
-      // Only the log route says where the new output begins, so ask when the run turns out to have restarted.
-      if (view.restarted && !wasRestarted) catchUp();
-      wasRestarted = view.restarted;
+      // Only the log route has the lines the separator sits between, so ask again whenever the engine restarts, also a second time.
+      const restartedAt = view.restartedAtLine ?? null;
+      if (restartedAt !== seenRestartedAtLine) catchUp();
+      seenRestartedAtLine = restartedAt;
       if (isFinished(view)) {
         catchUp();
         source.close();

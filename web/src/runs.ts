@@ -27,6 +27,7 @@ export function isRunView(value: unknown): value is RunView {
     (value["engineMessage"] === null || typeof value["engineMessage"] === "string") &&
     (value["problem"] === null || isRecord(value["problem"])) &&
     typeof value["restarted"] === "boolean" &&
+    (value["restartedAtLine"] === null || typeof value["restartedAtLine"] === "number") &&
     typeof value["resultsAvailable"] === "boolean"
   );
 }
