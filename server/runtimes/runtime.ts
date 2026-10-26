@@ -1,6 +1,8 @@
 import type { ApiError } from "../../shared/api-error.ts";
 
-export type RuntimeId = "podman" | "docker" | "apple-container";
+import type { RuntimeId } from "../../shared/api-types.ts";
+
+export type { RuntimeId };
 
 export interface RuntimeDetection {
   id: RuntimeId;

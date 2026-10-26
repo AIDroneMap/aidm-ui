@@ -1,7 +1,18 @@
 import type { Database } from "bun:sqlite";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { UpdateCheck } from "../../shared/api-types.ts";
+import type { UpdateCheck, VariantId } from "../../shared/api-types.ts";
+import type { ManifestVariant } from "../manifest/schema.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
+
+/** The engine package installed on this computer. Enough to find, stop and remove it again. */
+export interface InstalledPackage {
+  packageVersion: string;
+  variant: VariantId;
+  /** The runtime that pulled the image, and so the one that has it. */
+  runtime: RuntimeId;
+  /** What the manifest said about the image at install time. */
+  container: Extract<ManifestVariant, { kind: "container" }>;
+}
 
 export interface SettingValues {
   /** The port tried first on the next start; null means the default. */
@@ -11,6 +22,15 @@ export interface SettingValues {
   "lan.passphraseHash": string | null;
   /** The container runtime the operator chose over the automatic pick; null means automatic. */
   "runtime.preferred": RuntimeId | null;
+  /** Where the local engine keeps its data; null means the engine-data folder in the data folder. */
+  "engine.dataFolder": string | null;
+  /** The local engine's package; null until one is installed. */
+  "local.package": InstalledPackage | null;
+  /** The caps the operator lowered, used from the next start; null means the most the computer allows. */
+  "local.memoryBytes": number | null;
+  "local.cpus": number | null;
+  /** What the running local engine was started with; null when it is not running. Null memory means no cap. */
+  "local.applied": { memoryBytes: number | null; cpus: number | null } | null;
   /** True once the operator has finished the wizard or chosen the interface only. */
   "wizard.completed": boolean;
   /** How often to look for a newer manifest; null until the operator has answered. */
@@ -30,6 +50,11 @@ const DEFAULTS: SettingValues = {
   "lan.enabled": false,
   "lan.passphraseHash": null,
   "runtime.preferred": null,
+  "engine.dataFolder": null,
+  "local.package": null,
+  "local.memoryBytes": null,
+  "local.cpus": null,
+  "local.applied": null,
   "wizard.completed": false,
   "updates.check": null,
   "updates.lastCheck": null,

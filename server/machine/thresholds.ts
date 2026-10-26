@@ -18,6 +18,15 @@ export const RUN_FREE_DISK = 10 * GiB;
  */
 export const DOWNLOAD_FREE_DISK_MARGIN = 0.2;
 
+/** The local engine keeps back at least this much memory for the computer itself. */
+export const MEMORY_RESERVE_MIN = 2 * GiB;
+
+/** Or this share of the total, whichever is larger. */
+export const MEMORY_RESERVE_SHARE = 0.2;
+
+/** The least memory the operator may give the local engine. */
+export const MEMORY_CAP_MIN = 1 * GiB;
+
 /**
  * The sample job's measured peak memory, in bytes. The sample job is offered
  * only on an engine whose memory cap is above it.

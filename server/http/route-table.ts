@@ -4,6 +4,7 @@ import type { Sessions } from "../auth/sessions.ts";
 import type { InstanceIdentity } from "../app/instance.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
+import type { LocalEngineManager } from "../local-engine/manager.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
 import type { SampleJob } from "../sample/sample-job.ts";
 import type { MachineFacts } from "../machine/facts.ts";
@@ -31,6 +32,8 @@ export interface RouteContext {
   sessions: Sessions;
   engines: EngineMonitor;
   engineStore: EngineStore;
+  /** Installs, starts and watches the engine on this computer. */
+  localEngine: LocalEngineManager;
   /** Where every server-sent event stream is opened. */
   streams: EventStreams;
   tracker: RunTracker;

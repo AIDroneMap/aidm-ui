@@ -172,7 +172,7 @@ export class FakeRuntime implements ContainerRuntime {
   ): Promise<RuntimeResult<void>> {
     const container = this.containers.get(name);
     if (container === undefined) return ok(undefined);
-    const history = options.tail === undefined ? container.lines : container.lines.slice(-options.tail);
+    const history = options.tail === undefined ? container.lines : options.tail === 0 ? [] : container.lines.slice(-options.tail);
     for (const line of history) options.onLine(line);
     if (!options.follow || !container.running || options.signal?.aborted) return ok(undefined);
 

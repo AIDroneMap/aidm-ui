@@ -14,6 +14,8 @@ import { problemFromFailure } from "./problems.ts";
 import { isSupportedVersion } from "./versions.ts";
 
 export const DEFAULT_POLL_INTERVAL_MS = 3000;
+/** A local engine that has just started may take this long to answer before silence counts against it. */
+export const DEFAULT_STARTING_GRACE_MS = 60_000;
 
 export interface EngineMonitorDeps {
   store: EngineStore;
@@ -23,6 +25,8 @@ export interface EngineMonitorDeps {
   clientFor?: (endpoint: EngineEndpoint, options: TaskClientOptions) => TaskClient;
   /** Looks up a host name for the address rule; the system lookup when missing. */
   resolve?: Resolve;
+  /** How long a freshly started local engine may stay silent and still be starting. */
+  startingGraceMs?: number;
 }
 
 /** What the monitor remembers about one engine between polls. */
@@ -33,6 +37,8 @@ interface Entry {
   info: EngineInfoView | null;
   supported: boolean | null;
   problem: ApiError | null;
+  /** While the clock is before this, a starting engine that does not answer is still starting. */
+  startingUntil: number;
   /** The last line logged for each topic, so a value that stays wrong is logged once. */
   logged: Map<string, string>;
 }
@@ -55,6 +61,7 @@ export class EngineMonitor {
   private readonly log: (line: string) => void;
   private readonly clientFor: (endpoint: EngineEndpoint, options: TaskClientOptions) => TaskClient;
   private readonly resolve: Resolve | undefined;
+  private readonly startingGraceMs: number;
   private readonly entries = new Map<number, Entry>();
   private readonly inFlight = new Map<number, Promise<void>>();
   private readonly listeners = new Set<(views: EngineView[]) => void>();
@@ -68,6 +75,7 @@ export class EngineMonitor {
     this.log = deps.log;
     this.clientFor = deps.clientFor ?? ((endpoint, options) => new TaskClient(endpoint, options));
     this.resolve = deps.resolve;
+    this.startingGraceMs = deps.startingGraceMs ?? DEFAULT_STARTING_GRACE_MS;
   }
 
   /** The address rule, with the name lookup this monitor was given. */
@@ -124,10 +132,33 @@ export class EngineMonitor {
     };
   }
 
+  /**
+   * The engine manager says what it is doing with the local engine: installing
+   * it, starting it, stopping it, or giving up. The monitor takes it from there
+   * once the engine has an address and answers.
+   */
+  setLocalState(
+    id: number,
+    state: "installing" | "starting" | "stopped" | "failed",
+    problem: ApiError | null = null,
+  ): void {
+    const engine = this.store.get(id);
+    if (engine === null || this.stopped) return;
+    const entry = this.entryFor(engine);
+    entry.status = nextEngineStatus(entry.status, { type: state });
+    entry.problem = problem;
+    // What an engine said before it was stopped or started again is old news.
+    entry.info = null;
+    entry.supported = null;
+    entry.startingUntil = state === "starting" ? Date.now() + this.startingGraceMs : 0;
+    this.store.setLastState(id, entry.status.state);
+    this.publish();
+  }
+
   private tick(): void {
     this.publish();
     for (const engine of this.store.list()) {
-      if (engine.enabled) void this.schedule(engine.id, false);
+      if (engine.enabled && engine.address !== "") void this.schedule(engine.id, false);
     }
   }
 
@@ -142,6 +173,7 @@ export class EngineMonitor {
       info: null,
       supported: null,
       problem: null,
+      startingUntil: engine.kind === "local" && engine.enabled ? Date.now() + this.startingGraceMs : 0,
       logged: new Map(),
     };
     this.entries.set(engine.id, fresh);
@@ -196,7 +228,8 @@ export class EngineMonitor {
   private async poll(id: number): Promise<void> {
     try {
       const engine = this.store.get(id);
-      if (engine === null || !engine.enabled || this.stopped) return;
+      // A local engine has no address until it has started, and nothing to ask before that.
+      if (engine === null || !engine.enabled || engine.address === "" || this.stopped) return;
       const entry = this.entryFor(engine);
       const source = sourceOf(engine);
 
@@ -215,6 +248,13 @@ export class EngineMonitor {
           ? null
           : { code: "engine.unsupported_version", data: { version: value.version, minimum: MIN_TASK_API_VERSION } };
         entry.status = nextEngineStatus(entry.status, { type: "answered", queueCount: value.queueCount });
+      } else if (
+        outcome.event.type === "no_answer" &&
+        entry.status.state === "starting" &&
+        Date.now() < entry.startingUntil
+      ) {
+        // A local engine that was just started needs time to come up, so its silence is not counted yet.
+        entry.problem = null;
       } else {
         // An engine that answers with an error has no usable numbers; one that is only silent keeps its last ones.
         if (outcome.event.type === "refused") {

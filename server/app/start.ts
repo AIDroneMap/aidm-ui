@@ -17,6 +17,10 @@ import { Sessions } from "../auth/sessions.ts";
 import { openDatabase } from "../db/database.ts";
 import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
+import { LocalEngineManager } from "../local-engine/manager.ts";
+import { freeBytes } from "../machine/disk.ts";
+import { systemRunner } from "../process/command-runner.ts";
+import { allRuntimes, containerRuntime } from "../runtimes/registry.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import { systemMachine } from "../machine/system.ts";
 import { ManifestService } from "../manifest/manifest-service.ts";
@@ -108,6 +112,30 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
       log: options.log,
     });
+    const manifests = new ManifestService({
+      settings,
+      uiVersion: options.version,
+      now: Date.now,
+      log: options.log,
+    });
+    const runner = systemRunner();
+    const localEngine = new LocalEngineManager({
+      settings,
+      engineStore,
+      monitor: engines,
+      manifests,
+      runtimes: (id) => containerRuntime(id, runner, options.log),
+      detectRuntimes: () => Promise.all(allRuntimes(runner, process.platform).map((runtime) => runtime.detect())),
+      machine: {
+        platform: process.platform,
+        arch: process.arch,
+        totalMemory: os.totalmem(),
+        cpuCount: os.availableParallelism(),
+      },
+      dataFolder,
+      freeBytes,
+      log: options.log,
+    });
     const sample = new SampleJob({
       dataset: SAMPLE_DATASET,
       dataFolder,
@@ -117,12 +145,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engineStore,
       architecture: process.arch,
       log: options.log,
-    });
-    const manifests = new ManifestService({
-      settings,
-      uiVersion: options.version,
-      now: Date.now,
-      log: options.log,
+      localMemoryCap: () => localEngine.memoryCap(),
     });
     const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: options.log });
     let listener: Listener | undefined;
@@ -134,6 +157,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       sessions,
       engines,
       engineStore,
+      localEngine,
       streams: new EventStreams(sessions),
       tracker,
       sample,
@@ -169,6 +193,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       databaseBelongsToServer = true;
       engines.start();
       tracker.start();
+      // In the background: a slow runtime must not delay the browser, and neither call can fail.
+      void localEngine.refreshRuntimes();
+      void localEngine.resume();
       updateChecks.start();
       await options.openBrowser(url);
       const result: StartResult = {
@@ -182,6 +209,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
           await updateChecks.stop();
           await sample.stop();
           await tracker.stop();
+          // Stops following the log. The engine keeps running when aidm-ui stops.
+          await localEngine.close();
           await engines.stop();
           db.close();
           removeLock(dataFolder, process.pid);
