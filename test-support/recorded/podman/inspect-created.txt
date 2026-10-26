@@ -15,8 +15,8 @@
             "ConmonPid": 0,
             "ExitCode": 0,
             "Error": "",
-            "StartedAt": "2026-10-26T09:27:22.230201146+02:00",
-            "FinishedAt": "2026-10-26T09:27:29.77831102+02:00"
+            "StartedAt": "2026-01-01T00:00:00Z",
+            "FinishedAt": "2026-01-01T00:00:00Z"
         },
         "HostConfig": {
             "Memory": 268435456,

@@ -24,7 +24,7 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
 }
 
 function detection(id: "podman" | "docker", memoryCapEnforced: boolean | null = true): RuntimeDetection {
-  return { id, available: true, version: "1", rootless: true, memoryCapEnforced, problem: null };
+  return { id, available: true, version: "1", memoryCapEnforced, problem: null };
 }
 
 const tools = [

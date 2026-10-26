@@ -65,7 +65,6 @@ export class FakeRuntime implements ContainerRuntime {
       id: this.id,
       available: true,
       version: VERSIONS[this.id],
-      rootless: this.id !== "docker",
       memoryCapEnforced: true,
       problem: null,
       ...options.detection,

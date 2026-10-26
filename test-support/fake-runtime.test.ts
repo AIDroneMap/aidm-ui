@@ -38,12 +38,11 @@ async function started(runtime: FakeRuntime, patch: Partial<ContainerSpec> = {})
   return result.value;
 }
 
-test("by default it is an available, rootless Podman 5.8.9 that enforces the memory cap", async () => {
+test("by default it is an available Podman 5.8.9 that enforces the memory cap", async () => {
   expect(await fake().detect()).toEqual({
     id: "podman",
     available: true,
     version: "5.8.9",
-    rootless: true,
     memoryCapEnforced: true,
     problem: null,
   });
