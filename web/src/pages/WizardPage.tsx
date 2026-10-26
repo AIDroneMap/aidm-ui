@@ -2,12 +2,20 @@ import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
-import { formatClock } from "../format.ts";
+import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
+import { formatBytes, formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
 import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
-import type { MachineCheckView as MachineCheckData, WizardUpdateRequest, WizardView } from "../../../shared/api-types.ts";
+import type {
+  MachineCheckView as MachineCheckData,
+  PackagesView,
+  UpdateCheck,
+  UpdateCheckRequest,
+  WizardUpdateRequest,
+  WizardView,
+} from "../../../shared/api-types.ts";
 import type { ApiError } from "../../../shared/api-error.ts";
 
 const HEADING_ID = "wizard-title";
@@ -193,16 +201,69 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
   );
 }
 
-export function InstallScreen({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+export interface InstallScreenProps {
+  /** Null until the packages have loaded. */
+  packages: PackagesView | null;
+  failure: ApiFailure | null;
+  /** True while the answer to the update question is being saved. */
+  saving: boolean;
+  /** True once the operator answered on this screen, so the question stays in place and keeps focus. */
+  answeredHere: boolean;
+  /** Said by the status area after the answer is saved, so a screen reader hears it. */
+  announcement: string;
+  onUpdateCheckChange: (value: UpdateCheck) => void;
+  onBack: () => void;
+  onNext: () => void;
+}
+
+function Offer({ packages }: { packages: PackagesView }) {
+  const { offer } = packages;
+  if (!offer) {
+    return (
+      <p>{packages.reason ? <Sentence error={packages.reason} /> : t("wizard.install.no_offer")}</p>
+    );
+  }
+  return (
+    <div className="choice">
+      <h2>{t("wizard.install.offer", { packageVersion: offer.packageVersion })}</h2>
+      <ul>
+        <li>{t("wizard.install.variant", { variant: t(`variant.${offer.variant}`) })}</li>
+        <li>{t("wizard.install.size", { size: formatBytes(offer.size) })}</li>
+        <li>
+          {offer.source === "builtin"
+            ? t("wizard.install.source.builtin")
+            : t("wizard.install.source.downloaded", { tag: offer.tag ?? "" })}
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+export function InstallScreen(props: InstallScreenProps) {
+  const { packages } = props;
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
+      {packages ? <Offer packages={packages} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
       <p>{t("wizard.install.body")}</p>
+      {packages && (packages.updateCheck === null || props.answeredHere) && (
+        <UpdateCheckQuestion
+          idPrefix="wizard"
+          value={packages.updateCheck}
+          saving={props.saving}
+          loading={false}
+          onChange={props.onUpdateCheckChange}
+        />
+      )}
+      {props.failure && <ErrorMessage failure={props.failure} />}
+      <p role="status" className="visually-hidden">
+        {props.announcement}
+      </p>
       <div className="actions">
-        <button type="button" className="secondary" onClick={onBack}>
+        <button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </button>
-        <button type="button" onClick={onNext}>
+        <button type="button" onClick={props.onNext}>
           {t("wizard.next")}
         </button>
       </div>
@@ -279,6 +340,11 @@ export function WizardPage({
   const [announcement, setAnnouncement] = useState("");
   const [finishing, setFinishing] = useState(false);
   const [finishFailure, setFinishFailure] = useState<ApiFailure | null>(null);
+  const [packages, setPackages] = useState<PackagesView | null>(null);
+  const [packagesFailure, setPackagesFailure] = useState<ApiFailure | null>(null);
+  const [updateSaving, setUpdateSaving] = useState(false);
+  const [answeredHere, setAnsweredHere] = useState(false);
+  const [updateAnnouncement, setUpdateAnnouncement] = useState("");
 
   const fail = (error: unknown): ApiFailure => {
     const failure = asApiFailure(error);
@@ -302,6 +368,25 @@ export function WizardPage({
     // The check loads once; the callback it uses is re-created on every render.
   }, []);
 
+  // The install screen asks which package fits this computer; no other screen needs it.
+  const onInstall = step === "install";
+  useEffect(() => {
+    if (!onInstall) return;
+    let current = true;
+    api<PackagesView>("GET", "/api/packages").then(
+      (view) => {
+        if (current) setPackages(view);
+      },
+      (error: unknown) => {
+        if (current) setPackagesFailure(fail(error));
+      },
+    );
+    return () => {
+      current = false;
+    };
+    // The callback it uses is re-created on every render.
+  }, [onInstall]);
+
   // On arrival too: from the settings, from a link or at load, the operator starts at the heading.
   useEffect(() => {
     focusHeading();
@@ -318,6 +403,23 @@ export function WizardPage({
       setCheckFailure(fail(error));
     } finally {
       setChecking(false);
+    }
+  };
+
+  const saveUpdateCheck = async (value: UpdateCheck) => {
+    setUpdateSaving(true);
+    setUpdateAnnouncement("");
+    setPackagesFailure(null);
+    try {
+      const body: UpdateCheckRequest = { value };
+      await api<unknown>("PUT", "/api/settings/update-check", body);
+      setPackages((current) => (current ? { ...current, updateCheck: value } : current));
+      setAnsweredHere(true);
+      setUpdateAnnouncement(t("updates.saved"));
+    } catch (error) {
+      setPackagesFailure(fail(error));
+    } finally {
+      setUpdateSaving(false);
     }
   };
 
@@ -365,7 +467,16 @@ export function WizardPage({
           onBack={back}
         />
       ) : step === "install" ? (
-        <InstallScreen onBack={back} onNext={next} />
+        <InstallScreen
+          packages={packages}
+          failure={packagesFailure}
+          saving={updateSaving}
+          answeredHere={answeredHere}
+          announcement={updateAnnouncement}
+          onUpdateCheckChange={(value) => void saveUpdateCheck(value)}
+          onBack={back}
+          onNext={next}
+        />
       ) : (
         <SampleScreen
           busy={finishing}
