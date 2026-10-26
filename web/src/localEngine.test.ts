@@ -192,18 +192,7 @@ test("the steps come from the plan before the click and from the install after i
   expect(at("engine", "done")).toEqual(["done", "done", "done", "done", "done"]);
 });
 
-const applying = {
-  phase: "starting",
-  variant: "linux-amd64-cpu",
-  steps: [{ id: "engine", size: 1 }],
-  step: "engine",
-  stepReceived: null,
-  size: 1,
-  layersDone: null,
-  layersTotal: null,
-  attempt: 1,
-  maxAttempts: 5,
-} as const;
+const applying = engineInstall({ phase: "starting", size: 1 });
 const onVersion = (packageVersion: string, working: boolean): LocalEngineView => ({
   ...fresh,
   installed: { packageVersion, variant: "linux-amd64-cpu", kind: "container", runtime: "podman" },

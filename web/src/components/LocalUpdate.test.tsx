@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure } from "../api.ts";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
-import { caps, fresh } from "../localEngine.fixtures.ts";
+import { caps, engineInstall, fresh } from "../localEngine.fixtures.ts";
 import { unlabelledInputs, untranslatedText } from "../test-helpers.ts";
 import { LocalAdvanced } from "./LocalAdvanced.tsx";
 import { UpdateView, type UpdateViewProps } from "./LocalUpdate.tsx";
@@ -58,7 +58,7 @@ test("while an update downloads, the progress shows like an install and the butt
     ...withUpdate,
     update: {
       ...withUpdate.update,
-      applying: { phase: "pulling", size: 682_533_845, layersDone: 2, layersTotal: 5, attempt: 2, maxAttempts: 5 },
+      applying: engineInstall({ phase: "pulling", size: 682_533_845, layersDone: 2, layersTotal: 5, attempt: 2 }),
     },
   });
   expect(html).toContain("Downloading the engine:");
@@ -72,7 +72,7 @@ test("while an update downloads, the progress shows like an install and the butt
 test("while the new version starts, the status says so", () => {
   const html = render({
     ...withUpdate,
-    update: { ...withUpdate.update, applying: { phase: "starting", size: 1, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 5 } },
+    update: { ...withUpdate.update, applying: engineInstall({ phase: "starting", size: 1 }) },
   });
   expect(html).toContain('<div role="status"><p>Starting the engine</p></div>');
   expect(html).not.toContain("<progress");
