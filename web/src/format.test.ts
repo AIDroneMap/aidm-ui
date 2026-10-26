@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { formatBytes, formatDuration } from "./format.ts";
+import { formatBytes, formatClock, formatDuration } from "./format.ts";
 
 test("sizes under 1 GiB are whole MiB", () => {
   expect(formatBytes(888735308)).toBe("848 MiB");
@@ -23,4 +23,10 @@ test("seconds read as minutes and seconds", () => {
   expect(formatDuration(60)).toBe("1 min 0 s");
   expect(formatDuration(46)).toBe("46 s");
   expect(formatDuration(0)).toBe("0 s");
+});
+
+test("the time of day is two digits for the hour and the minutes on the local clock", () => {
+  const afternoon = formatClock(new Date(2026, 9, 26, 14, 5).toISOString());
+  expect(afternoon).toMatch(/^02:05\s?PM$/);
+  expect(formatClock(new Date(2026, 9, 26, 9, 30).toISOString())).toMatch(/^09:30\s?AM$/);
 });

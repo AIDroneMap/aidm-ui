@@ -25,3 +25,10 @@ export function formatDuration(seconds: number): string {
     ? t("unit.duration.s", { s: rest })
     : t("unit.duration.min_s", { min: countFormat.format(minutes), s: rest });
 }
+
+const clockFormat = new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" });
+
+/** The time of day of an ISO 8601 instant on this computer's clock, for example "02:05 PM". */
+export function formatClock(iso: string): string {
+  return clockFormat.format(new Date(iso));
+}

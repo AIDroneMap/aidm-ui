@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "./api.ts";
 import { ErrorMessage } from "./components/ErrorMessage.tsx";
 import { Layout } from "./components/Layout.tsx";
+import { firstRunRedirect } from "./firstRun.ts";
 import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
@@ -53,20 +54,19 @@ export function App() {
     };
   }, [session]);
 
-  // First run: the home page is the wizard until the operator finishes it.
-  const firstRun = route === "home" && wizardDone === false;
+  // First run: a page that opens on the home page goes to the wizard, once. After that the operator is free to leave.
+  const redirect = useRef(firstRunRedirect());
   useEffect(() => {
-    if (firstRun) window.location.replace("#/wizard");
-  }, [firstRun]);
+    if (redirect.current(route, wizardDone)) window.location.replace("#/wizard");
+  }, [route, wizardDone]);
 
   if (session === "login") return <LoginPage onSignedIn={() => setSession("ready")} />;
   if (session === "loading") {
     return <main>{failure ? <ErrorMessage failure={failure} /> : <p>{t("app.loading")}</p>}</main>;
   }
-  const shown = firstRun ? "wizard" : route;
   return (
-    <Layout route={shown}>
-      {shown === "wizard" ? (
+    <Layout route={route}>
+      {route === "wizard" ? (
         <WizardPage onAuthRequired={() => setSession("login")} onCompleted={() => setWizardDone(true)} />
       ) : route === "settings" ? (
         <SettingsPage onAuthRequired={() => setSession("login")} onWizardReopened={() => setWizardDone(false)} />

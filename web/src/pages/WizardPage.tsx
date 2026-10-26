@@ -1,16 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
+import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
+import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
 import type { MachineCheckView as MachineCheckData, WizardUpdateRequest, WizardView } from "../../../shared/api-types.ts";
 import type { ApiError } from "../../../shared/api-error.ts";
 
+const HEADING_ID = "wizard-title";
+
+/** A new screen is a new page for a keyboard or screen reader user: focus goes to its heading. */
+export function focusHeading(doc: Pick<Document, "getElementById"> = document): void {
+  doc.getElementById(HEADING_ID)?.focus();
+}
+
 function Heading({ children }: { children: string }) {
   // The container moves focus here when the screen changes.
   return (
-    <h1 id="wizard-title" tabIndex={-1}>
+    <h1 id={HEADING_ID} tabIndex={-1}>
       {children}
     </h1>
   );
@@ -87,17 +97,18 @@ export function MachineCheckScreen(props: MachineCheckScreenProps) {
       ) : props.failure ? null : (
         <p>{t("wizard.check.loading")}</p>
       )}
+      {check && <p className="hint">{t("wizard.check.checked_at", { time: formatClock(check.checkedAt) })}</p>}
       {props.failure && <ErrorMessage failure={props.failure} />}
       <p role="status" className="visually-hidden">
-        {props.announcement}
+        {props.checking ? t("wizard.check.checking") : props.announcement}
       </p>
       <div className="actions">
         <button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </button>
-        <button type="button" className="secondary" disabled={props.checking} onClick={props.onCheckAgain}>
+        <BusyButton className="secondary" busy={props.checking} onClick={props.onCheckAgain}>
           {props.checking ? t("wizard.check.checking") : t("wizard.check.again")}
-        </button>
+        </BusyButton>
         <button type="button" onClick={props.onNext}>
           {t("wizard.next")}
         </button>
@@ -108,10 +119,17 @@ export function MachineCheckScreen(props: MachineCheckScreenProps) {
 
 export interface EngineChoiceScreenProps {
   check: MachineCheckData | null;
-  /** True while "use without an engine" is being saved. */
+  /** Why the machine check has no answer, when it failed. */
+  checkFailure: ApiFailure | null;
+  /** True while a new machine check runs. */
+  checking: boolean;
+  /** True while the end of the wizard is being saved. */
   busy: boolean;
+  /** Why the end of the wizard could not be saved. */
   failure: ApiFailure | null;
+  onCheckAgain: () => void;
   onInstall: () => void;
+  onRemote: () => void;
   onUiOnly: () => void;
   onBack: () => void;
 }
@@ -128,12 +146,19 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
         {local?.offered ? (
           <>
             <p>{t("wizard.engine.install.body")}</p>
-            <button type="button" disabled={props.busy} onClick={props.onInstall}>
+            <BusyButton busy={props.busy} onClick={props.onInstall}>
               {t("wizard.engine.install.button")}
-            </button>
+            </BusyButton>
           </>
         ) : local ? (
           <p>{local.reason ? <Sentence error={local.reason} /> : t("wizard.engine.install.unavailable")}</p>
+        ) : props.checkFailure ? (
+          <>
+            <ErrorMessage failure={props.checkFailure} />
+            <BusyButton className="secondary" busy={props.checking} onClick={props.onCheckAgain}>
+              {props.checking ? t("wizard.check.checking") : t("wizard.check.again")}
+            </BusyButton>
+          </>
         ) : (
           <p>{t("wizard.engine.install.checking")}</p>
         )}
@@ -142,20 +167,23 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
       <div className="choice">
         <h2>{t("wizard.engine.remote.title")}</h2>
         <p>{t("wizard.engine.remote.body")}</p>
-        <a className="button" href="#/engines">
+        <BusyButton className="secondary" busy={props.busy} onClick={props.onRemote}>
           {t("wizard.engine.remote.button")}
-        </a>
+        </BusyButton>
       </div>
 
       <div className="choice">
         <h2>{t("wizard.engine.ui_only.title")}</h2>
         <p>{t("wizard.engine.ui_only.body")}</p>
-        <button type="button" className="secondary" disabled={props.busy} onClick={props.onUiOnly}>
+        <BusyButton className="secondary" busy={props.busy} onClick={props.onUiOnly}>
           {t("wizard.engine.ui_only.button")}
-        </button>
+        </BusyButton>
       </div>
 
       {props.failure && <ErrorMessage failure={props.failure} />}
+      <p role="status" className="visually-hidden">
+        {props.checking ? t("wizard.check.checking") : ""}
+      </p>
       <div className="actions">
         <button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
@@ -186,6 +214,7 @@ export interface SampleScreenProps {
   /** True while the end of the wizard is being saved. */
   busy: boolean;
   failure: ApiFailure | null;
+  onAuthRequired: () => void;
   onBack: () => void;
   onFinish: () => void;
 }
@@ -195,17 +224,15 @@ export function SampleScreen(props: SampleScreenProps) {
     <>
       <Heading>{t("wizard.sample.title")}</Heading>
       <p>{t("wizard.sample.body")}</p>
-      <p>
-        <a href="#/sample">{t("wizard.sample.link")}</a>
-      </p>
+      <SampleJobPage onAuthRequired={props.onAuthRequired} embedded />
       {props.failure && <ErrorMessage failure={props.failure} />}
       <div className="actions">
         <button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </button>
-        <button type="button" disabled={props.busy} onClick={props.onFinish}>
+        <BusyButton busy={props.busy} onClick={props.onFinish}>
           {t("wizard.sample.finish")}
-        </button>
+        </BusyButton>
       </div>
     </>
   );
@@ -217,6 +244,24 @@ function go(step: WizardStep): void {
 
 function neighbour(step: WizardStep, offset: number): WizardStep {
   return WIZARD_STEPS[WIZARD_STEPS.indexOf(step) + offset] ?? step;
+}
+
+/**
+ * Records on the server that the wizard is done, then tells the page and moves
+ * to where the operator is going. Throws the API failure when the save fails,
+ * and then moves nowhere.
+ */
+export async function finishWizard(
+  destination: "#/" | "#/engines",
+  onCompleted: () => void,
+  navigate: (hash: string) => void = (hash) => {
+    window.location.hash = hash;
+  },
+): Promise<void> {
+  const body: WizardUpdateRequest = { completed: true };
+  await api<WizardView>("PUT", "/api/wizard", body);
+  onCompleted();
+  navigate(destination);
 }
 
 export function WizardPage({
@@ -257,14 +302,9 @@ export function WizardPage({
     // The check loads once; the callback it uses is re-created on every render.
   }, []);
 
-  // A new screen is a new page for a keyboard or screen reader user: move focus to its heading.
-  const first = useRef(true);
+  // On arrival too: from the settings, from a link or at load, the operator starts at the heading.
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    document.getElementById("wizard-title")?.focus();
+    focusHeading();
   }, [step]);
 
   const checkAgain = async () => {
@@ -281,14 +321,11 @@ export function WizardPage({
     }
   };
 
-  const finish = async () => {
+  const finish = async (destination: "#/" | "#/engines") => {
     setFinishing(true);
     setFinishFailure(null);
     try {
-      const body: WizardUpdateRequest = { completed: true };
-      await api<WizardView>("PUT", "/api/wizard", body);
-      onCompleted();
-      window.location.hash = "#/";
+      await finishWizard(destination, onCompleted);
     } catch (error) {
       setFinishFailure(fail(error));
     } finally {
@@ -317,16 +354,26 @@ export function WizardPage({
       ) : step === "engine" ? (
         <EngineChoiceScreen
           check={check}
+          checkFailure={checkFailure}
+          checking={checking}
           busy={finishing}
           failure={finishFailure}
+          onCheckAgain={() => void checkAgain()}
           onInstall={next}
-          onUiOnly={() => void finish()}
+          onRemote={() => void finish("#/engines")}
+          onUiOnly={() => void finish("#/")}
           onBack={back}
         />
       ) : step === "install" ? (
         <InstallScreen onBack={back} onNext={next} />
       ) : (
-        <SampleScreen busy={finishing} failure={finishFailure} onBack={back} onFinish={() => void finish()} />
+        <SampleScreen
+          busy={finishing}
+          failure={finishFailure}
+          onAuthRequired={onAuthRequired}
+          onBack={back}
+          onFinish={() => void finish("#/")}
+        />
       )}
     </>
   );

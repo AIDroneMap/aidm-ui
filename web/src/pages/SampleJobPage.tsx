@@ -258,7 +258,14 @@ export function RunProgress({ run, lines, connectionLost, cancelling, failure, o
   );
 }
 
-export function SampleJobPage({ onAuthRequired }: { onAuthRequired: () => void }) {
+export function SampleJobPage({
+  onAuthRequired,
+  embedded = false,
+}: {
+  onAuthRequired: () => void;
+  /** Shown inside another screen that has its own heading, so this page leaves out its own. */
+  embedded?: boolean;
+}) {
   const [sample, setSample] = useState<SampleView | null>(null);
   const [engineId, setEngineId] = useState<number | null>(null);
   const [run, setRun] = useState<RunView | null>(null);
@@ -378,7 +385,7 @@ export function SampleJobPage({ onAuthRequired }: { onAuthRequired: () => void }
 
   return (
     <>
-      <h1>{t("sample.title")}</h1>
+      {!embedded && <h1>{t("sample.title")}</h1>}
       {sample === null ? (
         failure ? <ErrorMessage failure={failure} /> : <p>{t("sample.loading")}</p>
       ) : run !== null ? (

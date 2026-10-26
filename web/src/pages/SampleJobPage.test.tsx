@@ -8,7 +8,7 @@ import {
   type SampleView,
 } from "../../../shared/api-types.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
-import { RunProgress, SampleIntro, type RunProgressProps, type SampleIntroProps } from "./SampleJobPage.tsx";
+import { RunProgress, SampleIntro, SampleJobPage, type RunProgressProps, type SampleIntroProps } from "./SampleJobPage.tsx";
 
 const offered: SampleEngineOffer = {
   engineId: 1,
@@ -260,4 +260,12 @@ test("every button in a run has a name", () => {
       expect((match[1] ?? "").replace(/<[^>]*>/g, "").trim(), state).not.toBe("");
     }
   }
+});
+
+test("the page has its own heading, and leaves it out when it sits inside a screen that has one", () => {
+  const alone = renderToStaticMarkup(<SampleJobPage onAuthRequired={() => {}} />);
+  expect(alone).toContain("<h1>Sample job</h1>");
+  const inside = renderToStaticMarkup(<SampleJobPage onAuthRequired={() => {}} embedded />);
+  expect(inside).not.toContain("<h1");
+  expect(inside).toContain("Loading the sample job...");
 });
