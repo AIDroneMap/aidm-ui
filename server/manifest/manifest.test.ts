@@ -139,6 +139,15 @@ test("a Mac with Apple silicon is offered the native package once a manifest has
   expect((await packages(h)).offer).toMatchObject({ variant: "darwin-arm64", kind: "native", size: 9 });
 });
 
+test("a Linux computer is offered the native package, not an image, when the manifest has one for it", async () => {
+  const manifest = sampleManifest();
+  manifest.variants["linux-amd64-cpu"] = { kind: "native", url: "https://example.org/linux.tar.gz", size: 7, sha256: "cd".repeat(32), gpu: false };
+  await publish("v2.6.0", manifest);
+  const h = open();
+  await refresh(h);
+  expect((await packages(h)).offer).toMatchObject({ variant: "linux-amd64-cpu", kind: "native", size: 7 });
+});
+
 test("a Windows computer is offered nothing yet, with the reason, and nothing is requested", async () => {
   const h = open({ machine: recordedMachine(linuxInputs({ platform: "win32", arch: "x64" })) });
   const view = await packages(h);

@@ -18,8 +18,8 @@ export type PackageResult<T> = { ok: true; value: T } | { ok: false; error: ApiE
 
 /**
  * One kind of engine package, container or native, behind the one interface
- * the engine manager uses. The manager does the update and the rollback of a
- * container package itself, with these calls; the native kind comes with ticket #15.
+ * the engine manager uses. The manager does the update and the rollback of
+ * either kind itself, with these calls.
  */
 export interface EnginePackage {
   readonly kind: "container" | "native";
@@ -39,9 +39,9 @@ export interface EnginePackage {
     onLine: (line: string) => void;
     signal?: AbortSignal;
   }): Promise<PackageResult<void>>;
-  /** Only the container, forced; the image stays. For clearing away a start that went wrong. */
+  /** Only the container (for a native package, the program), forced; the image or the folder stays. For clearing away a start that went wrong. */
   removeContainer(): Promise<PackageResult<void>>;
-  /** This version's container and image. */
+  /** This version's container and image, or its folder. */
   remove(): Promise<PackageResult<void>>;
 }
 

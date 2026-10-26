@@ -9,6 +9,7 @@ import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import type { Manifest } from "../manifest/schema.ts";
+import type { InstalledContainerPackage } from "../settings/settings.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
 import type { ContainerSpec } from "../runtimes/runtime.ts";
 import { TaskClient } from "../task-api/task-client.ts";
@@ -305,7 +306,7 @@ test("a successful update marks the new version current and keeps the old one as
   expect(view.installed?.packageVersion).toBe("2.6.0");
   expect(view.update).toEqual({ available: null, previous: { packageVersion: "2.5.0" }, blockedBy: null, applying: null });
   expect(view.problem).toBeNull();
-  expect(h.settings.get("local.package")?.container.digest).toBe(`sha256:${"6".repeat(64)}`);
+  expect((h.settings.get("local.package") as InstalledContainerPackage | null)?.container.digest).toBe(`sha256:${"6".repeat(64)}`);
   expect(h.settings.get("local.previous")?.packageVersion).toBe("2.5.0");
   expect(h.engineStore.local()?.installedVersion).toBe("2.6.0");
 
