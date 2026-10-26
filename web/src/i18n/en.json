@@ -149,6 +149,9 @@
   "run.results_not_ready": "The results are not ready to download yet.",
   "run.upload_failed": "AIDM UI could not send the images to the engine. Check that the engine is running, then try again.",
   "run.engine_refused": "The engine refused to start this run.",
+  "run.cancelled_without_engine": "The run was stopped here, but the engine did not answer. If it comes back, it may still finish the work.",
+  "run.engine_lost": "The engine no longer has this run. It may have been restarted or cleaned up.",
+  "run.interrupted": "AIDM UI was closed while it prepared this run. Start the sample job again.",
   "run.engine": "Running on {name}",
   "run.state.created": "Getting ready",
   "run.state.uploading": "Sending the images to the engine",
@@ -170,5 +173,11 @@
   "run.restarted": "The engine restarted, so this run started over.",
   "run.results_link": "Download the results",
   "run.results_preparing": "The results are being prepared.",
-  "run.live_paused": "Live updates are paused. AIDM UI is trying to connect again."
+  "run.live_paused": "Live updates are paused. AIDM UI is trying to connect again.",
+  "unit.bytes.gib": "{value} GiB",
+  "unit.bytes.mib": "{value} MiB",
+  "unit.bytes.kib": "{value} KiB",
+  "unit.bytes.b": "{value} B",
+  "unit.duration.min_s": "{min} min {s} s",
+  "unit.duration.s": "{s} s"
 }

@@ -305,11 +305,14 @@ export function SampleJobPage({ onAuthRequired }: { onAuthRequired: () => void }
     let current = true;
     setLog(EMPTY_LOG);
     logCount.current = 0;
-    const catchUp = () => {
-      const from = logCount.current;
+    const catchUp = (start?: number) => {
+      const from = start ?? logCount.current;
       api<RunLogView>("GET", `/api/runs/${runId}/log?from=${from}`).then(
         (view) => {
-          if (current) setLog((existing) => mergeLog(existing, from, view.lines));
+          if (!current) return;
+          setLog((existing) => mergeLog(existing, from, view.lines));
+          // The server sends at most one page of lines, so ask again from where it ended.
+          if (view.next > from) catchUp(view.next);
         },
         () => {
           // The live connection will bring the lines; nothing to show for a failed catch-up.

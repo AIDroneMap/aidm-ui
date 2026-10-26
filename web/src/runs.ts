@@ -1,13 +1,10 @@
-import { RUN_STATES, type RunView } from "../../shared/api-types.ts";
+import { FINISHED_RUN_STATES, RUN_STATES, type RunView } from "../../shared/api-types.ts";
 
 /** The log lines the page keeps in memory; older ones are dropped. */
 export const MAX_LOG_LINES = 2000;
 
-/** The states after which a run never changes again. */
-export const FINISHED_STATES: readonly string[] = ["completed", "failed", "cancelled"];
-
 export function isFinished(run: RunView): boolean {
-  return FINISHED_STATES.includes(run.state);
+  return FINISHED_RUN_STATES.includes(run.state);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
