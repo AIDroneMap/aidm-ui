@@ -7,7 +7,7 @@ import type { LocalEngineView } from "../../../shared/api-types.ts";
 import type { ApiError } from "../../../shared/api-error.ts";
 
 /** The steps in order, each with its size, so the operator knows what is coming before it starts. */
-function InstallSteps({ view }: { view: LocalEngineView | null }) {
+export function InstallSteps({ view }: { view: LocalEngineView | null }) {
   const steps = installSteps(view);
   if (steps.length === 0) return null;
   return (
@@ -84,7 +84,29 @@ export function DownloadProgress({ status, progressId }: { status: Extract<Insta
  * status region changes when the step changes, so a screen reader hears each
  * step once; the counts below it change often and stay silent.
  */
-export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
+/** The steps that download something. Approval and the service start download nothing. */
+const DOWNLOADS = new Set(["installer", "kernel", "init", "engine"]);
+
+/**
+ * What the install downloads in all, said before the button. The steps of a
+ * Mac each add their size; elsewhere it is the engine package alone. A size
+ * that is not known (a kernel the tool fetches itself) makes it "at least".
+ */
+export function DownloadTotal({ view, engineSize }: { view: LocalEngineView | null; engineSize: number }) {
+  const steps = installSteps(view);
+  const downloads = steps.length > 0 ? steps.filter((step) => DOWNLOADS.has(step.id)) : [{ id: "engine", size: engineSize }];
+  const total = downloads.reduce((sum, step) => sum + (step.size ?? 0), 0);
+  const unknown = downloads.some((step) => step.size === null);
+  return <p className="install-total">{t(unknown ? "wizard.install.total_at_least" : "wizard.install.total", { size: formatBytes(total) })}</p>;
+}
+
+/** Why the try before this one stopped, as one sentence with the cause it carried. */
+function lastTryText(error: ApiError): string {
+  const cause = causeOf(error);
+  return `${t(error.code, messageParams(error))}${cause === null ? "" : ` ${t(cause.code, messageParams(cause))}`}`;
+}
+
+export function LocalInstallStatus({ view, withSteps = true }: { view: LocalEngineView | null; withSteps?: boolean }) {
   const status = installStatus(view);
   if (!view) return <div role="status"></div>;
   // A download or a load that failed says why, under the general sentence.
@@ -133,7 +155,10 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
           <p>{t("local.install.state", { state: t(`engine.state.${view.state}`) })}</p>
         ) : null}
       </div>
-      <InstallSteps view={view} />
+      {withSteps && <InstallSteps view={view} />}
+      {view.lastTry !== null && (status.kind === "preparing" || status.kind === "downloading" || status.kind === "loading") && (
+        <p className="hint">{t("local.install.last_try", { reason: lastTryText(view.lastTry) })}</p>
+      )}
       {status.kind === "preparing" && (status.step === "installer" || status.step === "kernel" || status.step === "init") && (
         // Every download of the Mac steps reports its bytes; a kernel the tool downloads itself may not say its size.
         status.received !== null && status.size !== null ? (

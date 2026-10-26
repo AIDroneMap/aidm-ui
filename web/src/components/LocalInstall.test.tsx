@@ -128,7 +128,7 @@ test("before the click a Mac lists every step in order with its size, all waitin
     ["Apple&#x27;s container tool, 149 MiB", "Waiting"],
     ["Your approval: macOS asks for your password once", "Waiting"],
     ["Starting Apple&#x27;s container tool", "Waiting"],
-    ["Kernel, 664 MiB", "Waiting"],
+    ["Linux system for Apple&#x27;s container tool, 664 MiB, downloaded once", "Waiting"],
     ["Startup files, 66 MiB", "Waiting"],
     ["AIDM engine, 594 MiB", "Waiting"],
   ]);
@@ -187,7 +187,7 @@ test("the service step says that Apple's container tool is starting, with no siz
 
 test("the kernel step says its size and that it continues from where it stopped, with a bar that has no value before the first byte", () => {
   const html = render(mac("kernel"));
-  expect(html).toContain("Downloading the kernel: 664 MiB. If it stops, it continues from where it stopped.");
+  expect(html).toContain("Downloading the Linux system for Apple&#x27;s container tool: 664 MiB. If it stops, it continues from where it stopped.");
   expect(html).not.toContain("starts again from the beginning");
   expect(html).toContain('<progress id="install-progress"></progress>');
   expect(html.match(/Done<\/span>/g)).toHaveLength(3);
@@ -196,12 +196,12 @@ test("the kernel step says its size and that it continues from where it stopped,
 
 test("when the tool was there already, the kernel step says its size is not known and makes none up", () => {
   const plan = render({ ...fresh, plan: macStoppedPlan });
-  expect(plan).toContain("<span>Kernel, size not known, no resume</span>");
+  expect(plan).toContain("<span>Linux system for Apple&#x27;s container tool, size not known, downloaded once</span>");
   expect(plan).not.toContain("664 MiB");
   expect(plan).not.toContain("0 B");
 
   const html = render(mac("kernel", { install: macInstall("kernel", { steps: macStoppedPlan }) }));
-  expect(html).toContain("Downloading the kernel. If it stops, it starts again from the beginning.");
+  expect(html).toContain("Downloading the Linux system for Apple&#x27;s container tool. If it stops, it starts again from the beginning.");
   expect(html).not.toContain("0 B");
   expect(html).not.toContain("664 MiB");
   expect(html).toContain('<progress id="install-progress"></progress>');

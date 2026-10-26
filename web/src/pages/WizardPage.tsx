@@ -3,7 +3,7 @@ import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { GuideLink } from "../components/GuideLink.tsx";
-import { LocalInstallStatus } from "../components/LocalInstall.tsx";
+import { DownloadTotal, InstallSteps, LocalInstallStatus } from "../components/LocalInstall.tsx";
 import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes, formatClock } from "../format.ts";
@@ -267,7 +267,7 @@ function GpuNote({ gpu, offer }: { gpu: PackagesView["gpu"]; offer: EnginePackag
   );
 }
 
-function Offer({ packages }: { packages: PackagesView }) {
+function Offer({ packages, platform }: { packages: PackagesView; platform: string | null }) {
   const { offer } = packages;
   if (!offer) {
     return (
@@ -278,7 +278,12 @@ function Offer({ packages }: { packages: PackagesView }) {
     <div className="choice">
       <h2>{t("wizard.install.offer", { packageVersion: offer.packageVersion })}</h2>
       <ul>
-        <li>{t("wizard.install.variant", { variant: t(`variant.${offer.variant}`) })}</li>
+        <li>
+          {/* A Mac runs the Linux package inside Apple's tool: what the operator sees is that it runs on this Mac. */}
+          {platform === "darwin" && offer.kind === "container"
+            ? t("wizard.install.variant_mac")
+            : t("wizard.install.variant", { variant: t(`variant.${offer.variant}`) })}
+        </li>
         <li>{t("wizard.install.size", { size: formatBytes(offer.size) })}</li>
         {offer.kind === "native" && <li>{t("local.package.native")}</li>}
         <li>
@@ -339,8 +344,11 @@ export function InstallScreen(props: InstallScreenProps) {
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
-      {packages ? <Offer packages={packages} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
+      {packages ? <Offer packages={packages} platform={props.local?.platform ?? null} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
       <p>{t("wizard.install.body")}</p>
+      {/* Every download with its size, and the total, before the button. */}
+      <InstallSteps view={props.local} />
+      {packages?.offer && <DownloadTotal view={props.local} engineSize={packages.offer.size} />}
       {packages?.offer &&
         (runtimeSetupShown(setupOffered, props.setup) ? (
           <RuntimeSetupPanel offered={setupOffered} setup={props.setup} remoteBusy={props.remoteBusy} onRemote={props.onRemote}>
@@ -350,7 +358,7 @@ export function InstallScreen(props: InstallScreenProps) {
           button
         ))}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
-      <LocalInstallStatus view={props.local} />
+      <LocalInstallStatus view={props.local} withSteps={false} />
       {(failed || waiting) && (
         <div className="choice">
           <p>{t("local.install.remote_offer")}</p>

@@ -401,6 +401,8 @@ export interface LocalEngineView {
   /** True when the operator chose to use the processor only. */
   forceCpu: boolean;
   problem: ApiError | null;
+  /** While an install runs again after one that failed: why that one stopped. Null otherwise. */
+  lastTry: ApiError | null;
   /**
    * While the manager brings back an engine that crashed: the try it is on (from 1),
    * the most tries in a row, and when the next one starts (ISO 8601, null while one is running).

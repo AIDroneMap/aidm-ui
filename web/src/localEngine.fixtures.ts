@@ -25,6 +25,7 @@ export const fresh: LocalEngineView = {
   warnings: [],
   forceCpu: false,
   problem: null,
+  lastTry: null,
   restarts: null,
   update: { available: null, previous: null, blockedBy: null, applying: null },
 };
