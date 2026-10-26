@@ -610,7 +610,8 @@ test("a run that was still being prepared when aidm-ui stopped is failed on the 
     const failed = await getJson<RunView>(`/api/runs/${run.id}`, second);
     expect(failed.state).toBe("failed");
     expect(failed.problem).toEqual({ code: "run.interrupted", data: {} });
-    // It does not block a new start.
+    // It does not block a new start, once the engine has answered its first poll after the restart.
+    await eventually(async () => (await getJson<SampleView>("/api/sample", second)).engines.some((offer) => offer.offered));
     expect((await send("POST", "/api/sample/start", { engineId: engine.id }, second)).status).toBe(202);
   } finally {
     await first?.stop();
