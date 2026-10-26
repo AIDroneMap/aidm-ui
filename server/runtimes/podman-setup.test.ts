@@ -113,7 +113,7 @@ test("a dismissed prompt ends in setup.dismissed and installs nothing", async ()
   expect(await finished(c.h)).toEqual({ phase: "failed", problem: { code: "setup.dismissed", data: {} } });
   expect(c.privileged.calls).toHaveLength(1);
   expect(c.operatorRunner.calls).toEqual([]);
-  expect(c.podman.pulls).toEqual([]);
+  expect(c.podman.loads).toEqual([]);
 });
 
 test("exit 127 is not authorised, which also covers a missing authentication agent", async () => {
@@ -212,7 +212,7 @@ test("after the setup the migrate command runs as the operator, the machine chec
     const view = (await (await fetch(`${c.h.base}/api/local-engine`)).json()) as LocalEngineView;
     return view.state === "ready";
   });
-  expect(c.podman.pulls).toHaveLength(1);
+  expect(c.podman.loads).toHaveLength(1);
   expect(c.podman.starts).toHaveLength(1);
 });
 
@@ -243,7 +243,7 @@ test("when the tool still does not work after the setup the message is setup.run
   c.staysBroken();
   await setupRuntime(c.h);
   expect(await finished(c.h)).toEqual({ phase: "failed", problem: { code: "setup.runtime_not_working", data: {} } });
-  expect(c.podman.pulls).toEqual([]);
+  expect(c.podman.loads).toEqual([]);
 });
 
 test("a second click while the first is under way is refused", async () => {
@@ -340,7 +340,7 @@ test("with no container tool the install starts the setup and goes on to install
     return view.state === "ready";
   });
   expect(c.privileged.calls).toHaveLength(1);
-  expect(c.podman.pulls).toHaveLength(1);
+  expect(c.podman.loads).toHaveLength(1);
   expect(c.podman.starts).toHaveLength(1);
 });
 

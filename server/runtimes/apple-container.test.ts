@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ScriptedRunner, recorded, recordedText, type ScriptedRule } from "../../test-support/scripted-runner.ts";
-import { applePullParser, appleContainerRuntime, runArgv } from "./apple-container.ts";
-import type { ContainerSpec, PullProgress } from "./runtime.ts";
+import { localName, type DownloadedImage } from "../images/image-download.ts";
+import { appleContainerRuntime, runArgv } from "./apple-container.ts";
+import type { ContainerSpec } from "./runtime.ts";
 
 const IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd";
 const NAME = "aidm-engine";
@@ -33,9 +37,68 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
 
 const rec = (name: string) => recorded("apple-container", name);
 
+const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+const scratch = mkdtempSync(join(tmpdir(), "aidm-ui-apple-test-"));
+afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+const digestOf = (bytes: Uint8Array) => `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+
+/** A small image really on disk, as the downloader leaves it: blobs whose contents hash to their digests, `oci-layout` and `index.json`. */
+function tinyImage(): DownloadedImage {
+  const folder = mkdtempSync(join(scratch, "image-"));
+  mkdirSync(join(folder, "blobs", "sha256"), { recursive: true });
+  const put = (bytes: Uint8Array) => {
+    const digest = digestOf(bytes);
+    writeFileSync(join(folder, "blobs", "sha256", digest.slice(7)), bytes);
+    return { digest, size: bytes.length };
+  };
+  const config = put(new TextEncoder().encode('{"architecture":"arm64","os":"linux"}\n'));
+  // Not a multiple of 512, so the archive has to pad it.
+  const layer = put(new Uint8Array(1000).map((_, index) => index % 251));
+  const manifest = put(
+    new TextEncoder().encode(
+      JSON.stringify({
+        schemaVersion: 2,
+        mediaType: OCI_MANIFEST,
+        config: { mediaType: "application/vnd.oci.image.config.v1+json", ...config },
+        layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar", ...layer }],
+      }),
+    ),
+  );
+  const pinned = { repository: "ghcr.io/aidm-ui-loadtest/tiny", digest: manifest.digest };
+  const name = localName(pinned);
+  writeFileSync(join(folder, "oci-layout"), '{"imageLayoutVersion":"1.0.0"}\n');
+  writeFileSync(
+    join(folder, "index.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      manifests: [{ mediaType: OCI_MANIFEST, ...manifest, annotations: { "io.containerd.image.name": name } }],
+    }),
+  );
+  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer] };
+}
+
+const tiny = tinyImage();
+
+/** The entries of a tar, by the 512-byte headers: name and bytes. */
+function tarEntries(bytes: Uint8Array): Array<{ name: string; body: Uint8Array }> {
+  const entries: Array<{ name: string; body: Uint8Array }> = [];
+  for (let at = 0; at + 512 <= bytes.length; ) {
+    const header = bytes.subarray(at, at + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = new TextDecoder().decode(header.subarray(0, header.indexOf(0)));
+    const size = Number.parseInt(new TextDecoder().decode(header.subarray(124, 135)), 8);
+    at += 512;
+    entries.push({ name, body: bytes.subarray(at, at + size) });
+    at += Math.ceil(size / 512) * 512;
+  }
+  return entries;
+}
+
 const argv = {
   run: runArgv(spec(), DEFAULTS),
-  pull: [TOOL, "image", "pull", "--platform", "linux/arm64", "--progress", "plain", IMAGE],
+  load: [TOOL, "image", "load"],
+  imageInspect: [TOOL, "image", "inspect", tiny.name],
   inspect: [TOOL, "inspect", NAME],
   stop: [TOOL, "stop", NAME],
   delete: [TOOL, "delete", "--force", NAME],
@@ -95,7 +158,7 @@ describe("the command line that starts the container", () => {
     expect(line).toContain("/b:/y:ro");
   });
 
-  // The flags the tool lists for run name no platform: the image is pulled for linux/arm64, and run uses that copy.
+  // The flags the tool lists for run name no platform: the image aidm-ui loaded is the arm64 one, and run uses it.
   test("run has no platform flag, even when the spec names a platform", () => {
     expect(runArgv(spec(), DEFAULTS)).not.toContain("--platform");
     expect(runArgv(spec({ platform: "linux/arm64/v8" }), DEFAULTS)).not.toContain("--platform");
@@ -163,11 +226,13 @@ describe("detect", () => {
     const { runtime, runner } = make([
       { argv: ["container", "--version"], result: rec("cli-version") },
       { argv: ["container", "system", "status", "--format", "json"], result: rec("system-status-running") },
-      { argv: ["container", "image", "pull", "--platform", "linux/arm64", "--progress", "plain", IMAGE], result: rec("pull") },
+      { argv: ["container", "image", "load"], result: { exitCode: 0, stdout: "", stderr: "" } },
+      { argv: ["container", "image", "inspect", tiny.name], result: { exitCode: 0, stdout: "[]", stderr: "" } },
       { argv: ["container", "inspect", NAME], result: rec("inspect-running") },
     ]);
     expect((await runtime.detect()).problem?.code).toBe("runtime.not_installed");
-    expect((await runtime.pull(IMAGE)).ok).toBe(false);
+    expect((await runtime.load(tiny)).ok).toBe(false);
+    expect((await runtime.verifyImage(tiny)).ok).toBe(false);
     expect((await runtime.status(NAME)).ok).toBe(false);
     await runtime.start(spec());
     await runtime.stop(NAME);
@@ -251,68 +316,98 @@ describe("start", () => {
   });
 });
 
-describe("pull", () => {
-  test("the recorded plain output gives part counts, then the writing phase", async () => {
-    const { runtime, runner } = make([{ argv: argv.pull, result: rec("pull") }]);
-    const progress: PullProgress[] = [];
-    expect(await runtime.pull(IMAGE, { onProgress: (step) => progress.push(step) })).toEqual({ ok: true, value: undefined });
-    expect(runner.calls).toEqual([argv.pull]);
-    expect(progress).toEqual([
-      { layersDone: 0, layersTotal: 7, phase: "downloading" },
-      { layersDone: 2, layersTotal: 7, phase: "downloading" },
-      { layersDone: 4, layersTotal: 7, phase: "downloading" },
-      { layersDone: 7, layersTotal: 7, phase: "downloading" },
-      { layersDone: 7, layersTotal: 7, phase: "writing" },
-    ]);
-  });
-
-  test("the platform of the call replaces the default", async () => {
-    const other = [TOOL, "image", "pull", "--platform", "linux/arm64/v8", "--progress", "plain", IMAGE];
-    const { runtime, runner } = make([{ argv: other, result: rec("pull") }]);
-    await runtime.pull(IMAGE, { platform: "linux/arm64/v8" });
-    expect(runner.calls).toEqual([other]);
-  });
-
-  test("an image that is not at the registry gives runtime.image_not_found", async () => {
-    const { runtime } = make([{ argv: argv.pull, result: rec("pull-not-found") }]);
-    expect(await runtime.pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
-  });
-
-  // The texts are made up for the test: a bare "denied" or "notFound" is not proof that the image is missing.
-  test("an access refusal, or a not-found error about something else, is runtime.pull_failed", async () => {
-    for (const stderr of [
-      "Error: internalError: \"denied: requested access to the resource is denied\"\n",
-      "Error: notFound: \"default kernel not found\"\n",
-      "Error: unauthorized: authentication required\n",
-    ]) {
-      const { runtime } = make([{ argv: argv.pull, result: { exitCode: 1, stdout: "", stderr } }]);
-      expect(await runtime.pull(IMAGE), stderr).toEqual({ ok: false, error: { code: "runtime.pull_failed", data: { exitCode: 1 } } });
+describe("load", () => {
+  test("it streams an OCI layout to the standard input of image load, with no manifest.json", async () => {
+    const { runtime, runner } = make([{ argv: argv.load, result: { exitCode: 0, stdout: "", stderr: "" } }]);
+    expect(await runtime.load(tiny)).toEqual({ ok: true, value: undefined });
+    expect(runner.calls).toEqual([argv.load]);
+    expect(runner.inputs.map((input) => input.argv)).toEqual([argv.load]);
+    const entries = tarEntries(runner.inputs[0]?.bytes ?? new Uint8Array());
+    const blobs = [tiny.manifest, tiny.config, ...tiny.layers].map((blob) => `blobs/sha256/${blob.digest.slice(7)}`);
+    expect(entries.map((entry) => entry.name)).toEqual(["oci-layout", "index.json", ...blobs]);
+    expect(entries.map((entry) => entry.name)).not.toContain("manifest.json");
+    for (const entry of entries.filter((entry) => entry.name.startsWith("blobs/sha256/"))) {
+      expect(digestOf(entry.body)).toBe(`sha256:${entry.name.slice("blobs/sha256/".length)}`);
     }
   });
 
+  test("it counts three copies of the download on the disk while it loads", () => {
+    expect(make([]).runtime.loadCopies).toBe(3);
+  });
+
   test("a system service that is off gives runtime.apple_not_started", async () => {
-    const { runtime } = make([{ argv: argv.pull, result: rec("pull-service-down") }]);
-    expect(await runtime.pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.apple_not_started", data: {} } });
+    // The recorded text of a pull against a stopped service, which every call of the tool says alike.
+    const { runtime } = make([{ argv: argv.load, result: rec("pull-service-down") }]);
+    expect(await runtime.load(tiny)).toEqual({ ok: false, error: { code: "runtime.apple_not_started", data: {} } });
   });
 
-  test("any other failure gives runtime.pull_failed with the exit code", async () => {
-    const { runtime } = make([{ argv: argv.pull, result: { exitCode: 1, stdout: "", stderr: "Error: the connection was reset\n" } }]);
-    expect(await runtime.pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.pull_failed", data: { exitCode: 1 } } });
+  test("any other failure gives runtime.load_failed with the exit code, even after the output said 100%", async () => {
+    const { runtime } = make([
+      { argv: argv.load, result: { exitCode: 1, stdout: "", stderr: "Loading image 100%\nError: the connection was reset\n" } },
+    ]);
+    expect(await runtime.load(tiny)).toEqual({ ok: false, error: { code: "runtime.load_failed", data: { exitCode: 1 } } });
   });
 
-  test("the parser ignores lines that are not progress and repeats nothing", () => {
-    const parse = applePullParser();
-    expect(parse("Error: something")).toBeNull();
-    expect(parse("")).toBeNull();
-    const first = "[1/2] Fetching image 31% (2 of 7 blobs, 190.1/610.4 MB, 38.0 MB/s) [5s]";
-    expect(parse(first)).toEqual({ layersDone: 2, layersTotal: 7, phase: "downloading" });
-    expect(parse(first.replace("[5s]", "[6s]"))).toBeNull();
+  test("a signal that fired before the load gives download.cancelled and runs nothing", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { runtime, runner } = make([{ argv: argv.load, result: { exitCode: 0, stdout: "", stderr: "" } }]);
+    expect(await runtime.load(tiny, { signal: controller.signal })).toEqual({
+      ok: false,
+      error: { code: "download.cancelled", data: {} },
+    });
+    expect(runner.calls).toEqual([]);
+  });
+});
+
+// No recording of the tool's image inspect exists. This JSON follows the tool's source at 1.6.1 (ImageResource): the
+// image's own descriptor under configuration, and the digests of the loaded manifests under variants.
+describe("verifyImage", () => {
+  const inspectJson = (descriptor: string, variants: string[]) =>
+    JSON.stringify([
+      {
+        name: tiny.name,
+        configuration: { descriptor: { mediaType: "application/vnd.oci.image.index.v1+json", digest: descriptor, size: 400 } },
+        variants: variants.map((digest) => ({ platform: { os: "linux", architecture: "arm64" }, digest, size: 610 })),
+      },
+    ]);
+  const answer = (stdout: string) => ({ argv: argv.imageInspect, result: { exitCode: 0, stdout, stderr: "" } });
+  const OTHER = `sha256:${"3".repeat(64)}`;
+  const INDEX = `sha256:${"4".repeat(64)}`;
+
+  test("(follows the tool's source at 1.6.1) an image with the manifest digest among its variants is verified, and is run by its name", async () => {
+    const { runtime, runner } = make([answer(inspectJson(INDEX, [OTHER, tiny.manifest.digest]))]);
+    expect(await runtime.verifyImage(tiny)).toEqual({ ok: true, value: tiny.name });
+    expect(runner.calls).toEqual([argv.imageInspect]);
   });
 
-  test("a line without counts says the phase and keeps what it knew", () => {
-    const parse = applePullParser();
-    expect(parse("[1/2] Fetching image 0%")).toEqual({ layersDone: null, layersTotal: null, phase: "downloading" });
-    expect(parse("[2/2] Unpacking image 10% (3 of 30 entries)")).toEqual({ layersDone: null, layersTotal: null, phase: "writing" });
+  test("(follows the tool's source at 1.6.1) an image without the manifest digest among its variants is runtime.image_not_verified", async () => {
+    const { runtime } = make([answer(inspectJson(INDEX, [OTHER]))]);
+    expect(await runtime.verifyImage(tiny)).toEqual({
+      ok: false,
+      error: { code: "runtime.image_not_verified", data: { name: tiny.name } },
+    });
+  });
+
+  test("an image the tool does not have is runtime.image_not_verified", async () => {
+    // The text is made up for the test.
+    const { runtime } = make([
+      { argv: argv.imageInspect, result: { exitCode: 1, stdout: "", stderr: `Error: notFound: "image not found: ${tiny.name}"\n` } },
+    ]);
+    expect(await runtime.verifyImage(tiny)).toEqual({
+      ok: false,
+      error: { code: "runtime.image_not_verified", data: { name: tiny.name } },
+    });
+  });
+
+  test("an answer that is not the tool's JSON is runtime.image_not_verified", async () => {
+    const { runtime } = make([answer("not json")]);
+    expect((await runtime.verifyImage(tiny)).ok).toBe(false);
+  });
+
+  test("a system service that is off gives runtime.apple_not_started", async () => {
+    const { runtime } = make([{ argv: argv.imageInspect, result: rec("pull-service-down") }]);
+    expect(await runtime.verifyImage(tiny)).toEqual({ ok: false, error: { code: "runtime.apple_not_started", data: {} } });
   });
 });
 

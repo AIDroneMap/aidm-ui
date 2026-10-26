@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "Error: ghcr.io/aidm-ui-loadtest/busybox:nosuch: image not known\n"
+}

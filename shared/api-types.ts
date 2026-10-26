@@ -333,8 +333,9 @@ export interface InstallProgressView {
    * "preparing" is every step before the engine's own download.
    * "checking_gpu": the test run inside the graphics card package.
    * "removing_gpu_package": that package failed the test and is being deleted.
+   * "pulling" is the download of the engine, "loading" the hand-over of a downloaded image to the container runtime.
    */
-  phase: "preparing" | "pulling" | "checking_gpu" | "removing_gpu_package" | "starting" | "done" | "failed";
+  phase: "preparing" | "pulling" | "loading" | "checking_gpu" | "removing_gpu_package" | "starting" | "done" | "failed";
   /** The package this progress is about, so that its size says which download it is. */
   variant: VariantId;
   /** Every step of this install, in order. Complete from the first moment, so the page can list them before any starts. */
@@ -345,12 +346,14 @@ export interface InstallProgressView {
   stepReceived: number | null;
   /** Bytes of that package, from the manifest. */
   size: number;
-  /** Parts of the image finished and in all, when the runtime's output says so. Not always layers: the page calls them parts. */
+  /** Parts of the image finished and in all (its config and layers). The page calls them parts. */
   layersDone: number | null;
   layersTotal: number | null;
-  /** The current try of the pull, from 1. */
-  attempt: number;
-  maxAttempts: number;
+  /** Bytes per second of the download under way, measured over its last seconds. Null when there is nothing to measure. */
+  speed: number | null;
+  /** How often the download's connection broke and it went on from the last byte, and why it last broke. */
+  retries: number;
+  lastRetry: ApiError | null;
 }
 
 export interface CapsView {

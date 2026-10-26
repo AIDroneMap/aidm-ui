@@ -28,6 +28,12 @@ function InstallSteps({ view }: { view: LocalEngineView | null }) {
   );
 }
 
+/** The cause an install failure carries in its data, when it is a message code. */
+function causeOf(problem: ApiError | null): ApiError | null {
+  const cause = problem?.data.cause as Partial<ApiError> | null | undefined;
+  return typeof cause?.code === "string" && typeof cause.data === "object" && cause.data !== null ? (cause as ApiError) : null;
+}
+
 function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" }) {
   return (
     <div className={kind === "problem" ? "error" : "warning"}>
@@ -38,19 +44,37 @@ function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" })
   );
 }
 
-/** The bar, the parts and the try of a download. Only the line above it is announced, so a screen reader hears each step once. */
+/**
+ * The bar, the bytes, the speed and the parts of a download, and why its
+ * connection last broke. Only the line above it is announced, so a screen
+ * reader hears each step once.
+ */
 export function DownloadProgress({ status, progressId }: { status: Extract<InstallStatus, { kind: "downloading" }>; progressId: string }) {
+  const received = status.received;
   return (
     <>
-      {status.done !== null && status.total !== null ? (
+      {received !== null ? (
+        <progress id={progressId} max={status.size} value={Math.min(received, status.size)}></progress>
+      ) : status.done !== null && status.total !== null ? (
         <progress id={progressId} max={status.total} value={status.done}></progress>
       ) : (
         <progress id={progressId}></progress>
       )}
+      {received !== null && (
+        <p>
+          {status.speed !== null && status.speed > 0
+            ? t("local.install.received_speed", { received: formatBytes(received), size: formatBytes(status.size), speed: formatBytes(status.speed) })
+            : t("local.install.received", { received: formatBytes(received), size: formatBytes(status.size) })}
+        </p>
+      )}
       {status.done !== null && status.total !== null && (
         <p>{t("local.install.parts", { done: status.done, total: status.total })}</p>
       )}
-      {status.attempt > 1 && <p>{t("local.install.attempt", { attempt: status.attempt, max: status.maxAttempts })}</p>}
+      {status.retries > 0 && status.lastRetry !== null && (
+        <p>
+          {t(status.lastRetry.code, messageParams(status.lastRetry))} {t("local.install.retries", { count: status.retries })}
+        </p>
+      )}
     </>
   );
 }
@@ -63,6 +87,8 @@ export function DownloadProgress({ status, progressId }: { status: Extract<Insta
 export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
   const status = installStatus(view);
   if (!view) return <div role="status"></div>;
+  // A download or a load that failed says why, under the general sentence.
+  const cause = causeOf(view.problem);
   const progressId = "install-progress";
   return (
     <div className="install-status">
@@ -88,6 +114,8 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
               {t(status.graphics ? "local.install.downloading_gpu" : "local.install.downloading", { size: formatBytes(status.size) })}
             </label>
           </p>
+        ) : status.kind === "loading" ? (
+          <p>{t("local.install.loading")}</p>
         ) : status.kind === "checking_gpu" ? (
           <p>{t("local.install.checking_gpu")}</p>
         ) : status.kind === "removing_gpu_package" ? (
@@ -97,7 +125,10 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
         ) : status.kind === "ready" ? (
           <p>{t("local.install.ready")}</p>
         ) : status.kind === "failed" ? (
-          <p className="error">{view.problem ? t(view.problem.code, messageParams(view.problem)) : t("local.install.failed")}</p>
+          <p className="error">
+            {view.problem ? t(view.problem.code, messageParams(view.problem)) : t("local.install.failed")}
+            {cause !== null && ` ${t(cause.code, messageParams(cause))}`}
+          </p>
         ) : status.kind === "state" ? (
           <p>{t("local.install.state", { state: t(`engine.state.${view.state}`) })}</p>
         ) : null}

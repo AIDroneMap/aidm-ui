@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "Error: faccessat /tmp/nosuch: no such file or directory\n"
+}

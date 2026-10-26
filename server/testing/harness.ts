@@ -9,7 +9,7 @@ import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { LocalEngineManager, type LocalEngineDeps } from "../local-engine/manager.ts";
-import { CONTAINER_NAME } from "../packages/container-package.ts";
+import { CONTAINER_NAME, type ImageSource } from "../packages/container-package.ts";
 import { MacSetup, type MacSetupDeps } from "../runtimes/apple-container-installer.ts";
 import type { CommandRunner } from "../process/command-runner.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
@@ -30,6 +30,7 @@ import type { RouteContext } from "../http/route-table.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
 import { FakePrivilegedRunner, FakeSystemFiles } from "../../test-support/fake-privileged.ts";
+import { FakeImages } from "../../test-support/fake-images.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
@@ -55,6 +56,8 @@ export interface Harness {
   privileged: PrivilegedRunner;
   /** The container runtimes the local engine can use, in memory. */
   runtimes: Partial<Record<RuntimeId, FakeRuntime>>;
+  /** The in-memory image source the local engine downloads from, unless the test passed `images` of its own. */
+  images: FakeImages;
   runs: RunStore;
   tracker: RunTracker;
   sample: SampleJob;
@@ -98,6 +101,10 @@ export function openHarness(
     /** The sample dataset entry; tests point it at a fake file server. */
     sampleDataset?: SampleDatasetEntry;
     freeBytes?: FreeBytes;
+    /** Where container images come from; default: a FakeImages. A test passes registryImages to download from a fake registry. */
+    images?: ImageSource;
+    /** The times and the fetch of the image downloader. */
+    imageDownload?: LocalEngineDeps["imageDownload"];
     /** The fake container runtimes by id; default: one Podman that works. */
     runtimes?: Partial<Record<RuntimeId, FakeRuntime>>;
     /** Answers the NVIDIA driver and toolkit commands of the graphics card checks; default: none is installed. */
@@ -196,6 +203,8 @@ export function openHarness(
     settings,
     now: () => clock.now,
   });
+  const fakeImages = new FakeImages();
+  const images = options.images ?? fakeImages;
   const localEngine = new LocalEngineManager({
     settings,
     engineStore,
@@ -213,6 +222,8 @@ export function openHarness(
     macSetup: options.macSetup === undefined ? undefined : new MacSetup({ ...options.macSetup, dataFolder, log }),
     localEngineOffer: async () => (await machineChecks.read()).localEngine,
     sleep: options.sleep ?? (async () => {}),
+    images,
+    imageDownload: options.imageDownload,
     now: options.localNow,
     freePort: options.freePort,
     logOptions: options.localLog,
@@ -304,6 +315,7 @@ export function openHarness(
     runtimeSetup,
     privileged,
     runtimes,
+    images: fakeImages,
     runs,
     tracker,
     sample,

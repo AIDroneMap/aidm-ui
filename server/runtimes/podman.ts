@@ -1,5 +1,6 @@
-import { EXIT_NOT_FOUND, type CommandRunner } from "../process/command-runner.ts";
-import { cliRuntime, sharedRunArgs, type PullLineParser } from "./cli-runtime.ts";
+import type { DownloadedImage } from "../images/image-download.ts";
+import { EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { cliRuntime, sharedRunArgs, type LoadContext } from "./cli-runtime.ts";
 import {
   asRecord,
   DETECT_TIMEOUT_MS,
@@ -31,29 +32,15 @@ export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): strin
 }
 
 /**
- * Podman prints no byte counts when its output is not a terminal. It prints
- * "Copying blob sha256:..." as it starts each layer and "Copying config" and
- * "Writing manifest" once the layers are in, so it can say how many layers
- * began but not how many finished.
+ * Podman reads an OCI image layout folder in place (libimage tries an OCI
+ * folder first), so the download needs no archive and no second copy on
+ * disk. It names nothing it loads from a folder, so the name is added with
+ * a tag of the config digest, which is the image's ID in Podman.
  */
-export function podmanPullParser(): PullLineParser {
-  const blobs = new Set<string>();
-  let writing = false;
-  return (line) => {
-    const blob = /^Copying blob (\S+)/.exec(line);
-    if (blob !== null) {
-      const before = blobs.size;
-      blobs.add(blob[1] ?? line);
-      if (blobs.size === before) return null;
-    } else if (/^(Copying config|Writing manifest)/.test(line)) {
-      if (writing) return null;
-      writing = true;
-    } else {
-      return null;
-    }
-    const layersTotal = blobs.size === 0 ? null : blobs.size;
-    return { layersDone: null, layersTotal, phase: writing ? "writing" : "downloading" };
-  };
+export async function podmanLoad(image: DownloadedImage, context: LoadContext): Promise<CommandResult> {
+  const loaded = await context.stream(["podman", "load", "-i", image.folder]);
+  if (loaded.exitCode !== 0) return loaded;
+  return context.run(["podman", "tag", image.config.digest, image.name]);
 }
 
 /** Podman's own command for one container, so a volume or an image of the same name is never read. */
@@ -88,5 +75,6 @@ export function podmanRuntime(runner: CommandRunner, log?: (line: string) => voi
     };
   }
 
-  return cliRuntime({ id: "podman", detect, inspectArgv, pullParser: podmanPullParser, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
+  // While it copies, Podman keeps each blob in a temporary file for big files (in /var/tmp unless TMPDIR says otherwise).
+  return cliRuntime({ id: "podman", detect, inspectArgv, loadCopies: 1, load: podmanLoad, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
 }

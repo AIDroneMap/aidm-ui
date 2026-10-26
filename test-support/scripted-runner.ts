@@ -19,6 +19,8 @@ export class ScriptedRunner implements CommandRunner {
   readonly calls: string[][] = [];
   /** The time limit each call was given, in the order of `calls`; undefined where the call set none. */
   readonly timeouts: Array<number | undefined> = [];
+  /** What each streamed call got on its standard input, read to the end, with the call's arguments. */
+  readonly inputs: Array<{ argv: string[]; bytes: Uint8Array }> = [];
 
   constructor(private readonly rules: ScriptedRule[]) {}
 
@@ -30,6 +32,8 @@ export class ScriptedRunner implements CommandRunner {
   async stream(argv: string[], options: CommandStreamOptions): Promise<CommandResult> {
     // Like the real runner, a signal that fired before the start runs nothing.
     if (options.signal?.aborted) return { exitCode: EXIT_ABORTED, stdout: "", stderr: "" };
+    // Like a program that reads all its input before it answers.
+    if (options.stdin !== undefined) this.inputs.push({ argv, bytes: new Uint8Array(await new Response(options.stdin).arrayBuffer()) });
     const result = await this.answer(argv, options.timeoutMs, options.signal);
     if (result.exitCode !== 127 || result.stderr !== "not found") {
       for (const line of linesOf(result.stdout)) options.onLine(line, "stdout");

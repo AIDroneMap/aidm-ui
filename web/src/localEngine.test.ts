@@ -54,17 +54,20 @@ test("the install status follows the view", () => {
   const pulling: LocalEngineView = {
     ...fresh,
     state: "installing",
-    install: engineInstall({ layersDone: 3, layersTotal: 9, attempt: 2 }),
+    install: engineInstall({ stepReceived: 1000, speed: 500, layersDone: 3, layersTotal: 9, retries: 1, lastRetry: { code: "download.connection_silent", data: { seconds: 60 } } }),
   };
   expect(installStatus(pulling)).toEqual({
     kind: "downloading",
     graphics: false,
     size: 683 * 1024 ** 2,
+    received: 1000,
+    speed: 500,
     done: 3,
     total: 9,
-    attempt: 2,
-    maxAttempts: 5,
+    retries: 1,
+    lastRetry: { code: "download.connection_silent", data: { seconds: 60 } },
   });
+  expect(installStatus({ ...pulling, install: { ...pulling.install!, phase: "loading" } })).toEqual({ kind: "loading" });
   const starting: LocalEngineView = { ...pulling, state: "starting", install: { ...pulling.install!, phase: "starting" } };
   expect(installStatus(starting).kind).toBe("starting");
   const ready: LocalEngineView = {
@@ -93,7 +96,7 @@ test("the install button is offered only when nothing is installed and nothing i
   expect(canInstall(null)).toBe(false);
   expect(canInstall(fresh)).toBe(true);
   expect(canInstall({ ...fresh, install: engineInstall({ size: 1 }) })).toBe(false);
-  expect(canInstall({ ...fresh, state: "failed", install: engineInstall({ phase: "failed", size: 1, attempt: 5 }) })).toBe(true);
+  expect(canInstall({ ...fresh, state: "failed", install: engineInstall({ phase: "failed", size: 1 }) })).toBe(true);
   expect(canInstall({ ...fresh, installed: { packageVersion: "2.5.0", variant: "linux-amd64-cpu", kind: "container", runtime: "podman" } })).toBe(false);
 });
 

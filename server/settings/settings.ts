@@ -11,10 +11,18 @@ type NativeEntry = Extract<ManifestVariant, { kind: "native" }>;
 export interface InstalledContainerPackage {
   packageVersion: string;
   variant: VariantId;
-  /** The runtime that pulled the image, and so the one that has it. */
+  /** The runtime that holds the image. */
   runtime: RuntimeId;
   /** What the manifest said about the image at install time. */
   container: ContainerEntry;
+  /**
+   * The reference the runtime runs the image by, which aidm-ui learned when it
+   * loaded the image and checked its digest (ADR 0005): the image ID for
+   * Podman and Docker, the image's name for Apple's tool. Absent for an
+   * image the runtime pulled itself before that; it runs by
+   * "<image>@<digest>" as it always did.
+   */
+  imageRef?: string;
   /** Why the processor package was chosen on a computer with an NVIDIA card: the container tool cannot hand the card over. */
   gpuNote?: ApiError | null;
   /** Set when the graphics card package failed its test run and could not be deleted. */

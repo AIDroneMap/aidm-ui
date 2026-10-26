@@ -114,7 +114,7 @@ export function recordingRunner(inner: CommandRunner, options: RecordingOptions)
     async stream(argv, streamOptions) {
       const seq = ++sequence;
       const started = now();
-      write(() => ({ seq, at: new Date(started).toISOString(), kind: "stream-start", argv: redactArgv(argv) }));
+      write(() => ({ seq, at: new Date(started).toISOString(), kind: "stream-start", argv: redactArgv(argv), ...(streamOptions.stdin === undefined ? {} : { stdin: "archive" }) }));
       let lines = 0;
       let droppedLines = 0;
       const result = await inner.stream(argv, {

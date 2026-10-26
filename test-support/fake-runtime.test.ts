@@ -2,10 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ContainerSpec, PullProgress } from "../server/runtimes/runtime.ts";
+import { localName, type DownloadedImage } from "../server/images/image-download.ts";
+import type { ContainerSpec } from "../server/runtimes/runtime.ts";
 import { FakeRuntime } from "./fake-runtime.ts";
 
-const IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:" + "a".repeat(64);
+const REPOSITORY = "ghcr.io/aidronemap/aidm-api";
+const DIGEST = "sha256:" + "a".repeat(64);
+const IMAGE = `${REPOSITORY}@${DIGEST}`;
 const NAME = "aidm-engine";
 
 const runtimes: FakeRuntime[] = [];
@@ -25,6 +28,19 @@ function specWithConfig(content: string | null, patch: Partial<ContainerSpec> = 
     args: ["--config", "/etc/aidm-ui/task-api.json"],
     ...patch,
   });
+}
+
+/** An image as the downloader leaves it. The fake runtime reads nothing from its folder. */
+function downloaded(digest = DIGEST): DownloadedImage {
+  const pinned = { repository: REPOSITORY, digest };
+  return {
+    pinned,
+    folder: "/home/operator/downloads/image",
+    name: localName(pinned),
+    manifest: { digest, size: 2, mediaType: "application/vnd.oci.image.manifest.v1+json" },
+    config: { digest: "sha256:" + "c".repeat(64), size: 2 },
+    layers: [{ digest: "sha256:" + "1".repeat(64), size: 10 }],
+  };
 }
 
 function fake(options?: ConstructorParameters<typeof FakeRuntime>[0]): FakeRuntime {
@@ -49,7 +65,7 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
 }
 
 async function started(runtime: FakeRuntime, patch: Partial<ContainerSpec> = {}) {
-  await runtime.pull(IMAGE);
+  runtime.holdImage(IMAGE);
   const result = await runtime.start(spec(patch));
   if (!result.ok) throw new Error(`start failed: ${result.error.code}`);
   return result.value;
@@ -73,38 +89,56 @@ test("the detection can be changed, and the id picked", async () => {
   expect(await runtime.detect()).toMatchObject({ id: "docker", available: true, memoryCapEnforced: false });
 });
 
-test("a pull sends the recorded progress with a total, and remembers the image", async () => {
+test("a load remembers the image by its pinned reference, and the image can then be verified and started", async () => {
   const runtime = fake();
-  const seen: PullProgress[] = [];
-  expect(await runtime.pull(IMAGE, { onProgress: (progress) => seen.push(progress) })).toEqual({ ok: true, value: undefined });
-  expect(seen.at(-1)).toEqual({ layersDone: 10, layersTotal: 10, phase: "writing" });
+  expect(await runtime.load(downloaded())).toEqual({ ok: true, value: undefined });
   expect(runtime.images.has(IMAGE)).toBe(true);
-  expect(runtime.pulls).toEqual([IMAGE]);
+  expect(runtime.loads).toEqual([IMAGE]);
+  // The reference to run the image by is the pinned one, so a start carries "<image>@<digest>".
+  expect(await runtime.verifyImage(downloaded())).toEqual({ ok: true, value: IMAGE });
+  expect((await runtime.start(spec())).ok).toBe(true);
 });
 
-test("a pull sends the progress it was given", async () => {
-  const given: PullProgress[] = [{ layersDone: 1, layersTotal: 2, phase: "downloading" }];
-  const runtime = fake({ pullOutput: given });
-  const seen: PullProgress[] = [];
-  await runtime.pull(IMAGE, { onProgress: (progress) => seen.push(progress) });
-  expect(seen).toEqual(given);
-});
-
-test("an interrupted pull sends some progress, fails, and leaves the image absent; the next one works", async () => {
+test("an image that was never loaded is not verified, even when an image of that reference was put in place", async () => {
   const runtime = fake();
-  runtime.failNextPulls(2);
+  const missing = { ok: false as const, error: { code: "runtime.image_not_verified" as const, data: { name: localName(downloaded().pinned) } } };
+  expect(await runtime.verifyImage(downloaded())).toEqual(missing);
+  runtime.holdImage(IMAGE);
+  expect(await runtime.verifyImage(downloaded())).toEqual(missing);
+});
+
+test("an image of another digest is not verified by the load of this one", async () => {
+  const runtime = fake();
+  await runtime.load(downloaded());
+  const other = downloaded("sha256:" + "b".repeat(64));
+  expect((await runtime.verifyImage(other)).ok).toBe(false);
+});
+
+test("a failed load leaves the image absent but is recorded, and the next one works", async () => {
+  const runtime = fake();
+  runtime.failNextLoads(2);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const seen: PullProgress[] = [];
-    const result = await runtime.pull(IMAGE, { onProgress: (progress) => seen.push(progress) });
-    expect(result).toEqual({ ok: false, error: { code: "runtime.pull_failed", data: { exitCode: 1 } } });
-    expect(seen.length).toBeGreaterThan(0);
+    expect(await runtime.load(downloaded())).toEqual({ ok: false, error: { code: "runtime.load_failed", data: { exitCode: 1 } } });
     expect(runtime.images.has(IMAGE)).toBe(false);
   }
-  expect((await runtime.pull(IMAGE)).ok).toBe(true);
-  expect(runtime.pulls).toHaveLength(3);
+  expect((await runtime.load(downloaded())).ok).toBe(true);
+  expect(runtime.loads).toEqual([IMAGE, IMAGE, IMAGE]);
+  expect(runtime.images.has(IMAGE)).toBe(true);
 });
 
-test("a container cannot start from an image that was never pulled", async () => {
+test("a load with a signal that has fired fails as cancelled and leaves the image absent", async () => {
+  const runtime = fake();
+  const controller = new AbortController();
+  controller.abort();
+  expect(await runtime.load(downloaded(), { signal: controller.signal })).toEqual({ ok: false, error: { code: "download.cancelled", data: {} } });
+  expect(runtime.images.has(IMAGE)).toBe(false);
+});
+
+test("a load makes one copy of the download on the runtime's disk", () => {
+  expect(fake().loadCopies).toBe(1);
+});
+
+test("a container cannot start from an image that was never loaded", async () => {
   expect(await fake().start(spec())).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
 });
 
@@ -118,14 +152,14 @@ test("a container cannot start on a port in use", async () => {
   const runtime = fake();
   await started(runtime);
   const port = Number(new URL(runtime.engine(NAME)!.address).port);
-  await runtime.pull(IMAGE);
+  runtime.holdImage(IMAGE);
   const result = await runtime.start(spec({ name: "other", publish: { hostAddress: "127.0.0.1", hostPort: port, containerPort: 3000 } }));
   expect(result).toEqual({ ok: false, error: { code: "runtime.port_in_use", data: { port } } });
 });
 
 test("a started container runs a task API that wants the token from its config file", async () => {
   const runtime = fake();
-  await runtime.pull(IMAGE);
+  runtime.holdImage(IMAGE);
   const result = await runtime.start(specWithConfig(JSON.stringify({ token: "run-token", port: 3000 })));
   if (!result.ok) throw new Error(`start failed: ${result.error.code}`);
   expect(result.value.containerId).toMatch(/^[0-9a-f]{64}$/);
@@ -204,7 +238,7 @@ test("removing or stopping what is not there is fine, and an image removal is re
   const runtime = fake();
   expect((await runtime.stop("nothing")).ok).toBe(true);
   expect((await runtime.remove("nothing")).ok).toBe(true);
-  await runtime.pull(IMAGE);
+  runtime.holdImage(IMAGE);
   expect((await runtime.removeImage(IMAGE)).ok).toBe(true);
   expect(runtime.removedImages).toEqual([IMAGE]);
   expect(runtime.images.has(IMAGE)).toBe(false);
@@ -264,7 +298,7 @@ test("the log of a container that is not there ends at once", async () => {
 test("a container whose config file is missing or is not JSON is created and has already exited with status 1", async () => {
   for (const content of [null, "not json", JSON.stringify({ port: 3000 })]) {
     const runtime = fake();
-    await runtime.pull(IMAGE);
+    runtime.holdImage(IMAGE);
     expect((await runtime.start(specWithConfig(content))).ok).toBe(true);
     expect(await runtime.status(NAME)).toEqual({ ok: true, value: { state: "stopped", exitCode: 1, oomKilled: false } });
     await runtime.remove(NAME);

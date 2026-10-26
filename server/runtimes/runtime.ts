@@ -1,4 +1,5 @@
 import type { ApiError } from "../../shared/api-error.ts";
+import type { DownloadedImage } from "../images/image-download.ts";
 import type { CommandResult } from "../process/command-runner.ts";
 
 import type { RuntimeId } from "../../shared/api-types.ts";
@@ -29,7 +30,11 @@ export interface RuntimeProbe {
 export interface ContainerSpec {
   /** Fixed, so the manager finds the container again. */
   name: string;
-  /** Always pinned: "<repository>@sha256:<digest>". */
+  /**
+   * Always pinned to the image's content: the reference verifyImage gave for
+   * an image aidm-ui loaded, or "<repository>@sha256:<digest>" for one the
+   * runtime pulled itself before ADR 0005.
+   */
   image: string;
   /** e.g. "linux/arm64"; null lets the runtime pick. Apple's tool takes the platform at the pull and has no platform flag for run. */
   platform: string | null;
@@ -68,20 +73,28 @@ export interface ContainerStatus {
   oomKilled: boolean | null;
 }
 
-export interface PullProgress {
-  /** Parts of the image finished, when the tool's output says; null when it does not. Some tools count layers, Apple's counts blobs (layers, config and manifests together). */
-  layersDone: number | null;
-  layersTotal: number | null;
-  phase: "downloading" | "writing";
-}
-
 export type RuntimeResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
 export interface ContainerRuntime extends RuntimeProbe {
-  pull(
-    image: string,
-    options?: { platform?: string | null; onProgress?: (progress: PullProgress) => void; signal?: AbortSignal },
-  ): Promise<RuntimeResult<void>>;
+  /**
+   * How many copies of the download a load puts on the runtime's disk, for a
+   * while or for good, next to the unpacked layers: an archive the tool keeps
+   * while it reads, a folder it unpacks the archive into, a content store.
+   * The disk check counts them.
+   */
+  readonly loadCopies: number;
+  /**
+   * Hands an image that aidm-ui downloaded to the runtime with the tool's own
+   * load command (ADR 0005). Only the exit status counts, never a line of
+   * output. It does not prove the runtime holds the right image: verifyImage does.
+   */
+  load(image: DownloadedImage, options?: { signal?: AbortSignal }): Promise<RuntimeResult<void>>;
+  /**
+   * The reference to run a loaded image by, once the runtime has shown that it
+   * holds the image under its name with the manifest digest or the config
+   * digest of the download. runtime.image_not_verified otherwise.
+   */
+  verifyImage(image: DownloadedImage): Promise<RuntimeResult<string>>;
   /** Detached. */
   start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>>;
   /**

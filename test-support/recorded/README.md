@@ -38,6 +38,19 @@ a Fedora container). The recordings are from 26 October 2026.
 | `docker/inspect-missing.*` | `docker inspect --format json NAME` after removal | stdout `[]`, exit 1, stderr `error: no such object: ...` (lower case, unlike the Docker CLI source). |
 | `docker/logs.*` | `docker logs --tail 50 NAME` after one request | Container output is on stderr (busybox `httpd -v`), so it is in the `.json`. Client address changed to `192.0.2.1`. |
 | `docker/logs-missing.*`, `docker/stop.txt`, `docker/stop-missing.*`, `docker/rm.txt`, `docker/rm-missing.txt`, `docker/rmi.txt`, `docker/rmi-missing.*` | `logs`, `stop -t 5`, `rm -f`, `rmi` on the container and image above, and again once gone | Name changed to `aidm-engine`. `rm -f` of a missing container prints nothing and exits 0. |
+| `podman/load-dir.*` | `podman load -i FOLDER` of an OCI image layout folder that holds the busybox image | Split: the line `Loaded image: sha256:30ecbe...` is stdout, the progress lines are stderr. Nothing else changed. |
+| `podman/load-missing.*` | the same with a folder that does not exist | stderr only, exit 125. Nothing changed. |
+| `podman/tag.txt` | `podman tag CONFIG_DIGEST ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306d...` | Nothing (no output, exit 0). |
+| `podman/image-inspect-loaded.txt` | `podman image inspect NAME` after the load and the tag | Podman's home folder `/home/podman` replaced by `/home/operator`. Timestamps set to `2026-01-01T00:00:00Z`. |
+| `podman/image-inspect-missing.*` | the same with a tag that does not exist | Split into stdout `[]` and stderr. Exit 125. Nothing else changed. |
+| `podman/rmi-loaded.txt` | `podman rmi NAME` of the loaded image | Nothing. |
+| `docker/load.txt` | `docker load` with an archive on standard input (the OCI layout and the `manifest.json` of `docker save`, as aidm-ui writes it), on Docker 29.9.2 with the containerd image store | Nothing. |
+| `docker/load-classic.txt` | the same archive on Docker 28.5.2 with the classic image store (overlay2 storage driver) | Nothing. |
+| `docker/load-truncated.*` | `docker load` of the same archive cut after 100000 bytes (containerd image store) | stderr only, exit 1. Nothing changed. |
+| `docker/image-inspect-containerd.txt` | `docker image inspect NAME` after `docker/load.txt`: the ID is the manifest digest | Timestamps set to `2026-01-01T00:00:00Z`. |
+| `docker/image-inspect-classic.txt` | `docker image inspect NAME` after `docker/load-classic.txt`: the ID is the config digest | Timestamps set to `2026-01-01T00:00:00Z`. |
+| `docker/image-inspect-missing.*` | the same with a tag that does not exist | stdout `[]`, exit 1, stderr `Error response from daemon: No such image: ...`. Nothing changed. |
+| `docker/rmi-loaded.txt` | `docker rmi NAME` of the loaded image | Nothing. |
 | `systemd/show-environment.txt` | `systemctl --user show-environment` on a Linux machine whose user manager runs (exit 0) | User name and home folder changed to `operator`, the user id to 1000. The entries that name this machine (`GPG_AGENT_INFO`, `SSH_AUTH_SOCK`, snap paths in `PATH` and `XDG_DATA_DIRS`) were dropped. |
 | `systemd/run-scope.txt` | `systemd-run --user --scope --quiet -p MemoryMax=1G -- true` on a Linux machine whose user manager runs | Nothing (no output, exit 0). |
 | `systemd/run-scope-no-bus.*` | the same with `XDG_RUNTIME_DIR` set to a folder that does not exist and `DBUS_SESSION_BUS_ADDRESS` empty, so that the user manager cannot be reached | stderr only, exit 1. Nothing was changed. |
@@ -46,7 +59,15 @@ The adapter now asks for a container with `docker inspect --type container NAME`
 and `podman container inspect NAME`, which print the same JSON as the commands
 the inspect recordings were made with, so those recordings still stand.
 
-The Docker cases were recorded with Docker 29.9.2 on the same Linux machine,
+The load and inspect cases above are of one image: busybox 1.37, linux/amd64
+(manifest digest `sha256:66a6306d...`, config digest `sha256:30ecbe15...`, one
+layer of 2211514 bytes), named `ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306d...`,
+which is the tag aidm-ui gives an image it loads. The classic image store
+recordings (`docker/load-classic.txt`, `docker/image-inspect-classic.txt`) came
+from Docker 28.5.2 with the overlay2 storage driver, and every other Docker case
+from Docker 29.9.2. Podman 5.8.9 ran rootless in a container.
+
+The other Docker cases were recorded with Docker 29.9.2 on the same Linux machine,
 with the public image `docker.io/library/busybox@sha256:bdf57e52...` (busybox
 1.37). The container name was `aidm-ui-rec-9a`, shown here as `aidm-engine`, and
 the port was changed to `41823`.

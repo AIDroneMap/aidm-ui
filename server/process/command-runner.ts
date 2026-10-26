@@ -26,6 +26,11 @@ export interface CommandStreamOptions {
   signal?: AbortSignal;
   /** No limit when absent, because a pull can take an hour. */
   timeoutMs?: number;
+  /**
+   * Fed to the program's standard input, chunk by chunk, as fast as the
+   * program reads it, and closed at the end. Without it the program gets no input.
+   */
+  stdin?: ReadableStream<Uint8Array>;
 }
 
 /** The one way the server starts other programs, so that tests can answer for them. */
@@ -199,6 +204,31 @@ function launchPlan(argv: string[], options: CommandRunOptions): { argv: string[
 }
 
 /**
+ * Writes a stream to a program's standard input and closes it. A program that
+ * exits before it read everything ends the feed; the program's exit code then
+ * tells what happened, so nothing here is an error.
+ */
+async function feed(source: ReadableStream<Uint8Array>, sink: Bun.FileSink): Promise<void> {
+  const reader = source.getReader();
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      sink.write(chunk.value);
+      await sink.flush();
+    }
+  } catch {
+    await reader.cancel().catch(() => {});
+  } finally {
+    try {
+      await sink.end();
+    } catch {
+      // The program is gone.
+    }
+  }
+}
+
+/**
  * Runs real programs. A missing program is exit 127, one that cannot be started
  * is 126, and one that outlives its time is killed with everything it started
  * and gives 124.
@@ -253,10 +283,10 @@ export function systemRunner(): CommandRunner {
     },
     async stream(argv, options) {
       if (options.signal?.aborted) return { exitCode: EXIT_ABORTED, stdout: "", stderr: "" };
-      let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+      let proc: Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe">;
       try {
         proc = Bun.spawn(argv, {
-          stdin: "ignore",
+          stdin: options.stdin === undefined ? "ignore" : "pipe",
           stdout: "pipe",
           stderr: "pipe",
           env: { ...process.env },
@@ -270,6 +300,9 @@ export function systemRunner(): CommandRunner {
 
       const out = readLines(proc.stdout, (line) => options.onLine(line, "stdout"));
       const err = readLines(proc.stderr, (line) => options.onLine(line, "stderr"));
+      const fed = options.stdin === undefined || typeof proc.stdin === "number" || proc.stdin === undefined
+        ? Promise.resolve()
+        : feed(options.stdin, proc.stdin);
       let timedOut = false;
       const timer =
         options.timeoutMs === undefined
@@ -283,6 +316,7 @@ export function systemRunner(): CommandRunner {
       if (options.signal?.aborted) abort();
       try {
         const exitCode = await proc.exited;
+        await fed;
         await drain([out, err]);
         return { exitCode: timedOut ? EXIT_TIMED_OUT : exitCode, stdout: "", stderr: "" };
       } finally {

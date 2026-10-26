@@ -1,3 +1,4 @@
+import type { ApiError } from "../../shared/api-error.ts";
 import {
   chmodSync,
   closeSync,
@@ -275,18 +276,24 @@ export class NativePackage implements EnginePackage {
     // A version that is kept as the previous one is already here.
     if (this.isInstalled()) return ok(undefined);
 
-    options.onProgress?.({
-      phase: "pulling",
-      variant: this.deps.variantId,
-      steps: [{ id: "engine", size: variant.size }],
-      step: "engine",
-      stepReceived: null,
-      size: variant.size,
-      layersDone: null,
-      layersTotal: null,
-      attempt: 1,
-      maxAttempts: 1,
-    });
+    let received: number | null = null;
+    let retries = 0;
+    let lastRetry: ApiError | null = null;
+    const report = () =>
+      options.onProgress?.({
+        phase: "pulling",
+        variant: this.deps.variantId,
+        steps: [{ id: "engine", size: variant.size }],
+        step: "engine",
+        stepReceived: received,
+        size: variant.size,
+        layersDone: null,
+        layersTotal: null,
+        speed: null,
+        retries,
+        lastRetry,
+      });
+    report();
     const archive = join(this.deps.dataFolder, "downloads", `aidm-api-${this.deps.version}.tar.gz`);
     const downloaded = await downloadVerified(
       { url: variant.url, size: variant.size, sha256: variant.sha256, path: archive },
@@ -295,6 +302,17 @@ export class NativePackage implements EnginePackage {
         signal: options.signal,
         freeBytes: this.deps.freeBytes,
         backoffMs: this.deps.backoffMs,
+        onProgress: (bytes) => {
+          // About two hundred events for the whole download.
+          if (received !== null && bytes < variant.size && bytes - received < variant.size / 200) return;
+          received = bytes;
+          report();
+        },
+        onRetry: (reason) => {
+          retries++;
+          lastRetry = reason;
+          report();
+        },
       },
     );
     if (!downloaded.ok) return { ok: false, error: downloaded.error };
