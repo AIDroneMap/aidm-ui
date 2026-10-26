@@ -33,7 +33,7 @@ export function preferredRuntime(
   return null;
 }
 
-/** The runtime that can run containers: Podman or Docker for now. Apple's tool joins in a later ticket. */
+/** The runtime that can run containers. */
 export function containerRuntime(
   id: RuntimeId,
   runner: CommandRunner,
@@ -41,5 +41,6 @@ export function containerRuntime(
 ): ContainerRuntime | null {
   if (id === "podman") return podmanRuntime(runner, log);
   if (id === "docker") return dockerRuntime(runner, log);
+  if (id === "apple-container") return appleContainerRuntime(runner, { log });
   return null;
 }

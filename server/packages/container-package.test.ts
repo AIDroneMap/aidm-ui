@@ -78,6 +78,9 @@ test("the progress carries the manifest's size, the layers, and the attempt", as
   expect(seen[0]).toEqual({
     phase: "pulling",
     variant: "linux-amd64-cpu",
+    steps: [{ id: "engine", size: 682_533_845 }],
+    step: "engine",
+    stepReceived: null,
     size: 682_533_845,
     layersDone: null,
     layersTotal: null,

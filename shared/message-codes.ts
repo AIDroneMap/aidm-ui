@@ -94,6 +94,8 @@ export const MESSAGE_CODES = [
   "caps.memory_invalid",
   "caps.cpus_invalid",
   "runtime.not_available",
+  "mac.install_not_finished",
+  "mac.start_failed",
   "engine.local_not_editable",
   "setup.not_needed",
   "setup.not_offered",

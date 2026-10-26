@@ -310,14 +310,31 @@ export type RuntimeId = (typeof RUNTIME_IDS)[number];
 
 // The local engine (ticket #9).
 
+/** The steps of an install. Only a Mac without Apple's container tool has more than "engine". */
+export const INSTALL_STEPS = ["installer", "approve", "kernel", "init", "engine"] as const;
+export type InstallStepId = (typeof INSTALL_STEPS)[number];
+
+export interface InstallStepView {
+  id: InstallStepId;
+  /** Bytes the step downloads. Null when nothing is downloaded or the size is not known. */
+  size: number | null;
+}
+
 export interface InstallProgressView {
   /**
+   * "preparing" is every step before the engine's own download.
    * "checking_gpu": the test run inside the graphics card package.
    * "removing_gpu_package": that package failed the test and is being deleted.
    */
-  phase: "pulling" | "checking_gpu" | "removing_gpu_package" | "starting" | "done" | "failed";
+  phase: "preparing" | "pulling" | "checking_gpu" | "removing_gpu_package" | "starting" | "done" | "failed";
   /** The package this progress is about, so that its size says which download it is. */
   variant: VariantId;
+  /** Every step of this install, in order. Complete from the first moment, so the page can list them before any starts. */
+  steps: InstallStepView[];
+  /** The step under way, or the one that failed. */
+  step: InstallStepId;
+  /** Bytes the step under way has downloaded, when it reports them. */
+  stepReceived: number | null;
   /** Bytes of that package, from the manifest. */
   size: number;
   /** Image layers finished and in all, when the runtime's output says so. */
@@ -346,6 +363,11 @@ export interface LocalEngineView {
   engineId: number | null;
   state: EngineState;
   install: InstallProgressView | null;
+  /**
+   * What an install would do on this computer, step by step with sizes, when it is more than the engine alone:
+   * a Mac without Apple's container tool. Null otherwise. Lets the page list the steps before the first click.
+   */
+  plan: InstallStepView[] | null;
   caps: CapsView;
   runtime: {
     /** The runtime the engine uses or would use. */

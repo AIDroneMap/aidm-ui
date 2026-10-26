@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CommandResult } from "../server/process/command-runner.ts";
+import { runArgv as appleRunArgv } from "../server/runtimes/apple-container.ts";
 import { oneOffArgv } from "../server/runtimes/cli-runtime.ts";
 import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
 import { GPU_FLAGS as PODMAN_GPU_FLAGS, runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
@@ -200,7 +201,10 @@ export class FakeRuntime implements ContainerRuntime {
       }
     }
 
-    const argv = (this.id === "docker" ? dockerRunArgv : podmanRunArgv)(spec, this.detection);
+    const argv = (this.id === "docker" ? dockerRunArgv : this.id === "apple-container" ? appleRunArgv : podmanRunArgv)(
+      spec,
+      this.detection,
+    );
     this.starts.push({ spec, argv });
     const containerId = String(this.nextContainer++).padStart(64, "0");
     this.containers.set(spec.name, {

@@ -6,7 +6,9 @@ import type {
   CapsRequest,
   EngineState,
   InstallProgressView,
+  InstallStepView,
   LocalEngineView,
+  MachineCheckView,
   PackagesView,
   RuntimeId,
 } from "../../shared/api-types.ts";
@@ -14,11 +16,12 @@ import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
-import { MEMORY_CAP_MIN } from "../machine/thresholds.ts";
+import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
 import type { CommandRunner } from "../process/command-runner.ts";
 import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
+import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
 import type { InstalledPackage, Settings } from "../settings/settings.ts";
@@ -41,6 +44,12 @@ interface InstallPlan {
   variant: ContainerVariant;
 }
 
+/** What a Mac still lacks, and the service that supplies it. */
+interface MacPlan {
+  need: MacNeed;
+  setup: MacSetup;
+}
+
 export type InstallOutcome = { ok: true } | { ok: false; status: number; error: ApiError };
 
 export interface LocalEngineDeps {
@@ -57,6 +66,14 @@ export interface LocalEngineDeps {
   dataFolder: string;
   freeBytes: FreeBytes;
   log: (line: string) => void;
+  /** On a Mac: puts Apple's container tool there first when it is missing or was never started. */
+  macSetup?: MacSetup;
+  /**
+   * What the machine check says about the local engine. On a Mac the install
+   * refuses with its reason (an Intel Mac, macOS 15), so the route and the
+   * wizard cannot disagree.
+   */
+  localEngineOffer?: () => Promise<MachineCheckView["localEngine"]>;
   /** The token for a new install. 32 random bytes in hex by default. */
   random?: () => string;
   freePort?: () => Promise<number>;
@@ -106,6 +123,10 @@ export class LocalEngineManager {
   private busy = false;
   private installing = false;
   private progress: InstallProgressView | null = null;
+  /** What an install would take now, when it is more than the engine. See LocalEngineView. */
+  private plan: InstallStepView[] | null = null;
+  /** The bytes of the installer last published, so a fast download does not make an event for every chunk. */
+  private publishedReceived = 0;
   /** Why the last install or start failed; cleared by the next one. */
   private failure: ApiError | null = null;
   private background: Promise<unknown> = Promise.resolve();
@@ -179,6 +200,7 @@ export class LocalEngineManager {
       engineId: engine?.id ?? null,
       state,
       install: this.progress,
+      plan: this.plan,
       caps: {
         memoryBytes: caps.memoryBytes,
         cpus: caps.cpus,
@@ -220,6 +242,7 @@ export class LocalEngineManager {
       try {
         this.detections = await this.deps.detectRuntimes();
         this.detectedAt = Date.now();
+        await this.refreshPlan();
       } catch (error) {
         this.deps.log(`Looking for container runtimes failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -310,6 +333,10 @@ export class LocalEngineManager {
     let started = false;
     try {
       const { machine } = this.deps;
+      if (machine.platform === "darwin" && this.deps.localEngineOffer !== undefined) {
+        const local = await this.deps.localEngineOffer();
+        if (!local.offered) return { ok: false, status: 409, error: local.reason ?? { code: "install.not_offered", data: {} } };
+      }
       // Checks a and b come before anything is downloaded. Check c needs the image and comes after the pull.
       await this.refreshRuntimes();
       const gpu = await this.lookAtGpu(machine, 0);
@@ -321,8 +348,11 @@ export class LocalEngineManager {
       }
 
       const runtime = this.chosenRuntime();
-      const driver = runtime === null ? null : this.deps.runtimes(runtime.id);
-      if (runtime === null || driver === null) return refusal(409, "install.no_runtime");
+      // A Mac without a working container tool gets it set up first.
+      const mac = runtime === null ? this.macNeed() : null;
+      if (runtime === null && mac === null) return refusal(409, "install.no_runtime");
+      const driver = this.deps.runtimes(runtime?.id ?? "apple-container");
+      if (driver === null) return refusal(409, "install.no_runtime");
 
       // Only a missing passthrough is stored as a note. The other reasons are read from the settings when the view is made.
       const reason = offered.view.gpu.reason;
@@ -345,9 +375,17 @@ export class LocalEngineManager {
               gpuNote: null,
             })
           : null;
+      const steps: InstallStepView[] = [...(mac?.setup.steps(mac.need) ?? []), { id: "engine", size: variant.size }];
       // Refused here, before anything is pulled, so the operator hears it in the answer to the click.
       const space = await plan.pkg.preflight();
       if (!space.ok) return { ok: false, status: 409, error: space.error };
+      if (mac !== null) {
+        // The installer and the kernel come on top of the engine, and the engine's own check above counted only itself.
+        const downloads = steps.reduce((sum, step) => sum + (step.size ?? 0), 0);
+        const needed = Math.ceil(downloads * (1 + DOWNLOAD_FREE_DISK_MARGIN));
+        const free = this.deps.freeBytes(this.deps.dataFolder);
+        if (free < needed) return refusal(409, "install.not_enough_space", { needed, free });
+      }
 
       const existing = this.store.local();
       if (existing !== null) this.monitor.setLocalState(existing.id, "installing");
@@ -355,16 +393,20 @@ export class LocalEngineManager {
       this.packageLeft = null;
       this.installing = true;
       started = true;
+      this.publishedReceived = 0;
       this.progress = {
-        phase: "pulling",
+        phase: mac === null ? "pulling" : "preparing",
         variant: offer.variant,
+        steps,
+        step: steps[0]?.id ?? "engine",
+        stepReceived: null,
         size: variant.size,
         layersDone: null,
         layersTotal: null,
         attempt: 1,
         maxAttempts: PULL_ATTEMPTS,
       };
-      this.background = this.runInstall(plan, fallback)
+      this.background = this.runInstall(plan, fallback, mac, steps)
         .catch((error: unknown) => {
           this.deps.log(`Installing the local engine failed: ${error instanceof Error ? error.message : String(error)}`);
           this.failInstall({ code: "server.internal_error", data: {} });
@@ -457,14 +499,23 @@ export class LocalEngineManager {
 
   // Inside ------------------------------------------------------------------
 
-  private async runInstall(first: InstallPlan, fallback: InstallPlan | null): Promise<void> {
+  private async runInstall(
+    first: InstallPlan,
+    fallback: InstallPlan | null,
+    mac: MacPlan | null,
+    steps: InstallStepView[],
+  ): Promise<void> {
+    if (mac !== null) {
+      const ready = await this.setUpMac(mac);
+      if (!ready) return;
+    }
     let plan = first;
-    const pulled = await this.pull(plan);
+    const pulled = await this.pull(plan, steps);
     if (!pulled.ok) return this.failInstall(pulled.error);
 
     if (plan.variant.gpu) {
       // Check c. The image is the same one the engine will run, with the same flag.
-      this.showStep("checking_gpu", plan);
+      this.showStep("checking_gpu", plan, steps);
       const confirmed = await plan.pkg.confirmGpu(this.abort.signal);
       // Closing aborts the test run, and that says nothing about the graphics card.
       if (this.closed) return;
@@ -476,7 +527,7 @@ export class LocalEngineManager {
         // Remembered, so that the next install does not download the same package again.
         this.settings.set("local.gpuCheckFailed", { digest: plan.variant.digest, at: new Date().toISOString() });
         // The image is 5.7 GB. It goes before the processor image comes, so the disk holds only one of them.
-        this.showStep("removing_gpu_package", plan);
+        this.showStep("removing_gpu_package", plan, steps);
         const removed = await plan.pkg.removeImage();
         if (!removed.ok) {
           this.deps.log(`The graphics card image could not be removed (${removed.error.code}).`);
@@ -484,7 +535,7 @@ export class LocalEngineManager {
         }
         if (fallback === null) return this.failInstall({ code: "install.not_offered", data: { reason: null } });
         plan = { ...fallback, installed: { ...fallback.installed, gpuPackageLeft: this.packageLeft } };
-        const again = await this.pull(plan);
+        const again = await this.pull(plan, steps);
         if (!again.ok) return this.failInstall(again.error);
       }
     }
@@ -509,21 +560,26 @@ export class LocalEngineManager {
     await this.startEngine();
   }
 
-  private pull(plan: InstallPlan): Promise<PackageResult<void>> {
+  private pull(plan: InstallPlan, steps: InstallStepView[]): Promise<PackageResult<void>> {
+    // The package knows only its own step, the page wants all of them. The engine step has the size of the package being pulled.
+    const all = steps.map((step) => (step.id === "engine" ? { ...step, size: plan.variant.size } : step));
     return plan.pkg.install({
       signal: this.abort.signal,
       onProgress: (progress) => {
-        this.progress = progress;
+        this.progress = { ...progress, steps: all };
         this.publish();
       },
     });
   }
 
   /** Shows a step of the install that has no layers to count. */
-  private showStep(phase: "checking_gpu" | "removing_gpu_package", plan: InstallPlan): void {
+  private showStep(phase: "checking_gpu" | "removing_gpu_package", plan: InstallPlan, steps: InstallStepView[]): void {
     this.progress = {
       phase,
       variant: plan.installed.variant,
+      steps,
+      step: "engine",
+      stepReceived: null,
       size: plan.variant.size,
       layersDone: null,
       layersTotal: null,
@@ -562,7 +618,8 @@ export class LocalEngineManager {
 
   private planFor(input: {
     driver: ContainerRuntime;
-    runtime: RuntimeDetection;
+    /** Null on a Mac whose container tool is set up during this install. */
+    runtime: RuntimeDetection | null;
     offer: { packageVersion: string; variant: InstalledPackage["variant"] };
     variant: ContainerVariant;
     gpuNote: ApiError | null;
@@ -572,14 +629,14 @@ export class LocalEngineManager {
       variant: input.variant,
       variantId: input.offer.variant,
       freeBytes: this.deps.freeBytes,
-      storagePath: input.runtime.storagePath,
+      storagePath: input.runtime?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
       sleep: this.deps.sleep,
     });
     const installed: InstalledPackage = {
       packageVersion: input.offer.packageVersion,
       variant: input.offer.variant,
-      runtime: input.runtime.id,
+      runtime: input.runtime?.id ?? "apple-container",
       container: input.variant,
       gpuNote: input.gpuNote,
     };
@@ -592,6 +649,64 @@ export class LocalEngineManager {
       this.drivable().filter((detection) => detection.available),
       this.settings.get("runtime.preferred"),
     );
+  }
+
+  /** The Mac steps before the engine. Returns false when one failed; the failure is already recorded. */
+  private async setUpMac({ need, setup }: MacPlan): Promise<boolean> {
+    const base = this.progress as InstallProgressView;
+    const show = (change: Partial<InstallProgressView>) => {
+      this.progress = { ...(this.progress as InstallProgressView), ...change };
+      this.publish();
+    };
+    const result = await setup.run(need, {
+      signal: this.abort.signal,
+      onStep: (step) => {
+        this.publishedReceived = 0;
+        show({ step, stepReceived: null });
+      },
+      onReceived: (received) => {
+        const size = base.steps.find((candidate) => candidate.id === "installer")?.size ?? 0;
+        // About two hundred events for the whole download.
+        if (received < size && received - this.publishedReceived < size / 200) return;
+        this.publishedReceived = received;
+        show({ stepReceived: received });
+      },
+    });
+    if (!result.ok) {
+      show({ step: result.step });
+      this.failInstall(result.error);
+      return false;
+    }
+    // The tool answers now, so the runtime list is asked again before the engine is pulled.
+    await this.refreshRuntimes();
+    const found = this.drivable().find((detection) => detection.id === "apple-container");
+    if (found === undefined || !found.available) {
+      this.failInstall({ code: "mac.start_failed", data: { step: this.progress?.step ?? "init" } });
+      return false;
+    }
+    show({ phase: "pulling", step: "engine", stepReceived: null });
+    return true;
+  }
+
+  /** The steps an install would take now. Only a Mac that lacks Apple's tool has more than one. */
+  private async refreshPlan(): Promise<void> {
+    const mac = this.macNeed();
+    const { platform, arch } = this.deps.machine;
+    const variant = mac === null ? null : (await this.deps.manifests.offerWithVariant({ platform, arch })).variant;
+    this.plan =
+      mac === null || variant === null || variant.kind !== "container"
+        ? null
+        : [...mac.setup.steps(mac.need), { id: "engine", size: variant.size }];
+  }
+
+  /** What a Mac still lacks for Apple's container tool, or null when nothing (or when this is no Mac). */
+  private macNeed(): MacPlan | null {
+    const setup = this.deps.macSetup;
+    if (this.deps.machine.platform !== "darwin" || setup === undefined) return null;
+    const apple = this.detections.find((detection) => detection.id === "apple-container");
+    if (apple?.problem?.code === "runtime.not_installed") return { need: "tool_missing", setup };
+    if (apple?.problem?.code === "runtime.apple_not_started") return { need: "service_stopped", setup };
+    return null;
   }
 
   private failInstall(error: ApiError): void {

@@ -82,6 +82,9 @@ export class ContainerPackage implements EnginePackage {
       const view = (layers: { done: number | null; total: number | null }): InstallProgressView => ({
         phase: "pulling",
         variant: this.deps.variantId,
+        steps: [{ id: "engine", size: variant.size }],
+        step: "engine",
+        stepReceived: null,
         size: variant.size,
         layersDone: layers.done,
         layersTotal: layers.total,
