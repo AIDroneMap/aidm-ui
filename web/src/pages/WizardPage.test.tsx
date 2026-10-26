@@ -220,13 +220,17 @@ const builtIn: PackagesView = {
     variant: "linux-amd64-cpu",
     kind: "container",
     size: 682533845,
+    processorSize: null,
     source: "builtin",
     tag: null,
   },
+  gpu: { state: "not_used", reason: null, guideUrl: null },
   reason: null,
   updateCheck: "daily",
   lastCheck: null,
 };
+
+const GUIDE = "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html";
 
 function renderInstall(
   packages: PackagesView | null,
@@ -456,7 +460,7 @@ const MIB = 1024 ** 2;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: { phase: "pulling", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
+  install: { phase: "pulling", variant: "linux-amd64-cpu", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
 };
 
 test("the install screen offers to install on this computer, below the package offer", () => {
@@ -644,4 +648,91 @@ test("the setup text never uses the system's own words", () => {
 test("a finished setup shows nothing more once the tool works", () => {
   const html = renderInstall(builtIn, { local: fresh, setup: setupView("done") });
   expect(html).not.toContain("Podman");
+});
+
+test("the install screen says the engine will use the graphics card when the checks pass", () => {
+  const html = renderInstall({ ...builtIn, gpu: { state: "used", reason: null, guideUrl: null } });
+  expect(html).toContain(en["wizard.install.gpu.used"]);
+  expect(html).not.toContain("<a ");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the install screen gives the one reason and a plain link when the card cannot be used", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: {
+      state: "not_used",
+      reason: { code: "gpu.no_passthrough", data: { runtime: "docker", guideUrl: GUIDE } },
+      guideUrl: GUIDE,
+    },
+  });
+  expect(html).toContain(en["gpu.no_passthrough"]);
+  expect(html).toContain(`<a href="${GUIDE}" target="_blank" rel="noreferrer noopener">How to set up the NVIDIA Container Toolkit</a>`);
+  expect(html).not.toContain(en["wizard.install.gpu.used"]);
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the install screen says nothing about the graphics card on a computer without one, or where it is not checked", () => {
+  for (const gpu of [
+    { state: "not_used", reason: null, guideUrl: null },
+    { state: "not_checked", reason: null, guideUrl: null },
+  ] as const) {
+    const html = renderInstall({ ...builtIn, gpu });
+    expect(html).not.toContain("graphics card");
+    expect(html).not.toContain("<a ");
+  }
+});
+
+test("forcing the processor shows its reason without a link", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: { state: "not_used", reason: { code: "gpu.forced_cpu", data: {} }, guideUrl: null },
+  });
+  expect(html).toContain(en["gpu.forced_cpu"]);
+  expect(html).not.toContain("<a ");
+});
+
+test("a link that is not https is not shown", () => {
+  const html = renderInstall({
+    ...builtIn,
+    gpu: {
+      state: "not_used",
+      reason: { code: "gpu.in_image_failed", data: { guideUrl: "javascript:alert(1)" } },
+      guideUrl: "javascript:alert(1)",
+    },
+  });
+  expect(html).toContain(en["gpu.in_image_failed"]);
+  expect(html).not.toContain("<a ");
+});
+
+const graphicsOffer: PackagesView = {
+  ...builtIn,
+  offer: { ...builtIn.offer!, variant: "linux-amd64-gpu", size: 5_678_958_647, processorSize: 682_533_845 },
+  gpu: { state: "used", reason: null, guideUrl: null },
+};
+
+test("before the graphics card package is downloaded the screen gives its size and what happens if the test run fails", () => {
+  const html = renderInstall(graphicsOffer, { local: fresh });
+  expect(html).toContain(
+    "The download is the graphics card package, 5.3 GiB. If the test run inside it fails, AIDM UI deletes it and downloads the processor package instead, 651 MiB.",
+  );
+  expect(html.indexOf("The download is the graphics card package")).toBeLessThan(html.indexOf("Install on this computer"));
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the processor package alone gets no such sentence, and without a size the sentence stops short", () => {
+  expect(renderInstall({ ...graphicsOffer, offer: { ...builtIn.offer! }, gpu: { state: "used", reason: null, guideUrl: null } })).not.toContain(
+    "The download is the graphics card package",
+  );
+  const html = renderInstall({ ...graphicsOffer, offer: { ...graphicsOffer.offer!, processorSize: null } });
+  expect(html).toContain("downloads the processor package instead.");
+});
+
+test("the button stays busy during the test run and the deletion of the graphics card package", () => {
+  for (const phase of ["checking_gpu", "removing_gpu_package"] as const) {
+    const html = renderInstall(graphicsOffer, {
+      local: { ...pulling, install: { ...pulling.install!, phase, variant: "linux-amd64-gpu", size: 5_678_958_647 } },
+    });
+    expect(html).toContain(">Installing...</button>");
+  }
 });

@@ -2,13 +2,16 @@ import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { installStatus } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
+import { GuideLink } from "./GuideLink.tsx";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
 import type { ApiError } from "../../../shared/api-error.ts";
 
 function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" }) {
   return (
     <div className={kind === "problem" ? "error" : "warning"}>
-      <p>{t(error.code, messageParams(error))}</p>
+      <p>
+        {t(error.code, messageParams(error))} <GuideLink url={error.data.guideUrl} />
+      </p>
     </div>
   );
 }
@@ -27,8 +30,14 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
       <div role="status">
         {status.kind === "downloading" ? (
           <p>
-            <label htmlFor={progressId}>{t("local.install.downloading", { size: formatBytes(status.size) })}</label>
+            <label htmlFor={progressId}>
+              {t(status.graphics ? "local.install.downloading_gpu" : "local.install.downloading", { size: formatBytes(status.size) })}
+            </label>
           </p>
+        ) : status.kind === "checking_gpu" ? (
+          <p>{t("local.install.checking_gpu")}</p>
+        ) : status.kind === "removing_gpu_package" ? (
+          <p>{t("local.install.removing_gpu_package", { size: formatBytes(status.size) })}</p>
         ) : status.kind === "starting" ? (
           <p>{t("local.install.starting")}</p>
         ) : status.kind === "ready" ? (

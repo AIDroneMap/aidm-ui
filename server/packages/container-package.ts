@@ -1,11 +1,12 @@
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { InstallProgressView } from "../../shared/api-types.ts";
+import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
 import type { FreeBytes } from "../machine/disk.ts";
+import { IN_IMAGE_CHECK_TIMEOUT_MS, inImageFailed, parseGpuListing } from "../machine/gpu.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
-import type { ContainerRuntime, ContainerSpec } from "../runtimes/runtime.ts";
+import type { ContainerRuntime, ContainerSpec, OneOffSpec } from "../runtimes/runtime.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
 
 /** The fixed name, so the manager finds the container again after a restart. */
@@ -35,6 +36,8 @@ export type ContainerVariant = Extract<ManifestVariant, { kind: "container" }>;
 export interface ContainerPackageDeps {
   runtime: ContainerRuntime;
   variant: ContainerVariant;
+  /** Which entry of the manifest the variant is, for the progress. */
+  variantId: VariantId;
   freeBytes: FreeBytes;
   /** Where the runtime keeps images, when it says; the pull lands there. */
   storagePath: string | null;
@@ -78,6 +81,7 @@ export class ContainerPackage implements EnginePackage {
       attempts = attempt;
       const view = (layers: { done: number | null; total: number | null }): InstallProgressView => ({
         phase: "pulling",
+        variant: this.deps.variantId,
         size: variant.size,
         layersDone: layers.done,
         layersTotal: layers.total,
@@ -98,6 +102,26 @@ export class ContainerPackage implements EnginePackage {
       await this.sleep((BACKOFF_SECONDS[attempt - 1] ?? 16) * 1000);
     }
     return fail("install.pull_failed", { attempts, cause });
+  }
+
+  /**
+   * Check c: the driver's listing, run once inside the pulled image with the
+   * graphics card passed through. It never pulls, so it is for after install().
+   */
+  async confirmGpu(signal?: AbortSignal): Promise<PackageResult<void>> {
+    const spec: OneOffSpec = {
+      name: `${CONTAINER_NAME}-gpu-check`,
+      image: this.image,
+      platform: null,
+      gpu: true,
+      entrypoint: "nvidia-smi",
+      args: ["-L"],
+    };
+    const ran = await this.deps.runtime.runOnce(spec, IN_IMAGE_CHECK_TIMEOUT_MS, signal);
+    if (!ran.ok) return { ok: false, error: inImageFailed() };
+    const { exitCode, stdout } = ran.value;
+    if (exitCode === 0 && parseGpuListing(stdout).length > 0) return ok(undefined);
+    return { ok: false, error: inImageFailed(exitCode) };
   }
 
   async start(options: PackageStartOptions): Promise<PackageResult<{ address: string }>> {
@@ -159,6 +183,11 @@ export class ContainerPackage implements EnginePackage {
 
   removeContainer(): Promise<PackageResult<void>> {
     return this.deps.runtime.remove(CONTAINER_NAME);
+  }
+
+  /** Only the image, for one that turned out not to be the right one. */
+  removeImage(): Promise<PackageResult<void>> {
+    return this.deps.runtime.removeImage(this.image);
   }
 
   async remove(): Promise<PackageResult<void>> {

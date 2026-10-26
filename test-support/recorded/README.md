@@ -60,6 +60,7 @@ Marked edited because no machine produced them as they stand.
 | `podman/info-rootless-no-memory.txt` | `podman/info-rootless.txt` | `memory` removed from `cgroupControllers`. |
 | `podman/info-rootful-no-memory.txt` | `podman/info-rootful.txt` | `memory` removed from `cgroupControllers`. |
 | `podman/info-rootless-no-cpu.txt` | `podman/info-rootless.txt` | `cpu` removed from `cgroupControllers`. |
+| `docker/info-nvidia-runtime.txt` | `docker/info.txt` | An `nvidia` entry added under `Runtimes` with the path `nvidia-container-runtime` and no status, which is what `docker info` lists after `nvidia-ctk runtime configure` (shape from the Docker daemon source, `Runtimes` is a map of name to path and options). |
 | `docker/info-no-cpu-quota.txt` | `docker/info.txt` | `CpuCfsQuota` set to `false`. |
 | `cpuinfo/x86-64-no-avx2.txt` | `cpuinfo/x86-64-avx2.txt` | `avx2` and `fma` removed from the `flags` line. |
 | `cpuinfo/arm64-v8-0.txt` | `cpuinfo/arm64-v8-2.txt` | `atomics` and `asimdrdm` removed from the `Features` line. |
@@ -85,6 +86,8 @@ the runtime research notes. They have not been checked against a real run.
   `system-status-unregistered.*` (exit 1, as the source does)
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
+- `nvidia/smi-l-no-driver.*` (exit 9, the driver message from the `nvidia-smi` manual and the text people quote from it; whether a real machine without a loaded driver exits 9 or 255 was not confirmed). The same file stands for the failing listing inside the engine image.
+- `nvidia-ctk/cdi-list.*` (`nvidia-ctk cdi list`: one device name per line on stdout, the `INFO` line on stderr, from `cmd/nvidia-ctk/cdi/list/list.go` of the NVIDIA Container Toolkit and the device names in its README) and `nvidia-ctk/cdi-list-none.*` (the same with no device: nothing on stdout, exit 0)
 
 Rebuilt from the Podman source (`cmd/podman`, `test/system`, HEAD of 23 October
 2026) and the runtime research notes. The Podman on the recording machine ran

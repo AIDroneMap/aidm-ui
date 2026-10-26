@@ -33,6 +33,10 @@ function render(overrides: Partial<AdvancedFormProps> = {}, view: LocalEngineVie
       runtimeSaved={false}
       runtimeFailure={null}
       onRuntimeChange={() => {}}
+      forceCpuSaving={false}
+      forceCpuSaved={false}
+      forceCpuFailure={null}
+      onForceCpuChange={() => {}}
       {...overrides}
     />,
   );
@@ -121,4 +125,23 @@ test("with one tool there is nothing to choose", () => {
 test("a refused tool choice says so", () => {
   const html = render({ runtimeFailure: new ApiFailure(409, "runtime.not_available", {}) });
   expect(html).toContain(en["runtime.not_available"]);
+});
+
+test("Use the processor only is a labelled checkbox that follows the server, with its hint", () => {
+  const off = render();
+  expect(off).toContain('<label for="local-force-cpu">Use the processor only</label>');
+  expect(off).toMatch(/<input id="local-force-cpu" type="checkbox"(?![^>]*checked)[^>]*>/);
+  expect(off).toContain('aria-describedby="local-force-cpu-hint"');
+  expect(off).toContain(en["local.advanced.force_cpu_hint"]);
+  expect(unlabelledInputs(off)).toEqual([]);
+  expect(untranslatedText(off)).toEqual([]);
+
+  const on = render({}, { ...running, forceCpu: true });
+  expect(on).toMatch(/<input id="local-force-cpu" type="checkbox"[^>]*checked=""/);
+});
+
+test("saving the processor choice says so in the status area, and a refusal is shown as an alert", () => {
+  expect(render({ forceCpuSaved: true })).toContain(`<p role="status">${en["local.advanced.force_cpu_saved"]}</p>`);
+  const refused = render({ forceCpuFailure: new ApiFailure(500, "server.internal_error", {}) });
+  expect(refused).toContain('role="alert"');
 });

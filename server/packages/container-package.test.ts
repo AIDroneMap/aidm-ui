@@ -41,6 +41,7 @@ function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: st
   const pkg = new ContainerPackage({
     runtime,
     variant: VARIANT,
+    variantId: "linux-amd64-cpu",
     freeBytes: (path) => {
       asked.push(path);
       return options.free ?? 100 * GiB;
@@ -76,6 +77,7 @@ test("the progress carries the manifest's size, the layers, and the attempt", as
   await pkg.install({ onProgress: (progress) => seen.push(progress) });
   expect(seen[0]).toEqual({
     phase: "pulling",
+    variant: "linux-amd64-cpu",
     size: 682_533_845,
     layersDone: null,
     layersTotal: null,

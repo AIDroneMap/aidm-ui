@@ -19,5 +19,6 @@ export const fresh: LocalEngineView = {
   caps,
   runtime: { chosen: "podman", available: ["podman", "docker"], preferred: null },
   warnings: [],
+  forceCpu: false,
   problem: null,
 };

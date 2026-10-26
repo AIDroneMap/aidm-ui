@@ -12,6 +12,10 @@ export interface InstalledPackage {
   runtime: RuntimeId;
   /** What the manifest said about the image at install time. */
   container: Extract<ManifestVariant, { kind: "container" }>;
+  /** Why the processor package was chosen on a computer with an NVIDIA card: the container tool cannot hand the card over. */
+  gpuNote?: ApiError | null;
+  /** Set when the graphics card package failed its test run and could not be deleted. */
+  gpuPackageLeft?: ApiError | null;
 }
 
 export interface SettingValues {
@@ -29,6 +33,10 @@ export interface SettingValues {
   /** The caps the operator lowered, used from the next start; null means the most the computer allows. */
   "local.memoryBytes": number | null;
   "local.cpus": number | null;
+  /** True when the operator chose the processor package and no graphics card, whatever the checks say. */
+  "local.forceCpu": boolean;
+  /** The graphics card package whose test run failed, by digest. It is not chosen again; a newer digest is tried. */
+  "local.gpuCheckFailed": { digest: string; at: string } | null;
   /** What the running local engine was started with; null when it is not running. Null memory means no cap. */
   "local.applied": { memoryBytes: number | null; cpus: number | null } | null;
   /** True once the operator has finished the wizard or chosen the interface only. */
@@ -55,6 +63,8 @@ const DEFAULTS: SettingValues = {
   "local.memoryBytes": null,
   "local.cpus": null,
   "local.applied": null,
+  "local.forceCpu": false,
+  "local.gpuCheckFailed": null,
   "wizard.completed": false,
   "updates.check": null,
   "updates.lastCheck": null,

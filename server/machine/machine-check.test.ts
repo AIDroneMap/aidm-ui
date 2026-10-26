@@ -151,6 +151,11 @@ test("the gpu line counts the cards when the NVIDIA driver answers and passes qu
   });
 });
 
+test("on Linux with an Arm processor there is no gpu line, even when a driver would answer", async () => {
+  const arm = open(linuxInputs({ arch: "arm64", cpuInfo: recordedText("cpuinfo", "arm64-v8-2"), rules: [...withRuntime, NVIDIA_RULE] }));
+  expect((await check(arm.h)).lines.map((candidate) => candidate.id)).not.toContain("gpu");
+});
+
 test("with no runtime detected the runtime line says so in one code and the install is still offered", async () => {
   const { h, machine } = open(linuxInputs({ rules: [] }));
   const view = await check(h);

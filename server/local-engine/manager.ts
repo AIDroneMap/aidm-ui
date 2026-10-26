@@ -2,13 +2,22 @@ import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { CapsRequest, EngineState, LocalEngineView, InstallProgressView, RuntimeId } from "../../shared/api-types.ts";
+import type {
+  CapsRequest,
+  EngineState,
+  InstallProgressView,
+  LocalEngineView,
+  PackagesView,
+  RuntimeId,
+} from "../../shared/api-types.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
 import type { FreeBytes } from "../machine/disk.ts";
+import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { MEMORY_CAP_MIN } from "../machine/thresholds.ts";
-import type { ManifestService } from "../manifest/manifest-service.ts";
-import { ContainerPackage, PULL_ATTEMPTS } from "../packages/container-package.ts";
+import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
+import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
@@ -20,8 +29,17 @@ import { EngineLog, type EngineLogDeps } from "./engine-log.ts";
 export const LOCAL_ENGINE_NAME = "This computer";
 /** The port may be taken between the moment it is found free and the moment the container binds it. */
 const PORT_TRIES = 3;
+/** A page load reuses a look at the graphics card this young. An install and a start always look again. */
+const GPU_PRECHECK_MAX_AGE_MS = 60_000;
 /** A start does not ask the runtimes again if they answered this recently. */
 const DETECTION_MAX_AGE_MS = 10_000;
+
+/** What an install pulls, and what it records once the pull works. */
+interface InstallPlan {
+  pkg: ContainerPackage;
+  installed: InstalledPackage;
+  variant: ContainerVariant;
+}
 
 export type InstallOutcome = { ok: true } | { ok: false; status: number; error: ApiError };
 
@@ -33,6 +51,8 @@ export interface LocalEngineDeps {
   /** Null for a runtime this version cannot drive yet. */
   runtimes: (id: RuntimeId) => ContainerRuntime | null;
   detectRuntimes: () => Promise<RuntimeDetection[]>;
+  /** Runs the NVIDIA driver and toolkit commands of the graphics card checks. */
+  runner: CommandRunner;
   machine: { platform: string; arch: string; totalMemory: number; cpuCount: number };
   dataFolder: string;
   freeBytes: FreeBytes;
@@ -92,6 +112,10 @@ export class LocalEngineManager {
   private published: string | undefined;
   private closed = false;
   private token: string | null = null;
+  /** The last look at the graphics card, as the promise of its answer, so that page loads share one. */
+  private precheck: { at: number; runtime: RuntimeId | null; value: Promise<GpuPrecheck> } | undefined;
+  /** Set when the graphics card package failed its test run and could not be deleted. Cleared by the next install. */
+  private packageLeft: ApiError | null = null;
 
   constructor(private readonly deps: LocalEngineDeps) {
     this.settings = deps.settings;
@@ -140,6 +164,8 @@ export class LocalEngineManager {
       }
     }
 
+    warnings.push(...this.gpuWarnings(installedPackage));
+
     return {
       installed:
         installedPackage === null
@@ -162,6 +188,7 @@ export class LocalEngineManager {
       },
       runtime: { chosen, available: available.map((candidate) => candidate.id), preferred },
       warnings,
+      forceCpu: this.settings.get("local.forceCpu"),
       problem,
     };
   }
@@ -224,6 +251,54 @@ export class LocalEngineManager {
     return { ok: true };
   }
 
+  /** The processor package whatever the checks say. A start then leaves the card out too. */
+  setForceCpu(forceCpu: boolean): void {
+    this.settings.set("local.forceCpu", forceCpu);
+    this.publish();
+  }
+
+  /**
+   * Checks a and b for the graphics card, with the runtime that would be used.
+   * Nothing runs when the computer cannot use the graphics card package. An
+   * answer younger than maxAgeMs is reused.
+   */
+  async gpuPrecheck(facts: { platform: string; arch: string }, maxAgeMs = 0): Promise<GpuPrecheck> {
+    if (!gpuApplies(facts)) return NOT_CHECKED;
+    await this.refreshRuntimes(Math.min(maxAgeMs, DETECTION_MAX_AGE_MS));
+    return this.lookAtGpu(facts, maxAgeMs);
+  }
+
+  /** Like gpuPrecheck, for a caller that has just looked at the runtimes. */
+  private lookAtGpu(facts: { platform: string; arch: string }, maxAgeMs: number): Promise<GpuPrecheck> {
+    if (!gpuApplies(facts)) return Promise.resolve(NOT_CHECKED);
+    const runtime = this.chosenRuntime()?.id ?? null;
+    const seen = this.precheck;
+    if (seen !== undefined && seen.runtime === runtime && Date.now() - seen.at < maxAgeMs) return seen.value;
+    const entry = { at: Date.now(), runtime, value: precheckGpu(this.deps.runner, facts, runtime) };
+    this.precheck = entry;
+    entry.value.catch(() => {
+      if (this.precheck === entry) this.precheck = undefined;
+    });
+    return entry.value;
+  }
+
+  /** What decides the package: the computer, the checks, the operator's choice and a test run that failed before. */
+  private offerFacts(facts: { platform: string; arch: string }, gpu: GpuPrecheck): OfferFacts {
+    return {
+      platform: facts.platform,
+      arch: facts.arch,
+      gpu,
+      forceCpu: this.settings.get("local.forceCpu"),
+      gpuFailedDigest: this.settings.get("local.gpuCheckFailed")?.digest ?? null,
+    };
+  }
+
+  /** The offer for this computer, with what the graphics card checks found. For the packages route. */
+  async packages(facts: { platform: string; arch: string }): Promise<PackagesView> {
+    const gpu = await this.gpuPrecheck(facts, GPU_PRECHECK_MAX_AGE_MS);
+    return this.deps.manifests.offer(this.offerFacts(facts, gpu));
+  }
+
   // Installing and running --------------------------------------------------
 
   /** Answers once the install has started; the work goes on in the background. */
@@ -235,53 +310,61 @@ export class LocalEngineManager {
     let started = false;
     try {
       const { machine } = this.deps;
-      const offered = await this.deps.manifests.offerWithVariant({ platform: machine.platform, arch: machine.arch });
+      // Checks a and b come before anything is downloaded. Check c needs the image and comes after the pull.
+      await this.refreshRuntimes();
+      const gpu = await this.lookAtGpu(machine, 0);
+      const offered = await this.deps.manifests.offerWithVariant(this.offerFacts(machine, gpu));
       const { offer } = offered.view;
       const variant = offered.variant;
       if (offer === null || variant === null || variant.kind !== "container") {
         return refusal(409, "install.not_offered", { reason: offered.view.reason });
       }
 
-      await this.refreshRuntimes();
-      const runtime = preferredRuntime(
-        this.drivable().filter((detection) => detection.available),
-        this.settings.get("runtime.preferred"),
-      );
+      const runtime = this.chosenRuntime();
       const driver = runtime === null ? null : this.deps.runtimes(runtime.id);
       if (runtime === null || driver === null) return refusal(409, "install.no_runtime");
 
-      const pkg = new ContainerPackage({
-        runtime: driver,
+      // Only a missing passthrough is stored as a note. The other reasons are read from the settings when the view is made.
+      const reason = offered.view.gpu.reason;
+      const plan = this.planFor({
+        driver,
+        runtime,
+        offer,
         variant,
-        freeBytes: this.deps.freeBytes,
-        storagePath: runtime.storagePath,
-        dataFolder: this.deps.dataFolder,
-        sleep: this.deps.sleep,
+        gpuNote: reason?.code === "gpu.no_passthrough" ? reason : null,
       });
+      // The processor package of this same manifest, for when the test run inside the graphics card package fails.
+      const { processor } = offered;
+      const fallback =
+        variant.gpu && processor !== null && processor.variant.kind === "container"
+          ? this.planFor({
+              driver,
+              runtime,
+              offer: { packageVersion: offer.packageVersion, variant: processor.id },
+              variant: processor.variant,
+              gpuNote: null,
+            })
+          : null;
       // Refused here, before anything is pulled, so the operator hears it in the answer to the click.
-      const space = await pkg.preflight();
+      const space = await plan.pkg.preflight();
       if (!space.ok) return { ok: false, status: 409, error: space.error };
 
-      const installed: InstalledPackage = {
-        packageVersion: offer.packageVersion,
-        variant: offer.variant,
-        runtime: runtime.id,
-        container: variant,
-      };
       const existing = this.store.local();
       if (existing !== null) this.monitor.setLocalState(existing.id, "installing");
       this.failure = null;
+      this.packageLeft = null;
       this.installing = true;
       started = true;
       this.progress = {
         phase: "pulling",
+        variant: offer.variant,
         size: variant.size,
         layersDone: null,
         layersTotal: null,
         attempt: 1,
         maxAttempts: PULL_ATTEMPTS,
       };
-      this.background = this.runInstall(pkg, installed)
+      this.background = this.runInstall(plan, fallback)
         .catch((error: unknown) => {
           this.deps.log(`Installing the local engine failed: ${error instanceof Error ? error.message : String(error)}`);
           this.failInstall({ code: "server.internal_error", data: {} });
@@ -303,6 +386,7 @@ export class LocalEngineManager {
     // A start on its own is not an install, so there is no install progress to show.
     this.progress = null;
     try {
+      await this.recheckGpuNote();
       return await this.startEngine();
     } finally {
       this.busy = false;
@@ -336,6 +420,11 @@ export class LocalEngineManager {
 
   /** After aidm-ui starts again: follows the log of an engine that is still running. */
   async resume(): Promise<void> {
+    try {
+      await this.recheckGpuNote();
+    } catch (error) {
+      this.deps.log(`Looking at the graphics card again failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const installed = this.settings.get("local.package");
     const engine = this.store.local();
     if (installed === null || engine === null || !engine.enabled || engine.address === "") return;
@@ -368,15 +457,38 @@ export class LocalEngineManager {
 
   // Inside ------------------------------------------------------------------
 
-  private async runInstall(pkg: ContainerPackage, installed: InstalledPackage): Promise<void> {
-    const pulled = await pkg.install({
-      signal: this.abort.signal,
-      onProgress: (progress) => {
-        this.progress = progress;
-        this.publish();
-      },
-    });
+  private async runInstall(first: InstallPlan, fallback: InstallPlan | null): Promise<void> {
+    let plan = first;
+    const pulled = await this.pull(plan);
     if (!pulled.ok) return this.failInstall(pulled.error);
+
+    if (plan.variant.gpu) {
+      // Check c. The image is the same one the engine will run, with the same flag.
+      this.showStep("checking_gpu", plan);
+      const confirmed = await plan.pkg.confirmGpu(this.abort.signal);
+      // Closing aborts the test run, and that says nothing about the graphics card.
+      if (this.closed) return;
+      if (confirmed.ok) {
+        this.settings.set("local.gpuCheckFailed", null);
+      } else {
+        const detail = confirmed.error.data.exitCode;
+        this.deps.log(`The graphics card does not work inside the engine image (exit code ${String(detail ?? "unknown")}). The processor package is used instead.`);
+        // Remembered, so that the next install does not download the same package again.
+        this.settings.set("local.gpuCheckFailed", { digest: plan.variant.digest, at: new Date().toISOString() });
+        // The image is 5.7 GB. It goes before the processor image comes, so the disk holds only one of them.
+        this.showStep("removing_gpu_package", plan);
+        const removed = await plan.pkg.removeImage();
+        if (!removed.ok) {
+          this.deps.log(`The graphics card image could not be removed (${removed.error.code}).`);
+          this.packageLeft = { code: "gpu.package_not_removed", data: { size: plan.variant.size } };
+        }
+        if (fallback === null) return this.failInstall({ code: "install.not_offered", data: { reason: null } });
+        plan = { ...fallback, installed: { ...fallback.installed, gpuPackageLeft: this.packageLeft } };
+        const again = await this.pull(plan);
+        if (!again.ok) return this.failInstall(again.error);
+      }
+    }
+    const { installed } = plan;
 
     // Every install gets a token of its own, so an old one learned anywhere is worth nothing.
     const token = (this.deps.random ?? randomToken)();
@@ -395,6 +507,91 @@ export class LocalEngineManager {
     this.settings.set("local.package", installed);
     this.installing = false;
     await this.startEngine();
+  }
+
+  private pull(plan: InstallPlan): Promise<PackageResult<void>> {
+    return plan.pkg.install({
+      signal: this.abort.signal,
+      onProgress: (progress) => {
+        this.progress = progress;
+        this.publish();
+      },
+    });
+  }
+
+  /** Shows a step of the install that has no layers to count. */
+  private showStep(phase: "checking_gpu" | "removing_gpu_package", plan: InstallPlan): void {
+    this.progress = {
+      phase,
+      variant: plan.installed.variant,
+      size: plan.variant.size,
+      layersDone: null,
+      layersTotal: null,
+      attempt: 1,
+      maxAttempts: PULL_ATTEMPTS,
+    };
+    this.publish();
+  }
+
+  /** What the operator is told about the graphics card, from the stored state each time the picture is made. */
+  private gpuWarnings(installed: InstalledPackage | null): ApiError[] {
+    if (installed?.container.gpu) {
+      return this.settings.get("local.forceCpu") ? [{ code: "gpu.forced_cpu", data: {} }] : [];
+    }
+    const notes: ApiError[] = [];
+    if (this.settings.get("local.gpuCheckFailed") !== null && (installed !== null || this.installing)) {
+      notes.push(inImageFailed());
+    }
+    if (installed?.gpuNote) notes.push(installed.gpuNote);
+    const left = installed === null ? this.packageLeft : (installed.gpuPackageLeft ?? null);
+    if (left !== null) notes.push(left);
+    return notes;
+  }
+
+  /** The note that the container tool cannot hand over the card goes once it can, since the operator may have set it up since. */
+  private async recheckGpuNote(): Promise<void> {
+    const installed = this.settings.get("local.package");
+    if (installed?.gpuNote?.code !== "gpu.no_passthrough" || this.settings.get("local.forceCpu")) return;
+    const precheck = await this.gpuPrecheck(this.deps.machine);
+    if (precheck.state === "no_passthrough") return;
+    const latest = this.settings.get("local.package");
+    if (latest === null) return;
+    this.settings.set("local.package", { ...latest, gpuNote: null });
+    this.publish();
+  }
+
+  private planFor(input: {
+    driver: ContainerRuntime;
+    runtime: RuntimeDetection;
+    offer: { packageVersion: string; variant: InstalledPackage["variant"] };
+    variant: ContainerVariant;
+    gpuNote: ApiError | null;
+  }): InstallPlan {
+    const pkg = new ContainerPackage({
+      runtime: input.driver,
+      variant: input.variant,
+      variantId: input.offer.variant,
+      freeBytes: this.deps.freeBytes,
+      storagePath: input.runtime.storagePath,
+      dataFolder: this.deps.dataFolder,
+      sleep: this.deps.sleep,
+    });
+    const installed: InstalledPackage = {
+      packageVersion: input.offer.packageVersion,
+      variant: input.offer.variant,
+      runtime: input.runtime.id,
+      container: input.variant,
+      gpuNote: input.gpuNote,
+    };
+    return { pkg, installed, variant: input.variant };
+  }
+
+  /** The runtime that would be used: the operator's choice if it works, else Podman before Docker. */
+  private chosenRuntime(): RuntimeDetection | null {
+    return preferredRuntime(
+      this.drivable().filter((detection) => detection.available),
+      this.settings.get("runtime.preferred"),
+    );
   }
 
   private failInstall(error: ApiError): void {
@@ -470,7 +667,8 @@ export class LocalEngineManager {
         memoryBytes: applied.memoryBytes,
         cpus: applied.cpus,
         engineDataFolder,
-        gpu: installed.container.gpu,
+        // With the processor-only choice the card stays out, and the engine runs on the processor.
+        gpu: installed.container.gpu && !this.settings.get("local.forceCpu"),
       });
       if (started.ok || started.error.code !== "runtime.port_in_use") break;
     }
@@ -512,6 +710,7 @@ export class LocalEngineManager {
     return new ContainerPackage({
       runtime,
       variant: installed.container,
+      variantId: installed.variant,
       freeBytes: this.deps.freeBytes,
       storagePath: this.detections.find((candidate) => candidate.id === installed.runtime)?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,

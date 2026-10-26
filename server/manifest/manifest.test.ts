@@ -101,9 +101,11 @@ test("with no network, a Linux x64 computer is offered the built-in 2.5.0 amd64 
       variant: "linux-amd64-cpu",
       kind: "container",
       size: 682533845,
+      processorSize: null,
       source: "builtin",
       tag: null,
     },
+    gpu: { state: "not_used", reason: null, guideUrl: null },
     reason: null,
     updateCheck: null,
     lastCheck: null,
@@ -160,7 +162,7 @@ test("a Windows computer is still offered nothing when a manifest has a Windows 
   expect(view.reason?.code).toBe("machine.windows_not_yet");
 });
 
-test("the GPU image is never the offer", async () => {
+test("the GPU image is not the offer while the graphics card checks have not passed", async () => {
   const view = await packages(open());
   expect(view.offer?.variant).not.toBe("linux-amd64-gpu");
 });

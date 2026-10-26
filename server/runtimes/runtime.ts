@@ -1,4 +1,5 @@
 import type { ApiError } from "../../shared/api-error.ts";
+import type { CommandResult } from "../process/command-runner.ts";
 
 import type { RuntimeId } from "../../shared/api-types.ts";
 
@@ -41,9 +42,21 @@ export interface ContainerSpec {
   /** Null: no cap. */
   memoryBytes: number | null;
   cpus: number | null;
-  /** Pass the GPU through (a later ticket fills the flags). */
+  /** Pass the graphics card through: Docker `--gpus all`, Podman `--device nvidia.com/gpu=all`. */
   gpu: boolean;
   /** Arguments after the image name. */
+  args: string[];
+}
+
+/** A container that runs one command and is removed. It has no ports, mounts or caps. */
+export interface OneOffSpec {
+  /** Fixed, so a run that hangs or is cut short can be found and removed. */
+  name: string;
+  image: string;
+  platform: string | null;
+  gpu: boolean;
+  /** Replaces the image's own entry point. */
+  entrypoint?: string;
   args: string[];
 }
 
@@ -71,6 +84,12 @@ export interface ContainerRuntime extends RuntimeProbe {
   ): Promise<RuntimeResult<void>>;
   /** Detached. */
   start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>>;
+  /**
+   * Runs one command in a new container and waits for it. Never pulls. The
+   * result is ok whatever the command's exit code was. The container is
+   * removed by `--rm`, and by name when the run fails, times out or is aborted.
+   */
+  runOnce(spec: OneOffSpec, timeoutMs: number, signal?: AbortSignal): Promise<RuntimeResult<CommandResult>>;
   stop(name: string, timeoutSeconds?: number): Promise<RuntimeResult<void>>;
   status(name: string): Promise<RuntimeResult<ContainerStatus>>;
   /** Resolves when the log stream ends (container gone, follow false, or signal). */

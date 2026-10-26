@@ -2,6 +2,7 @@ import { allRuntimes } from "../runtimes/registry.ts";
 import type { RuntimeDetection } from "../runtimes/runtime.ts";
 import type { CommandRunner } from "../process/command-runner.ts";
 import type { FreeBytes } from "./disk.ts";
+import { gpuApplies, parseGpuListing } from "./gpu.ts";
 
 export interface MachineFacts {
   /** process.platform */
@@ -34,8 +35,7 @@ export interface MachineFactsDeps {
 async function nvidiaFacts(runner: CommandRunner): Promise<MachineFacts["nvidia"]> {
   const listing = await runner.run(["nvidia-smi", "-L"]);
   if (listing.exitCode !== 0) return { driverAnswers: false, gpus: [] };
-  const gpus = listing.stdout.split("\n").filter((line) => /^GPU \d+:/.test(line));
-  return { driverAnswers: true, gpus };
+  return { driverAnswers: true, gpus: parseGpuListing(listing.stdout) };
 }
 
 async function macosVersion(runner: CommandRunner): Promise<string | null> {
@@ -47,8 +47,10 @@ async function macosVersion(runner: CommandRunner): Promise<string | null> {
 /** Everything the machine check decides by. It runs commands side by side. */
 export async function gatherMachineFacts(deps: MachineFactsDeps): Promise<MachineFacts> {
   const linux = deps.platform === "linux";
+  // The graphics card package exists for Intel and AMD processors only, so no NVIDIA command runs elsewhere.
+  const asksNvidia = gpuApplies(deps);
   const [nvidia, version, runtimes] = await Promise.all([
-    linux ? nvidiaFacts(deps.runner) : { driverAnswers: false, gpus: [] },
+    asksNvidia ? nvidiaFacts(deps.runner) : { driverAnswers: false, gpus: [] },
     deps.platform === "darwin" ? macosVersion(deps.runner) : null,
     Promise.all(allRuntimes(deps.runner, deps.platform).map((runtime) => runtime.detect())),
   ]);

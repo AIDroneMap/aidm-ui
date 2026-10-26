@@ -7,7 +7,13 @@ import { SettingsForm, type SettingsFormProps } from "./SettingsPage.tsx";
 
 const lanOff: SettingsData = { port: null, listeningPort: 8823, lan: { enabled: false, addresses: [] } };
 
-const packages: PackagesView = { offer: null, reason: null, updateCheck: "daily", lastCheck: null };
+const packages: PackagesView = {
+  offer: null,
+  gpu: { state: "not_checked", reason: null, guideUrl: null },
+  reason: null,
+  updateCheck: "daily",
+  lastCheck: null,
+};
 
 function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsData | null = lanOff): string {
   const props: SettingsFormProps = {

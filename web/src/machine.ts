@@ -2,7 +2,7 @@ import type { ApiError } from "../../shared/api-error.ts";
 import { formatBytes } from "./format.ts";
 
 // Data keys that hold a number of bytes. The server sends bytes; the operator reads GiB.
-const BYTE_KEYS = new Set(["total", "free", "needed", "minimum", "recommended"]);
+const BYTE_KEYS = new Set(["total", "free", "needed", "minimum", "recommended", "size"]);
 
 /**
  * The values that fill the placeholders of a machine check sentence. Sizes

@@ -35,6 +35,13 @@ test("an NVIDIA driver that does not answer means no cards", async () => {
   expect(facts.nvidia).toEqual({ driverAnswers: false, gpus: [] });
 });
 
+test("on Linux with an Arm processor the NVIDIA driver is not asked, because there is no graphics card package", async () => {
+  const runner = new ScriptedRunner([{ argv: ["nvidia-smi", "-L"], result: recorded("nvidia", "smi-l") }]);
+  const facts = await gatherMachineFacts(deps(runner, { arch: "arm64" }));
+  expect(facts.nvidia).toEqual({ driverAnswers: false, gpus: [] });
+  expect(runner.calls.map((call) => call[0])).not.toContain("nvidia-smi");
+});
+
 test("on macOS the facts hold the system version and no CPU text", async () => {
   const runner = new ScriptedRunner([
     { argv: ["sw_vers", "-productVersion"], result: recorded("macos", "sw-vers-26") },

@@ -1,0 +1,2 @@
+nvidia.com/gpu=0
+nvidia.com/gpu=all

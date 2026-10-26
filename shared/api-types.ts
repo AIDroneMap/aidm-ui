@@ -256,6 +256,8 @@ export interface EnginePackageOffer {
   kind: "container" | "native";
   /** Bytes to download, from the manifest. */
   size: number;
+  /** For the graphics card package: the size of the processor package that takes its place if the test run fails. Null otherwise. */
+  processorSize: number | null;
   /** "builtin" for the entry inside aidm-ui, "downloaded" for one fetched from the releases. */
   source: "builtin" | "downloaded";
   /** The release tag the manifest came from, or null for the built-in entry. */
@@ -264,8 +266,22 @@ export interface EnginePackageOffer {
 
 export type UpdateCheck = "daily" | "never";
 
+/** Whether the engine will use the NVIDIA graphics card, and the one reason when it will not. */
+export interface GpuView {
+  /**
+   * "used": the graphics card package is offered (a test run after the download still confirms it).
+   * "not_used": the checks ran and the processor package is offered; the reason is null when there is no NVIDIA card.
+   * "not_checked": the checks do not apply here (not Linux on an Intel or AMD processor) or there is no container tool yet.
+   */
+  state: "used" | "not_used" | "not_checked";
+  reason: ApiError | null;
+  /** A page the operator may open to fix the reason. Nothing is fetched from it. Null when there is none. */
+  guideUrl: string | null;
+}
+
 export interface PackagesView {
   offer: EnginePackageOffer | null;
+  gpu: GpuView;
   /** Why there is no offer. */
   reason: ApiError | null;
   /** Null until the operator has answered the question in the wizard. */
@@ -295,8 +311,14 @@ export type RuntimeId = (typeof RUNTIME_IDS)[number];
 // The local engine (ticket #9).
 
 export interface InstallProgressView {
-  phase: "pulling" | "starting" | "done" | "failed";
-  /** Bytes to download, from the manifest. */
+  /**
+   * "checking_gpu": the test run inside the graphics card package.
+   * "removing_gpu_package": that package failed the test and is being deleted.
+   */
+  phase: "pulling" | "checking_gpu" | "removing_gpu_package" | "starting" | "done" | "failed";
+  /** The package this progress is about, so that its size says which download it is. */
+  variant: VariantId;
+  /** Bytes of that package, from the manifest. */
   size: number;
   /** Image layers finished and in all, when the runtime's output says so. */
   layersDone: number | null;
@@ -332,8 +354,10 @@ export interface LocalEngineView {
     /** The operator's own choice, or null for automatic. */
     preferred: RuntimeId | null;
   };
-  /** For example local.memory_cap_not_enforced. */
+  /** For example local.memory_cap_not_enforced, or why the installed engine does not use the graphics card. */
   warnings: ApiError[];
+  /** True when the operator chose to use the processor only. */
+  forceCpu: boolean;
   problem: ApiError | null;
 }
 
@@ -358,4 +382,9 @@ export interface RuntimeSetupView {
   phase: SetupPhase;
   /** Why it failed, when it did. */
   problem: ApiError | null;
+}
+
+/** PUT /api/local-engine/force-cpu */
+export interface ForceCpuRequest {
+  forceCpu: boolean;
 }

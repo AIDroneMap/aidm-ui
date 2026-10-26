@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { GuideLink } from "../components/GuideLink.tsx";
 import { LocalInstallStatus } from "../components/LocalInstall.tsx";
 import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
@@ -12,6 +13,7 @@ import { messageParams } from "../machine.ts";
 import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
 import type {
+  EnginePackageOffer,
   LocalEngineView,
   MachineCheckView as MachineCheckData,
   PackagesView,
@@ -233,6 +235,33 @@ export interface InstallScreenProps {
   onNext: () => void;
 }
 
+/** One sentence on the graphics card. A computer with no NVIDIA card gets none: that is the usual case. */
+function GpuNote({ gpu, offer }: { gpu: PackagesView["gpu"]; offer: EnginePackageOffer }) {
+  if (gpu.state === "used") {
+    return (
+      <>
+        <p>{t("wizard.install.gpu.used")}</p>
+        {offer.variant === "linux-amd64-gpu" && (
+          <p>
+            {offer.processorSize === null
+              ? t("wizard.install.gpu.download_only", { size: formatBytes(offer.size) })
+              : t("wizard.install.gpu.download", {
+                  size: formatBytes(offer.size),
+                  processorSize: formatBytes(offer.processorSize),
+                })}
+          </p>
+        )}
+      </>
+    );
+  }
+  if (gpu.reason === null) return null;
+  return (
+    <p>
+      <Sentence error={gpu.reason} /> <GuideLink url={gpu.guideUrl} />
+    </p>
+  );
+}
+
 function Offer({ packages }: { packages: PackagesView }) {
   const { offer } = packages;
   if (!offer) {
@@ -252,6 +281,7 @@ function Offer({ packages }: { packages: PackagesView }) {
             : t("wizard.install.source.downloaded", { tag: offer.tag ?? "" })}
         </li>
       </ul>
+      <GpuNote gpu={packages.gpu} offer={offer} />
       {/* A newer release may be waiting for a newer AIDM UI while this one can still be installed. */}
       {packages.reason && (
         <p>
@@ -264,7 +294,12 @@ function Offer({ packages }: { packages: PackagesView }) {
 
 function InstallButton(props: Pick<InstallScreenProps, "local" | "setup" | "installBusy" | "onInstallLocal">) {
   const status = installStatus(props.local).kind;
-  const underWay = status === "downloading" || status === "starting" || setupUnderWay(props.setup);
+  const underWay =
+    status === "downloading" ||
+    status === "checking_gpu" ||
+    status === "removing_gpu_package" ||
+    status === "starting" ||
+    setupUnderWay(props.setup);
   const done = props.local?.installed != null;
   // The button stays in place after the click, so keyboard focus stays on it.
   return (

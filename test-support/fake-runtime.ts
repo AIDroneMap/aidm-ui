@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
-import { runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
+import type { CommandResult } from "../server/process/command-runner.ts";
+import { oneOffArgv } from "../server/runtimes/cli-runtime.ts";
+import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
+import { GPU_FLAGS as PODMAN_GPU_FLAGS, runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
 import {
   fail,
   ok,
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type OneOffSpec,
   type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
@@ -74,12 +77,22 @@ export class FakeRuntime implements ContainerRuntime {
   readonly images = new Set<string>();
   readonly pulls: string[] = [];
   readonly starts: Array<{ spec: ContainerSpec; argv: string[] }> = [];
+  /** Every one-off run, with the command line the real adapter would use. */
+  readonly oneOffs: Array<{ spec: OneOffSpec; argv: string[]; signal: AbortSignal | undefined }> = [];
   readonly stops: string[] = [];
   readonly removals: string[] = [];
   readonly removedImages: string[] = [];
 
   private readonly pullOutput: PullProgress[];
   private failingPulls = 0;
+  private imageRemovalRefused = false;
+  /** While set, a one-off run waits for this to resolve or for its signal to fire. */
+  private oneOffHold: Promise<void> | undefined;
+  private oneOffAnswer: RuntimeResult<CommandResult> = ok({
+    exitCode: 0,
+    stdout: recordedText("nvidia", "smi-l"),
+    stderr: "",
+  });
   private readonly containers = new Map<string, FakeContainer>();
   private nextContainer = 1;
 
@@ -125,6 +138,43 @@ export class FakeRuntime implements ContainerRuntime {
     }
     this.images.add(image);
     return ok(undefined);
+  }
+
+  /** What the next one-off runs answer, until it is set again. Default: the recorded `nvidia-smi -L`, exit 0. */
+  answerOneOffs(answer: RuntimeResult<CommandResult>): void {
+    this.oneOffAnswer = answer;
+  }
+
+  /** Makes the next one-off runs wait, as a hung command does. The returned function lets them finish. */
+  holdOneOffs(): () => void {
+    let release = () => {};
+    this.oneOffHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** From now on removing an image fails and the image stays. */
+  refuseImageRemoval(): void {
+    this.imageRemovalRefused = true;
+  }
+
+  async runOnce(spec: OneOffSpec, _timeoutMs?: number, signal?: AbortSignal): Promise<RuntimeResult<CommandResult>> {
+    const flags = this.id === "docker" ? DOCKER_GPU_FLAGS : PODMAN_GPU_FLAGS;
+    this.oneOffs.push({ spec, argv: oneOffArgv(this.id, spec, flags), signal });
+    if (this.oneOffHold !== undefined) {
+      const aborted = new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+      await Promise.race([this.oneOffHold, aborted]);
+    }
+    // Like the real adapter, a run that did not end well leaves nothing behind.
+    const answer = signal?.aborted
+      ? ok<CommandResult>({ exitCode: 137, stdout: "", stderr: "" })
+      : !this.images.has(spec.image)
+        ? // Like the real tools, it never pulls.
+          ok<CommandResult>({ exitCode: 125, stdout: "", stderr: "Error: image not known" })
+        : this.oneOffAnswer;
+    if (!answer.ok || answer.value.exitCode !== 0) this.removals.push(spec.name);
+    return answer;
   }
 
   async start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>> {
@@ -185,6 +235,7 @@ export class FakeRuntime implements ContainerRuntime {
 
   async removeImage(image: string): Promise<RuntimeResult<void>> {
     this.removedImages.push(image);
+    if (this.imageRemovalRefused) return fail("runtime.command_failed", { operation: "removeImage", exitCode: 1 });
     this.images.delete(image);
     return ok(undefined);
   }

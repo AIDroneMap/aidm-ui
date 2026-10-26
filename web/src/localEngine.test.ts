@@ -51,10 +51,11 @@ test("the install status follows the view", () => {
   const pulling: LocalEngineView = {
     ...fresh,
     state: "installing",
-    install: { phase: "pulling", size: 683 * 1024 ** 2, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
+    install: { phase: "pulling", variant: "linux-amd64-cpu", size: 683 * 1024 ** 2, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
   };
   expect(installStatus(pulling)).toEqual({
     kind: "downloading",
+    graphics: false,
     size: 683 * 1024 ** 2,
     done: 3,
     total: 9,
@@ -74,11 +75,22 @@ test("the install status follows the view", () => {
   expect(installStatus(failed).kind).toBe("failed");
 });
 
+test("the install status tells the graphics card package from the processor package and shows the test run and the deletion", () => {
+  const gpu = { ...fresh, state: "installing" as const, install: { phase: "pulling" as const, variant: "linux-amd64-gpu" as const, size: 5_678_958_647, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 5 } };
+  expect(installStatus(gpu)).toMatchObject({ kind: "downloading", graphics: true, size: 5_678_958_647 });
+  expect(installStatus({ ...gpu, install: { ...gpu.install, phase: "checking_gpu" } })).toEqual({ kind: "checking_gpu" });
+  expect(installStatus({ ...gpu, install: { ...gpu.install, phase: "removing_gpu_package" } })).toEqual({
+    kind: "removing_gpu_package",
+    size: 5_678_958_647,
+  });
+  expect(canInstall({ ...gpu, install: { ...gpu.install, phase: "checking_gpu" } })).toBe(false);
+});
+
 test("the install button is offered only when nothing is installed and nothing is under way", () => {
   expect(canInstall(null)).toBe(false);
   expect(canInstall(fresh)).toBe(true);
-  expect(canInstall({ ...fresh, install: { phase: "pulling", size: 1, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 5 } })).toBe(false);
-  expect(canInstall({ ...fresh, state: "failed", install: { phase: "failed", size: 1, layersDone: null, layersTotal: null, attempt: 5, maxAttempts: 5 } })).toBe(true);
+  expect(canInstall({ ...fresh, install: { phase: "pulling", variant: "linux-amd64-cpu", size: 1, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 5 } })).toBe(false);
+  expect(canInstall({ ...fresh, state: "failed", install: { phase: "failed", variant: "linux-amd64-cpu", size: 1, layersDone: null, layersTotal: null, attempt: 5, maxAttempts: 5 } })).toBe(true);
   expect(canInstall({ ...fresh, installed: { packageVersion: "2.5.0", variant: "linux-amd64-cpu", kind: "container", runtime: "podman" } })).toBe(false);
 });
 
@@ -128,6 +140,7 @@ const offer = {
   variant: "linux-amd64-cpu",
   kind: "container",
   size: 1,
+  processorSize: null,
   source: "builtin",
   tag: null,
 } as const;

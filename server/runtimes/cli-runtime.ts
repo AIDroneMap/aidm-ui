@@ -7,6 +7,7 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type OneOffSpec,
   type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
@@ -23,6 +24,8 @@ export interface CliRuntimeTool {
   inspectArgv(name: string): string[];
   /** A new parser for each pull, because it keeps count. */
   pullParser(): PullLineParser;
+  /** The flags that hand the NVIDIA graphics card to a container. */
+  gpuFlags: readonly string[];
 }
 
 export const DEFAULT_STOP_TIMEOUT_SECONDS = 30;
@@ -114,6 +117,23 @@ export function cliRuntime(
       return fail("runtime.start_failed", { exitCode: result.exitCode });
     },
 
+    async runOnce(spec, timeoutMs, signal) {
+      const argv = oneOffArgv(binary, spec, tool.gpuFlags);
+      // A check container left by a crash would make this one fail on its name.
+      await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
+      log(describeCommand(argv));
+      const out: string[] = [];
+      const err: string[] = [];
+      const result = await runner.stream(argv, {
+        signal,
+        timeoutMs,
+        onLine: (line, from) => (from === "stdout" ? out : err).push(`${line}\n`),
+      });
+      // Killing the tool's client can leave the container behind, so it is removed by name.
+      if (result.exitCode !== 0 || signal?.aborted) await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
+      return ok({ exitCode: result.exitCode, stdout: out.join(""), stderr: err.join("") });
+    },
+
     async stop(name, timeoutSeconds = DEFAULT_STOP_TIMEOUT_SECONDS) {
       const result = await run([binary, "stop", "-t", String(timeoutSeconds), name], (timeoutSeconds + 30) * 1000);
       if (result.exitCode === 0 || NO_SUCH_CONTAINER.test(result.stderr)) return ok(undefined);
@@ -191,7 +211,7 @@ function readState(state: Record<string, unknown>, exitCode: number): RuntimeRes
 export function sharedRunArgs(
   binary: string,
   spec: ContainerSpec,
-  options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean },
+  options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean; gpuFlags: readonly string[] },
 ): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
   return [
@@ -211,6 +231,24 @@ export function sharedRunArgs(
     }),
     ...(options.memoryCap && spec.memoryBytes !== null ? ["--memory", `${spec.memoryBytes}b`] : []),
     ...(options.cpuCap && spec.cpus !== null ? ["--cpus", String(spec.cpus)] : []),
+    ...(spec.platform === null ? [] : ["--platform", spec.platform]),
+    ...(spec.gpu ? options.gpuFlags : []),
+    spec.image,
+    ...spec.args,
+  ];
+}
+
+/** `run --rm` of one command. Like a start, it never pulls: a missing image must not become a 5 GB download. */
+export function oneOffArgv(binary: string, spec: OneOffSpec, gpuFlags: readonly string[]): string[] {
+  return [
+    binary,
+    "run",
+    "--rm",
+    "--name",
+    spec.name,
+    "--pull=never",
+    ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
+    ...(spec.gpu ? gpuFlags : []),
     ...(spec.platform === null ? [] : ["--platform", spec.platform]),
     spec.image,
     ...spec.args,
