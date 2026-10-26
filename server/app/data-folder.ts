@@ -16,24 +16,24 @@ const FOLDER_NAME = "aidm-ui";
 /** Flag first, then the environment variable, then the platform convention. */
 export function resolveDataFolder(inputs: DataFolderInputs): string {
   // path.win32 on win32 and path.posix elsewhere, so tests on any host can check both.
-  const p = inputs.platform === "win32" ? path.win32 : path.posix;
+  const platformPath = inputs.platform === "win32" ? path.win32 : path.posix;
   const { env, homeDir } = inputs;
 
   const explicit = inputs.flag || env[DATA_FOLDER_ENV];
-  if (explicit) return p.resolve(inputs.cwd, explicit);
+  if (explicit) return platformPath.resolve(inputs.cwd, explicit);
 
   switch (inputs.platform) {
     case "darwin":
-      return p.join(homeDir, "Library", "Application Support", FOLDER_NAME);
+      return platformPath.join(homeDir, "Library", "Application Support", FOLDER_NAME);
     case "win32": {
       const local = env.LOCALAPPDATA;
-      return local ? p.join(local, FOLDER_NAME) : p.join(homeDir, "AppData", "Local", FOLDER_NAME);
+      return local ? platformPath.join(local, FOLDER_NAME) : platformPath.join(homeDir, "AppData", "Local", FOLDER_NAME);
     }
     default: {
       // The XDG spec says a relative value must be ignored.
       const xdg = env.XDG_DATA_HOME;
-      if (xdg && p.isAbsolute(xdg)) return p.join(xdg, FOLDER_NAME);
-      return p.join(homeDir, ".local", "share", FOLDER_NAME);
+      if (xdg && platformPath.isAbsolute(xdg)) return platformPath.join(xdg, FOLDER_NAME);
+      return platformPath.join(homeDir, ".local", "share", FOLDER_NAME);
     }
   }
 }

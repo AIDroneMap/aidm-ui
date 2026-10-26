@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
 import { parseCommandLine } from "./cli.ts";
 import { resolveDataFolder } from "./data-folder.ts";
@@ -50,14 +50,17 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   if (!parsed.ok) return { kind: "failed", problem: parsed.problem };
   const { commandLine } = parsed;
 
-  const dataFolder = resolveDataFolder({
+  const requestedFolder = resolveDataFolder({
     platform: options.platform,
     env: options.env,
     homeDir: options.homeDir,
     cwd: options.cwd,
     flag: commandLine.dataFolder,
   });
-  mkdirSync(dataFolder, { recursive: true, mode: 0o700 });
+  mkdirSync(requestedFolder, { recursive: true, mode: 0o700 });
+  // The real path, so that a symlink or another spelling of the same folder
+  // gives the same instance and the second copy attaches.
+  const dataFolder = realpathSync.native(requestedFolder);
 
   const identity: InstanceIdentity = {
     app: "aidm-ui",
@@ -65,6 +68,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     instance: instanceId(dataFolder),
   };
 
+  const isOurs = async (port: number) => (await probe(port))?.instance === identity.instance;
   const attach = async (port: number): Promise<StartResult> => {
     const url = urlFor(port);
     await options.openBrowser(url);
@@ -73,10 +77,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 
   // A copy that uses this data folder may already run, on any port of the range.
   const lock = readLock(dataFolder);
-  if (lock && isProcessAlive(lock.pid)) {
-    const answer = await probe(lock.port);
-    if (answer?.instance === identity.instance) return attach(lock.port);
-  }
+  if (lock && isProcessAlive(lock.pid) && (await isOurs(lock.port))) return attach(lock.port);
 
   const routes = createRoutes({ identity, assets: options.assets });
   const fetch = fallbackFetch();
@@ -91,8 +92,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       server = Bun.serve({ hostname: LOOPBACK, port, development: false, reusePort: false, routes, fetch });
     } catch (error) {
       if (!isAddressInUse(error)) throw error;
-      const answer = await probe(port);
-      if (answer?.instance === identity.instance) return attach(port);
+      if (await isOurs(port)) return attach(port);
       continue;
     }
 

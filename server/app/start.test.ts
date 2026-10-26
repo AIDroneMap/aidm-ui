@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetsFromFolder, type AssetMap } from "../http/static-assets.ts";
@@ -225,4 +225,12 @@ test("fails when every port in the range is taken", async () => {
   const result = await start("a", port);
   expect(result.kind).toBe("failed");
   if (result.kind === "failed") expect(result.problem).toContain(`${port}`);
+});
+
+test("the same data folder reached through a symlink attaches", async () => {
+  const port = await freePort();
+  started(await start("real", port));
+  await symlink(dataFolder("real"), dataFolder("link"));
+  const second = await start("link", port);
+  expect(second.kind).toBe("attached");
 });
