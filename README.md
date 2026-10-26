@@ -2,9 +2,9 @@
 
 **The open web interface for [AIDM](https://github.com/AIDroneMap/aidm), part of [AIDroneMap](https://github.com/AIDroneMap). Every machine, one command.**
 
-AIDM UI will give a single operator a complete drone mapping tool in the browser: create a project, upload images, check them, start processing, follow progress, and view and export the results. It works with any AIDM task API, on the same computer or in the cloud.
+AIDM UI will give a single operator a complete drone mapping tool in the browser: create a project, upload images, check them, start processing, follow progress, and view and export the results. It installs the AIDM engine on the operator's own computer without Docker or a terminal, and works with any AIDM task API on the network or in the cloud.
 
-> **Status: planning.** There is no code yet. The first step is a written specification, which will be published in `docs/specs/` before development starts.
+> **Status: pre-alpha, not for use.** There is no code yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
 
 ## What it will do
 
@@ -13,7 +13,8 @@ AIDM UI will give a single operator a complete drone mapping tool in the browser
 - **Job queue.** Follow every job stage by stage, with logs.
 - **Viewers.** Orthophotos and elevation models in a 2D map view; point clouds and textured models in a 3D view.
 - **Exports.** GeoTIFF, LAZ, OBJ and 3D Tiles.
-- **Local or cloud, per job.** Run small jobs on your own computer and send large ones to cloud GPUs, from the same interface.
+- **An engine on your own computer.** A first-run wizard checks the machine, installs the engine, and proves it with a sample job. No Docker, no terminal.
+- **Local or cloud, per job.** Run small jobs on your own computer and send large ones to engines on your network or in the cloud, from the same interface.
 
 What it will not do: user accounts, teams or billing. AIDM UI is for one operator. On a shared server, put it behind your own login and reverse proxy.
 
@@ -23,18 +24,19 @@ What it will not do: user accounts, teams or billing. AIDM UI is for one operato
 | --- | --- | --- |
 | Engine | [aidm](https://github.com/AIDroneMap/aidm) | Turns images into maps and models |
 | Task API | [aidm-api](https://github.com/AIDroneMap/aidm-api) | Runs the engine and exposes it over HTTP |
-| Web interface | this repository | The operator's tool in the browser |
-| Desktop app | coming later | Installs everything on Windows, macOS or Linux in one step |
+| Web interface and local server | this repository | The operator's tool in the browser, and the engine manager that installs the engine on their computer |
+| Desktop app | coming later | A desktop shell around the same server |
 
-AIDM UI talks to the engine only through the task API, so it works the same with a local engine, a server on your network, or a cloud endpoint.
+AIDM UI talks to every engine only through the task API, so it works the same with the engine on your computer, a server on your network, or a cloud endpoint.
 
 ## Planned technology
 
 Subject to the specification:
 
-- A single-page application built with TypeScript, React and Vite, compiled to static files.
-- Served by the task API container, so there is nothing extra to install, and usable without an internet connection.
+- A small server written in TypeScript on Bun, with SQLite, compiled into one executable per platform. It serves the interface, holds the engine manager, and makes every call to every engine.
+- A single-page application built with TypeScript, React and Vite, compiled to static files and embedded in that executable, so there is nothing extra to install, and it works without an internet connection.
 - MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
+- The engine runs as a native package where one exists, and through a container runtime that the wizard installs itself until then.
 
 ## Contributing
 

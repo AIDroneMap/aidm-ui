@@ -13,26 +13,29 @@ The project has two goals, and every change should serve at least one of them:
 
 ## Boundaries
 
-- The UI talks to the engine **only through the task API** of [aidm-api](https://github.com/AIDroneMap/aidm-api). No direct calls to the engine, the file system or cloud providers.
+- The UI talks to every engine **only through the task API** of [aidm-api](https://github.com/AIDroneMap/aidm-api). No direct calls to the engine's internals or to cloud providers. The one exception is the engine manager inside the aidm-ui server, which installs, starts and watches the local engine package; it still talks to the running engine through the task API.
+- The browser talks only to the aidm-ui server. The server makes every engine call, so engine tokens never reach the browser (see `docs/adr/0002`).
 - No user accounts, teams, billing or multi-tenant features. The UI serves one operator.
 - No photogrammetry, scheduling or provider code here. Those belong in `aidm` and the cloud layer.
 
 ## Current stage
 
-There is no code yet. Until the first specification in `docs/specs/` is approved by a maintainer:
+There is no code yet. Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Until the first specification is approved:
 
 - do not scaffold the application, add a framework or install dependencies;
 - limit work to specifications, mock-ups described in text, and documentation.
 
-The planned stack (TypeScript, React, Vite, MapLibre GL, three.js, built to static files served by the task API) is a proposal. The approved specification decides it.
+The settled vocabulary is in `GLOSSARY.md` and the settled decisions are in `docs/adr/`. Read both before proposing anything.
+
+The planned stack is a TypeScript server on Bun with SQLite, compiled into one executable per platform, which serves a static single-page interface (TypeScript, React, Vite, MapLibre GL, three.js) and holds the engine manager. The approved specification decides the details.
 
 ## Workflow
 
 Follow this order for any change larger than a small fix:
 
 1. **Grill.** Question the request until the goal, scope and acceptance criteria are clear. Ask the maintainer rather than guess.
-2. **Spec.** Write a short spec in `docs/specs/` with the user need, the screens or flows involved, the API calls used, and how it will be tested.
-3. **Issues.** Split the spec into issues small enough for one pull request each.
+2. **Spec.** Write a short spec as a GitHub issue with the user need, the screens or flows involved, the API calls used, and how it will be tested. A maintainer approves it by adding the `ready-for-agent` label.
+3. **Issues.** Split the spec into issues small enough for one pull request each, linked to the spec issue.
 4. **Implement.** One issue per branch, one logical change per pull request.
 5. **Review.** Open a pull request and wait for a human review.
 
@@ -58,7 +61,9 @@ These apply to everything you write: code comments, docs, specs, commit messages
 ## Rules for the interface (once code exists)
 
 - **Works offline.** No calls to external services, fonts or CDNs at run time. Everything ships in the build.
-- **Static build.** The output is static files the task API can serve. No server-side rendering.
+- **Static build.** The interface is static files embedded in the aidm-ui executable and served by its server. No server-side rendering. The task API never serves the interface.
+- **Codes, not text, from the server.** The server sends message codes and data, never interface text. Every string the operator sees lives in the frontend's translation file.
+- **No fake numbers.** Never show a computed value the engine did not produce. Reference timings are measured, and labelled as such.
 - **Accessible.** Keyboard navigation, visible focus, labels on every control, and colour contrast that meets WCAG 2.2 AA.
 - **Large datasets.** Uploads of hundreds of images and multi-gigabyte results must not freeze the page. Stream, paginate and load on demand.
 - **API compatibility.** Use only documented task API endpoints. If the UI needs something the API lacks, open a spec for an API addition in `aidm-api` first.
@@ -71,6 +76,8 @@ These apply to everything you write: code comments, docs, specs, commit messages
 - Never commit drone images or datasets. Link to public datasets instead.
 - Treat everything coming from the API or uploaded files as untrusted. Never insert it into the page as raw HTML.
 - Never send a user's images, results or settings anywhere except the task API endpoint the user chose.
+- The only other network calls are the ones the operator asked for: an engine package download, the sample dataset download, and an update check the operator turned on. Each one is a click or a setting, never a default.
+- Engine tokens stay in the server's data folder. They never reach the browser and never appear in logs.
 
 ## When to stop and ask
 
@@ -86,7 +93,7 @@ Stop and ask the maintainer before you:
 
 ### Issue tracker
 
-Issues live in GitHub Issues on `AIDroneMap/aidm-ui`, managed with the `gh` CLI. Specs stay in `docs/specs/`. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues on `AIDroneMap/aidm-ui`, managed with the `gh` CLI. Specs are issues too, approved with the `ready-for-agent` label. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
