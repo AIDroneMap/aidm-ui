@@ -32,8 +32,6 @@ import { FakePrivilegedRunner, FakeSystemFiles } from "../../test-support/fake-p
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
-import { ScriptedRunner } from "../../test-support/scripted-runner.ts";
-import type { CommandRunner } from "../process/command-runner.ts";
 
 const GiB = 1024 ** 3;
 

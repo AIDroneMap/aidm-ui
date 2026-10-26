@@ -140,6 +140,7 @@ const offer = {
   variant: "linux-amd64-cpu",
   kind: "container",
   size: 1,
+  processorSize: null,
   source: "builtin",
   tag: null,
 } as const;
