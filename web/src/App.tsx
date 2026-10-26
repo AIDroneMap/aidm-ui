@@ -6,6 +6,7 @@ import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
+import { SampleJobPage } from "./pages/SampleJobPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { useRoute } from "./router.ts";
 import type { SessionView } from "../../shared/api-types.ts";
@@ -42,6 +43,8 @@ export function App() {
         <SettingsPage onAuthRequired={() => setSession("login")} />
       ) : route === "engines" ? (
         <EnginesPage onAuthRequired={() => setSession("login")} />
+      ) : route === "sample" ? (
+        <SampleJobPage onAuthRequired={() => setSession("login")} />
       ) : (
         <HomePage />
       )}
