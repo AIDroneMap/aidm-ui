@@ -2,34 +2,26 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRoutes, fallbackFetch, type RouteContext } from "./routes.ts";
+import { openHarness, TEST_IDENTITY as identity, type Harness } from "../testing/harness.ts";
 import { assetsFromFolder } from "./static-assets.ts";
 
 let folder: string;
-let server: ReturnType<typeof Bun.serve> | undefined;
-
-const identity = { app: "aidm-ui", version: "9.9.9", instance: "abc" } as const;
+let harness: Harness | undefined;
 
 beforeEach(async () => {
   folder = await mkdtemp(join(tmpdir(), "aidm-ui-routes-"));
 });
 
 afterEach(async () => {
-  await server?.stop(true);
-  server = undefined;
+  await harness?.stop();
+  harness = undefined;
   await rm(folder, { recursive: true, force: true });
 });
 
 async function open(withIndex: boolean): Promise<string> {
   if (withIndex) await writeFile(join(folder, "index.html"), "<h1>home</h1>");
-  const ctx: RouteContext = { identity, assets: await assetsFromFolder(folder) };
-  server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    routes: createRoutes(ctx),
-    fetch: fallbackFetch(),
-  });
-  return `http://127.0.0.1:${server.port}`;
+  harness = openHarness({ assets: await assetsFromFolder(folder) });
+  return harness.base;
 }
 
 test("health answers with the identity", async () => {

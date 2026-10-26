@@ -1,12 +1,12 @@
 import { errorResponse } from "../../shared/api-error.ts";
-import type { InstanceIdentity } from "../app/instance.ts";
+import { authRoutes } from "../auth/routes.ts";
+import { settingsRoutes } from "../settings/routes.ts";
+import type { GuardedHandler, ServeRoutes } from "./listener.ts";
+import type { Method, RouteContext, RouteHandler, RouteTable } from "./route-table.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
-import { serveAsset, type AssetMap } from "./static-assets.ts";
+import { serveAsset } from "./static-assets.ts";
 
-export interface RouteContext {
-  identity: InstanceIdentity;
-  assets: AssetMap;
-}
+export type { RouteContext } from "./route-table.ts";
 
 /** The answer for every path that is not an API path. */
 function interfaceResponse(ctx: RouteContext, req: Request): Response {
@@ -15,15 +15,50 @@ function interfaceResponse(ctx: RouteContext, req: Request): Response {
   return serveAsset(ctx.assets, pathname) ?? errorResponse(404, "interface.not_built");
 }
 
-/** The routes option of Bun.serve. */
-export function createRoutes(ctx: RouteContext) {
-  return {
-    "/api/health": {
-      GET: () => withSecurityHeaders(Response.json(ctx.identity)),
-    },
-    "/api/*": () => withSecurityHeaders(errorResponse(404, "api.not_found")),
-    "/*": (req: Request) => withSecurityHeaders(interfaceResponse(ctx, req)),
+function healthRoutes(ctx: RouteContext): RouteTable {
+  return { "/api/health": { GET: () => Response.json(ctx.identity) } };
+}
+
+/** Every API route. Engines and the other routes join this table in later tickets. */
+export function apiRoutes(ctx: RouteContext): RouteTable {
+  return { ...healthRoutes(ctx), ...settingsRoutes(ctx), ...authRoutes(ctx) };
+}
+
+/**
+ * Wraps a handler in the one guard every route goes through: who is asking,
+ * whether they may, and what to say if the handler fails.
+ */
+function guarded(ctx: RouteContext, handler: RouteHandler): GuardedHandler {
+  return async (req, server) => {
+    // No address (it should not happen on a TCP listener) counts as not loopback.
+    const client = { address: server.requestIP(req)?.address ?? "" };
+    try {
+      const refusal = await ctx.auth().authorize(req, client);
+      return withSecurityHeaders(refusal ?? (await handler(req, { client })));
+    } catch (error) {
+      ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describe(error)}`);
+      return withSecurityHeaders(errorResponse(500, "server.internal_error"));
+    }
   };
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
+/** The routes option of Bun.serve. */
+export function createRoutes(ctx: RouteContext, table: RouteTable = apiRoutes(ctx)): ServeRoutes {
+  const routes: ServeRoutes = {};
+  for (const [path, methods] of Object.entries(table)) {
+    const wrapped: Partial<Record<Method, GuardedHandler>> = {};
+    for (const [method, handler] of Object.entries(methods) as Array<[Method, RouteHandler]>) {
+      wrapped[method] = guarded(ctx, handler);
+    }
+    routes[path] = wrapped;
+  }
+  routes["/api/*"] = guarded(ctx, () => errorResponse(404, "api.not_found"));
+  routes["/*"] = guarded(ctx, (req) => interfaceResponse(ctx, req));
+  return routes;
 }
 
 /**

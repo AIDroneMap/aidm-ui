@@ -1,12 +1,14 @@
+import type { MessageCode } from "./message-codes.ts";
+
 /** The server sends message codes with data, never interface text. */
 export interface ApiError {
-  code: string;
+  code: MessageCode;
   data?: Record<string, unknown>;
 }
 
 export function errorResponse(
   status: number,
-  code: string,
+  code: MessageCode,
   data?: Record<string, unknown>,
 ): Response {
   const error: ApiError = data === undefined ? { code } : { code, data };
