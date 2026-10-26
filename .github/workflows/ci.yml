@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Bun
+        run: scripts/ci/install-bun.sh
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+  build:
+    name: Build the four executables
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Bun
+        run: scripts/ci/install-bun.sh
+      - run: bun install --frozen-lockfile
+      - name: Cross-compile Linux x64, Linux arm64, macOS arm64 and Windows x64
+        run: bun run build
+      - name: Smoke test the Linux x64 executable
+        run: scripts/ci/smoke-test.sh dist/aidm-ui-linux-x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aidm-ui-executables
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
