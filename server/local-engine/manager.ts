@@ -14,7 +14,7 @@ import type {
   RuntimeId,
 } from "../../shared/api-types.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
-import type { EngineStore } from "../engines/engine-store.ts";
+import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import { compareVersions } from "../engines/versions.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
@@ -27,7 +27,7 @@ import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts
 import type { RunStore } from "../runs/run-store.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
-import type { InstalledPackage, Settings } from "../settings/settings.ts";
+import type { InstalledPackage, PendingSwitch, Settings } from "../settings/settings.ts";
 import { checkCaps, defaultCaps, type Caps } from "./caps.ts";
 import { EngineLog, type EngineLogDeps } from "./engine-log.ts";
 
@@ -83,6 +83,9 @@ export const UPDATE_READY_TIMEOUT_MS = 120_000;
 /** How often the info route is asked while waiting for a new version. */
 const READY_POLL_MS = 250;
 
+/** The view may use an answer about unfinished runs this old. */
+const RUN_CHECK_MAX_AGE_MS = 1000;
+
 /** A newer package the installed variant could be updated to. */
 interface UpdateOffer {
   packageVersion: string;
@@ -93,6 +96,21 @@ interface UpdateOffer {
 /** The image a package pins, the way the runtimes know it. */
 function imageOf(installed: InstalledPackage): string {
   return `${installed.container.image}@${installed.container.digest}`;
+}
+
+/**
+ * True when the engine reports the release the manifest names. The manifest's
+ * packageVersion is, by its schema, the task API release, which is what the
+ * info route reports, so the two are compared as versions and not as text.
+ */
+function reportsRelease(reported: string | undefined, expected: string): boolean {
+  if (reported === undefined) return false;
+  try {
+    return compareVersions(reported, expected) === 0;
+  } catch {
+    // A version that cannot be read is not the one that was asked for.
+    return false;
+  }
 }
 
 export type InstallOutcome = { ok: true } | { ok: false; status: number; error: ApiError };
@@ -194,6 +212,9 @@ export class LocalEngineManager {
   private updateProgress: InstallProgressView | null = null;
   private offer: UpdateOffer | null = null;
   private offerLookup: Promise<void> = Promise.resolve();
+  /** The last look at whether a run is going on the local engine, and when it was made. */
+  private runCheck: { at: number; found: boolean } | null = null;
+  private runRecheck: ReturnType<typeof setTimeout> | undefined;
   private readonly unsubscribeManifests: () => void;
   private readonly restart: Restart = {
     attempts: 0,
@@ -292,7 +313,8 @@ export class LocalEngineManager {
       update: {
         available: this.offer === null || installedPackage === null ? null : { packageVersion: this.offer.packageVersion, size: this.offer.size },
         previous: previous === null ? null : { packageVersion: previous.packageVersion },
-        blockedBy: installedPackage === null ? null : this.updateBlock(),
+        // While a switch runs, its progress says what is going on.
+        blockedBy: installedPackage === null || this.updateProgress !== null ? null : this.updateBlock(false, state),
         applying: this.updateProgress,
       },
       restarts:
@@ -579,15 +601,47 @@ export class LocalEngineManager {
     this.publish();
   }
 
-  /** Why an update or a rollback is refused right now, or null when it may go on. */
-  private updateBlock(): ApiError | null {
-    const engine = this.store.local();
-    if (engine !== null && this.deps.runs.listUnfinished().some((run) => run.engineId === engine.id)) {
-      return { code: "update.run_in_progress", data: {} };
-    }
-    // The new version is judged by its answer, so the engine has to be running.
-    if (!this.isEnabled()) return { code: "update.engine_off", data: {} };
+  /**
+   * Why an update or a rollback is refused right now, or null when it may go on.
+   * With `exact` the runs are read from the database. Without it the answer
+   * may be a second old, which is good enough to show on the page.
+   */
+  private updateBlock(exact: boolean, state: EngineState | null): ApiError | null {
+    if (this.runOnLocalEngine(exact)) return { code: "update.run_in_progress", data: {} };
+    // The new version is judged by its answer, so the engine has to be on and answering.
+    if (!this.isEnabled() || (state !== "ready" && state !== "busy")) return { code: "update.engine_not_ready", data: {} };
     return null;
+  }
+
+  /** True when a run that is not finished sits on the local engine. */
+  private runOnLocalEngine(exact: boolean): boolean {
+    const engine = this.store.local();
+    if (engine === null) return false;
+    const now = Date.now();
+    const known = this.runCheck;
+    if (!exact && known !== null && now - known.at < RUN_CHECK_MAX_AGE_MS) {
+      // Nothing tells the manager that a run began or ended, so a view built from an answer that is still young asks again when it has aged.
+      this.recheckRunsLater(RUN_CHECK_MAX_AGE_MS - (now - known.at));
+      return known.found;
+    }
+    const found = this.deps.runs.listUnfinished().some((run) => run.engineId === engine.id);
+    this.runCheck = { at: now, found };
+    return found;
+  }
+
+  private recheckRunsLater(ms: number): void {
+    if (this.runRecheck !== undefined || this.closed) return;
+    this.runRecheck = setTimeout(() => {
+      this.runRecheck = undefined;
+      this.publish();
+    }, ms);
+  }
+
+  /** The state of the local engine as the page sees it, or null when there is none. */
+  private engineState(): EngineState | null {
+    const engine = this.store.local();
+    if (engine === null) return null;
+    return this.monitor.views().find((candidate) => candidate.id === engine.id)?.state ?? engine.lastState;
   }
 
   /**
@@ -597,98 +651,95 @@ export class LocalEngineManager {
    * the new version to the info route makes it current. Otherwise the old
    * version is started again.
    */
-  async update(): Promise<InstallOutcome> {
-    const installed = this.settings.get("local.package");
-    if (installed === null) return refusal(409, "local.not_installed");
-    const blocked = this.updateBlock();
-    if (blocked !== null) return { ok: false, status: 409, error: blocked };
-    const claimed = await this.claim();
-    if (!claimed.ok) return { ok: false, status: 409, error: claimed.error };
-    let started = false;
-    try {
-      // A run may have started while a restart let go.
-      const again = this.updateBlock();
-      if (again !== null) return { ok: false, status: 409, error: again };
-      await this.refreshUpdateOffer();
-      const offer = this.offer;
-      if (offer === null) return refusal(409, "install.not_offered", { reason: null });
-      const driver = this.deps.runtimes(installed.runtime);
-      if (driver === null) return refusal(409, "runtime.not_available", { runtime: installed.runtime });
-
-      await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-      const target: InstalledPackage = {
-        packageVersion: offer.packageVersion,
-        variant: installed.variant,
-        runtime: installed.runtime,
-        container: offer.variant,
-      };
-      const space = await this.packageFor(target)?.preflight();
-      if (space !== undefined && !space.ok) return { ok: false, status: 409, error: space.error };
-
-      this.failure = null;
-      this.updateProgress = {
-        phase: "pulling",
-        variant: installed.variant,
-        steps: [{ id: "engine", size: offer.size }],
-        step: "engine",
-        stepReceived: null,
-        size: offer.size,
-        layersDone: null,
-        layersTotal: null,
-        attempt: 1,
-        maxAttempts: PULL_ATTEMPTS,
-      };
-      started = true;
-      this.background = this.runSwitch("update", installed, target)
-        .catch((error: unknown) => this.switchCrashed(error))
-        .finally(() => {
-          this.busy = false;
-        });
-      this.publish();
-      return { ok: true };
-    } finally {
-      if (!started) this.busy = false;
-    }
+  update(): Promise<InstallOutcome> {
+    return this.beginSwitch("update");
   }
 
   /** Goes back to the previous version while it exists. Answers once it has started, like update. */
-  async rollback(): Promise<InstallOutcome> {
-    const installed = this.settings.get("local.package");
-    if (installed === null) return refusal(409, "local.not_installed");
-    const blocked = this.updateBlock();
-    if (blocked !== null) return { ok: false, status: 409, error: blocked };
+  rollback(): Promise<InstallOutcome> {
+    return this.beginSwitch("rollback");
+  }
+
+  /**
+   * The steps both share. Every refusal comes before the manager is taken,
+   * because taking it ends the wait before the restart of a crashed engine.
+   */
+  private async beginSwitch(kind: PendingSwitch["kind"]): Promise<InstallOutcome> {
+    const from = this.settings.get("local.package");
+    if (from === null) return refusal(409, "local.not_installed");
+    const plan = await this.planSwitch(kind, from);
+    if ("refused" in plan) return plan.refused;
+
     const claimed = await this.claim();
     if (!claimed.ok) return { ok: false, status: 409, error: claimed.error };
     let started = false;
     try {
-      const again = this.updateBlock();
+      // A run may have started, or the engine may have stopped answering, while the claim waited for a restart.
+      const again = this.updateBlock(true, this.engineState());
       if (again !== null) return { ok: false, status: 409, error: again };
-      const previous = this.settings.get("local.previous");
-      if (previous === null) return refusal(409, "update.no_previous");
+      const engine = this.store.local();
+      if (engine === null) return refusal(409, "local.not_installed");
       this.failure = null;
-      this.updateProgress = {
-        phase: "starting",
-        variant: previous.variant,
-        steps: [{ id: "engine", size: previous.container.size }],
-        step: "engine",
-        stepReceived: null,
-        size: previous.container.size,
-        layersDone: null,
-        layersTotal: null,
-        attempt: 1,
-        maxAttempts: PULL_ATTEMPTS,
-      };
+      this.updateProgress = plan.progress;
+      this.monitor.setHeld(engine.id, true);
       started = true;
-      this.background = this.runSwitch("rollback", installed, previous)
+      this.background = this.runSwitch(kind, from, plan.to)
         .catch((error: unknown) => this.switchCrashed(error))
         .finally(() => {
+          this.monitor.setHeld(engine.id, false);
           this.busy = false;
         });
       this.publish();
       return { ok: true };
     } finally {
-      if (!started) this.busy = false;
+      if (!started) this.letGo();
     }
+  }
+
+  /** Looks at everything that can refuse, and says what the switch would go to and how it begins. */
+  private async planSwitch(
+    kind: PendingSwitch["kind"],
+    from: InstalledPackage,
+  ): Promise<{ to: InstalledPackage; progress: InstallProgressView } | { refused: InstallOutcome }> {
+    const blocked = this.updateBlock(true, this.engineState());
+    if (blocked !== null) return { refused: { ok: false, status: 409, error: blocked } };
+    const progress = (phase: "pulling" | "starting", size: number, to: InstalledPackage): InstallProgressView => ({
+      phase,
+      variant: to.variant,
+      steps: [{ id: "engine", size }],
+      step: "engine",
+      stepReceived: null,
+      size,
+      layersDone: null,
+      layersTotal: null,
+      attempt: 1,
+      maxAttempts: PULL_ATTEMPTS,
+    });
+
+    if (kind === "rollback") {
+      const previous = this.settings.get("local.previous");
+      if (previous === null) return { refused: refusal(409, "update.no_previous") };
+      return { to: previous, progress: progress("starting", previous.container.size, previous) };
+    }
+
+    await this.refreshUpdateOffer();
+    const offer = this.offer;
+    if (offer === null) return { refused: refusal(409, "install.not_offered", { reason: null }) };
+    if (this.deps.runtimes(from.runtime) === null) {
+      return { refused: refusal(409, "runtime.not_available", { runtime: from.runtime }) };
+    }
+    await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
+    const to: InstalledPackage = { packageVersion: offer.packageVersion, variant: from.variant, runtime: from.runtime, container: offer.variant };
+    const space = await this.packageFor(to)?.preflight();
+    if (space !== undefined && !space.ok) return { refused: { ok: false, status: 409, error: space.error } };
+    return { to, progress: progress("pulling", offer.size, to) };
+  }
+
+  /** Gives the manager back after a refusal that came once it was taken, and lets the watch look at a crashed engine again. */
+  private letGo(): void {
+    this.busy = false;
+    this.restart.checked = false;
+    this.watch(this.monitor.views());
   }
 
   private switchCrashed(error: unknown): void {
@@ -707,7 +758,7 @@ export class LocalEngineManager {
    * after the new engine has answered with its version. When it does not, the
    * container of `to` is removed and `from` runs again.
    */
-  private async runSwitch(kind: "update" | "rollback", from: InstalledPackage, to: InstalledPackage): Promise<void> {
+  private async runSwitch(kind: PendingSwitch["kind"], from: InstalledPackage, to: InstalledPackage): Promise<void> {
     const engine = this.store.local();
     const oldPkg = this.packageFor(from);
     const newPkg = this.packageFor(to);
@@ -725,29 +776,39 @@ export class LocalEngineManager {
       });
       if (!pulled.ok) return this.endSwitch(pulled.error);
       // The pull takes minutes. A run may have started in the meantime.
-      if (this.updateBlock()?.code === "update.run_in_progress") {
-        await this.dropImage(to, [from]);
+      if (this.runOnLocalEngine(true)) {
+        await this.dropImage(to, from);
         return this.endSwitch({ code: "update.run_in_progress", data: {} });
       }
     }
 
+    const pending: PendingSwitch = { kind, from, to, startedAt: new Date(this.now()).toISOString() };
+    // Written before the old engine stops, so that if aidm-ui stops from here on, the next start can finish the switch or undo it.
+    this.settings.set("local.switch", pending);
     if (this.updateProgress !== null) this.updateProgress = { ...this.updateProgress, phase: "starting" };
     this.publish();
     const stopped = await oldPkg.stop();
     if (!stopped.ok) {
-      if (kind === "update") await this.dropImage(to, [from]);
+      this.settings.set("local.switch", null);
+      await this.dropImage(to, from);
       return this.endSwitch(stopped.error);
     }
-
     const started = await this.startEngine(to);
-    const ready = started.ok && (await this.waitForVersion(engine.id, to.packageVersion, newPkg));
-    if (ready) {
+    return this.concludeSwitch(pending, engine.id, newPkg, started.ok);
+  }
+
+  /**
+   * Ends a switch whose new engine was started: the new version becomes
+   * current when it answers with its version, and otherwise the old one runs
+   * again. A closing aidm-ui leaves the switch as it is for the next start.
+   */
+  private async concludeSwitch(pending: PendingSwitch, engineId: number, newPkg: EnginePackage, started: boolean): Promise<void> {
+    const { from, to } = pending;
+    if (started && (await this.waitForVersion(engineId, to, newPkg))) {
       const droppable = this.settings.get("local.previous");
-      this.settings.set("local.package", to);
-      this.settings.set("local.previous", from);
-      this.store.setInstalledVersion(engine.id, "container", to.packageVersion);
+      this.commitSwitch(engineId, pending);
       // Exactly one previous version is kept. The one before it goes, unless it is one of the two that stay.
-      if (droppable !== null) await this.dropImage(droppable, [to, from]);
+      if (droppable !== null) await this.dropImage(droppable);
       this.updateProgress = null;
       this.publish();
       await this.refreshUpdateOffer();
@@ -755,29 +816,83 @@ export class LocalEngineManager {
     }
 
     if (this.closed) {
-      this.deps.log("aidm-ui is closing while the engine changes version. The engine is left as it is.");
+      this.deps.log("aidm-ui is closing while the engine changes version. The next start will finish or undo the change.");
       return this.endSwitch(null);
     }
     this.deps.log(`The engine ${to.packageVersion} did not become ready. Starting ${from.packageVersion} again.`);
     await this.discard(newPkg);
-    if (kind === "update") await this.dropImage(to, [from]);
+    await this.dropImage(to, from);
     const restored = await this.startEngine(from);
+    this.settings.set("local.switch", null);
     // A start that failed has its own failure, and the engine shows failed with the way to start it again.
     const failure: ApiError = {
-      code: kind === "update" ? "update.failed_rolled_back" : "update.rollback_failed",
+      code: pending.kind === "update" ? "update.failed_rolled_back" : "update.rollback_failed",
       data: { version: to.packageVersion },
     };
     this.endSwitch(restored.ok ? failure : null);
   }
 
+  /** The new package becomes current, the old one the previous, in one step. */
+  private commitSwitch(engineId: number, pending: PendingSwitch): void {
+    this.settings.atomically(() => {
+      this.settings.set("local.package", pending.to);
+      this.settings.set("local.previous", pending.from);
+      this.store.setInstalledVersion(engineId, "container", pending.to.packageVersion);
+      this.settings.set("local.switch", null);
+    });
+  }
+
+  /**
+   * aidm-ui stopped while the engine was changing version. The new engine is
+   * judged the way it would have been: it becomes current if it answers with
+   * its version, and otherwise whatever runs is stopped and the old version
+   * is started again.
+   */
+  private async resumeSwitch(pending: PendingSwitch, engine: EngineRecord): Promise<void> {
+    const newPkg = this.packageFor(pending.to);
+    if (newPkg === null || this.busy) return;
+    this.busy = true;
+    this.monitor.setHeld(engine.id, true);
+    this.failure = null;
+    this.updateProgress = {
+      phase: "starting",
+      variant: pending.to.variant,
+      steps: [{ id: "engine", size: pending.to.container.size }],
+      step: "engine",
+      stepReceived: null,
+      size: pending.to.container.size,
+      layersDone: null,
+      layersTotal: null,
+      attempt: 1,
+      maxAttempts: PULL_ATTEMPTS,
+    };
+    this.background = (async () => {
+      const status = await newPkg.status();
+      const running = status.ok && status.value.state === "running" && engine.address !== "";
+      if (running) {
+        this.token = engine.token;
+        this.engineLog.follow(newPkg, { fresh: false });
+      }
+      this.publish();
+      await this.concludeSwitch(pending, engine.id, newPkg, running);
+    })()
+      .catch((error: unknown) => this.switchCrashed(error))
+      .finally(() => {
+        this.monitor.setHeld(engine.id, false);
+        this.busy = false;
+      });
+    await this.background;
+  }
+
   /** Waits for the engine to answer the info route with the version of the new package. */
-  private async waitForVersion(engineId: number, version: string, pkg: EnginePackage): Promise<boolean> {
+  private async waitForVersion(engineId: number, to: InstalledPackage, pkg: EnginePackage): Promise<boolean> {
     const deadline = Date.now() + (this.deps.updateReadyTimeoutMs ?? UPDATE_READY_TIMEOUT_MS);
     for (;;) {
-      if (this.closed) return false;
-      await this.monitor.pollNow(engineId);
+      // A closing manager does not ask again, but an answer that has come already counts.
+      if (!this.closed) await this.monitor.pollNow(engineId);
       const seen = this.monitor.views().find((candidate) => candidate.id === engineId);
-      if ((seen?.state === "ready" || seen?.state === "busy") && seen.info?.version === version) return true;
+      if ((seen?.state === "ready" || seen?.state === "busy") && reportsRelease(seen.info?.version, to.packageVersion)) return true;
+      if (this.closed) return false;
       const remaining = deadline - Date.now();
       if (remaining <= 0) return false;
       // A container that is gone will not answer, so there is no use in waiting out the time.
@@ -800,10 +915,14 @@ export class LocalEngineManager {
     });
   }
 
-  /** Removes the image of a version, unless it is also the image of one that stays. A failure is logged, since nothing depends on it. */
-  private async dropImage(version: InstalledPackage, keep: InstalledPackage[]): Promise<void> {
+  /**
+   * Removes the image of a version, unless it is the current one, the previous
+   * one or one of `alsoKeep`. A failure is logged, since nothing depends on it.
+   */
+  private async dropImage(version: InstalledPackage, ...alsoKeep: InstalledPackage[]): Promise<void> {
     const image = imageOf(version);
-    if (keep.some((other) => imageOf(other) === image)) return;
+    const keep = [this.settings.get("local.package"), this.settings.get("local.previous"), ...alsoKeep];
+    if (keep.some((other) => other !== null && imageOf(other) === image)) return;
     try {
       const runtime = this.deps.runtimes(version.runtime);
       const removed = await runtime?.removeImage(image);
@@ -876,6 +995,8 @@ export class LocalEngineManager {
     const engine = this.store.local();
     if (installed === null || engine === null || !this.isEnabled()) return;
     try {
+      const pending = this.settings.get("local.switch");
+      if (pending !== null) return await this.resumeSwitch(pending, engine);
       const pkg = this.packageFor(installed);
       if (pkg === null) return;
       const status = await pkg.status();
@@ -904,6 +1025,7 @@ export class LocalEngineManager {
     this.abort.abort();
     this.unsubscribeMonitor();
     this.unsubscribeManifests();
+    clearTimeout(this.runRecheck);
     this.listeners.clear();
     await this.background.catch(() => {});
     await this.offerLookup;

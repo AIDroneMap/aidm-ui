@@ -367,6 +367,7 @@
   "local.update.button_busy": "Working...",
   "local.update.rollback": "Go back to {version}",
   "local.update.starting": "Starting the engine",
+  "local.update.done": "The engine is now version {version}.",
   "settings.local.title": "Engine on this computer",
   "settings.local.explain": "The memory and CPU cores the engine may use, and the tool that runs it, are on the engines page.",
   "settings.local.link": "Open the advanced options for the engine on this computer",
@@ -411,7 +412,7 @@
   "setup.failed": "Podman could not be installed (code {code}). Ask the administrator to install it, then try again.",
   "setup.runtime_not_working": "Podman was installed but does not work yet. Sign out and sign in again, or restart the computer, then try again.",
   "update.run_in_progress": "A run is still going on the engine on this computer. Wait until it has finished, then try again.",
-  "update.engine_off": "Turn the engine on before you change its version.",
+  "update.engine_not_ready": "The engine on this computer has to be running and answering before it can be updated. Turn it on, or start it again.",
   "update.no_previous": "There is no earlier version to go back to.",
   "update.failed_rolled_back": "The new engine version {version} did not get ready, so AIDM UI started the earlier version again. The engine log may say why.",
   "update.rollback_failed": "The version {version} did not get ready, so AIDM UI started the version that ran before. The engine log may say why."

@@ -70,6 +70,8 @@ export class EngineMonitor {
   private readonly startingGraceMs: number;
   private readonly entries = new Map<number, Entry>();
   private readonly inFlight = new Map<number, Promise<void>>();
+  /** Engines whose version the manager is changing. */
+  private readonly held = new Set<number>();
   private readonly listeners = new Set<(views: EngineView[]) => void>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
@@ -114,14 +116,22 @@ export class EngineMonitor {
   }
 
   /**
-   * True when later work may use this engine: it is on, answers, and speaks a
-   * task API version the interface supports.
+   * True when later work may use this engine: it is on, answers, speaks a
+   * task API version the interface supports, and is not being switched to
+   * another version.
    */
   isUsable(id: number): boolean {
+    if (this.held.has(id)) return false;
     const engine = this.store.get(id);
     if (engine === null || !engine.enabled) return false;
     const entry = this.entryFor(engine);
     return entry.supported === true && (entry.status.state === "ready" || entry.status.state === "busy");
+  }
+
+  /** While held, no new work may start on the engine, although it may still answer. The manager holds the local engine during an update or a rollback. */
+  setHeld(id: number, held: boolean): void {
+    if (held) this.held.add(id);
+    else this.held.delete(id);
   }
 
   /** Polls one engine now, so the page updates at once after an add or an edit. */

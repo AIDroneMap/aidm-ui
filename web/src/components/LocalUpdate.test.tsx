@@ -118,6 +118,23 @@ test("a failed rollback and an update that could not download are reported too",
   expect(download).toContain(en["install.pull_failed"]);
 });
 
+test("a problem of the engine failing to start is left to the engines list, where it already shows", () => {
+  const html = render({
+    ...withUpdate,
+    state: "failed",
+    problem: { code: "install.start_failed", data: { cause: { code: "runtime.start_failed", data: {} } } },
+  });
+  expect(html).not.toContain('role="alert"');
+  expect(html).not.toContain(en["install.start_failed"]);
+});
+
+test("an engine that has just changed version is announced in the status region", () => {
+  const html = render(withUpdate, { announcement: "2.6.0" });
+  expect(html).toContain('<div role="status"><p>The engine is now version 2.6.0.</p></div>');
+  expect(untranslatedText(html)).toEqual([]);
+  expect(render(withUpdate)).toContain('<div role="status"></div>');
+});
+
 test("a problem of the engine itself is not repeated in the update block", () => {
   const html = render({ ...withUpdate, problem: { code: "engine.unreachable", data: {} } });
   expect(html).not.toContain('role="alert"');

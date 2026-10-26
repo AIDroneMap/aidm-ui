@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
-import { progressStatus } from "../localEngine.ts";
+import { finishedVersion, progressStatus, updateProblem } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { BusyButton } from "./BusyButton.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
@@ -10,24 +10,23 @@ import { DownloadProgress } from "./LocalInstall.tsx";
 import type { ApiError } from "../../../shared/api-error.ts";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
 
-/** The problems of the engine itself are in the engines list. These are the ones an update or a rollback leaves behind. */
-const UPDATE_PROBLEM = /^(update|install|runtime)\./;
-
 export interface UpdateViewProps {
   view: LocalEngineView;
   /** True while a click is on its way to the server. */
   requesting: boolean;
   failure: ApiFailure | null;
+  /** The version the engine has just changed to, to say aloud; null otherwise. */
+  announcement?: string | null;
   onUpdate: () => void;
   onRollback: () => void;
 }
 
 /** The new engine version on offer, the way back to the previous one, and where either stands. Nothing when there is neither. */
-export function UpdateView({ view, requesting, failure, onUpdate, onRollback }: UpdateViewProps) {
+export function UpdateView({ view, requesting, failure, announcement = null, onUpdate, onRollback }: UpdateViewProps) {
   const { update } = view;
-  const left: ApiError | null = view.problem !== null && UPDATE_PROBLEM.test(view.problem.code) ? view.problem : null;
+  const left: ApiError | null = updateProblem(view);
   if (view.installed === null) return null;
-  if (update.available === null && update.previous === null && update.applying === null && left === null && failure === null) {
+  if (update.available === null && update.previous === null && update.applying === null && left === null && failure === null && announcement === null) {
     return null;
   }
 
@@ -72,6 +71,8 @@ export function UpdateView({ view, requesting, failure, onUpdate, onRollback }: 
           </p>
         ) : status.kind === "starting" ? (
           <p>{t("local.update.starting")}</p>
+        ) : announcement !== null ? (
+          <p>{t("local.update.done", { version: announcement })}</p>
         ) : null}
       </div>
       {status.kind === "downloading" && <DownloadProgress status={status} progressId={progressId} />}
@@ -98,6 +99,16 @@ export function LocalUpdate(props: {
   const [requesting, setRequesting] = useState(false);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const wasApplying = useRef(false);
+  const lastView = useRef(props.view);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
+
+  // A successful change of version is said in the status region. A new click clears it.
+  useEffect(() => {
+    const version = finishedVersion(lastView.current, props.view);
+    if (version !== null) setAnnouncement(version);
+    else if (props.view.update.applying !== null) setAnnouncement(null);
+    lastView.current = props.view;
+  }, [props.view]);
 
   // When the work ends, the button that was pressed may be gone. Focus stays in this block instead of falling to the page.
   const applying = props.view.update.applying !== null;
@@ -128,6 +139,7 @@ export function LocalUpdate(props: {
       view={props.view}
       requesting={requesting}
       failure={failure}
+      announcement={announcement}
       onUpdate={() => void ask("/api/local-engine/update")}
       onRollback={() => void ask("/api/local-engine/rollback")}
     />

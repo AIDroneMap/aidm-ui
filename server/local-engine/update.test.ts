@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { LocalEngineView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
@@ -7,6 +10,8 @@ import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import type { Manifest } from "../manifest/schema.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
+import type { ContainerSpec } from "../runtimes/runtime.ts";
+import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
 const REPOSITORY = "ghcr.io/aidronemap/aidm-api";
@@ -22,6 +27,7 @@ const LATEST = "/releases/latest/download/manifest.json";
 let fake: FakeFileServer;
 let signer: TestSigner;
 let harness: Harness | undefined;
+const folders: string[] = [];
 
 beforeEach(async () => {
   fake = new FakeFileServer();
@@ -33,6 +39,7 @@ afterEach(async () => {
   await harness?.stop();
   harness = undefined;
   await fake.stop();
+  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
 
 /** A runtime whose engines report the version of their image. */
@@ -40,7 +47,36 @@ function runtimeOf(options: ConstructorParameters<typeof FakeRuntime>[0] = {}): 
   return new FakeRuntime({ versionOf: (image) => VERSION_OF_IMAGE.get(image) ?? "2.5.0", ...options });
 }
 
-function start(options: { runtime?: FakeRuntime; timeoutMs?: number } = {}): Harness {
+/** A runtime a test can hold at the pull, and tell about every start. */
+class HookedRuntime extends FakeRuntime {
+  /** While set, a pull of this image waits for it. */
+  pullHeld: { image: string; until: Promise<void> } | null = null;
+  afterStart: ((image: string) => void) | null = null;
+
+  override async pull(...args: Parameters<FakeRuntime["pull"]>): ReturnType<FakeRuntime["pull"]> {
+    if (this.pullHeld?.image === args[0]) await this.pullHeld.until;
+    return super.pull(...args);
+  }
+
+  override async start(spec: ContainerSpec): ReturnType<FakeRuntime["start"]> {
+    const started = await super.start(spec);
+    if (started.ok) this.afterStart?.(spec.image);
+    return started;
+  }
+}
+
+function hookedRuntime(options: ConstructorParameters<typeof FakeRuntime>[0] = {}): HookedRuntime {
+  return new HookedRuntime({ versionOf: (image) => VERSION_OF_IMAGE.get(image) ?? "2.5.0", ...options });
+}
+
+/** A data folder that outlives one harness, so a second harness on it is aidm-ui started again. */
+function keptFolder(): string {
+  const folder = mkdtempSync(join(os.tmpdir(), "aidm-ui-update-"));
+  folders.push(folder);
+  return folder;
+}
+
+function start(options: { runtime?: FakeRuntime; timeoutMs?: number; harness?: Parameters<typeof openHarness>[0] } = {}): Harness {
   const runtime = options.runtime ?? runtimeOf();
   harness = openHarness({
     enginePollMs: 50,
@@ -49,6 +85,7 @@ function start(options: { runtime?: FakeRuntime; timeoutMs?: number } = {}): Har
     updateReadyTimeoutMs: options.timeoutMs ?? 3000,
     // The test key and the real list, because the built-in entry is signed by the real list's key.
     manifest: { releasesUrl: fake.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
+    ...options.harness,
   });
   return harness;
 }
@@ -233,7 +270,8 @@ test("with a run processing on the local engine, Update is refused and the view 
   // A finished run lets go.
   runtime.engine(CONTAINER_NAME)?.setTask(uuid, { statusCode: 40, processingTime: 9000 });
   await eventually(async () => h.runs.get(runId)?.state === "completed");
-  expect((await localView(h)).update.blockedBy).toBeNull();
+  // The view may use an answer up to a second old; the click itself reads the database.
+  await eventually(async () => (await localView(h)).update.blockedBy === null);
 });
 
 test("Update is refused while the engine is switched off, and with nothing to update to", async () => {
@@ -245,8 +283,8 @@ test("Update is refused while the engine is switched off, and with nothing to up
   });
   await offer(h, release("2.6.0", 2));
   await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
-  expect((await localView(h)).update.blockedBy).toEqual({ code: "update.engine_off", data: {} });
-  expect(await errorOf(await send(h, "POST", "/api/local-engine/update"))).toEqual({ code: "update.engine_off", data: {} });
+  expect((await localView(h)).update.blockedBy).toEqual({ code: "update.engine_not_ready", data: {} });
+  expect(await errorOf(await send(h, "POST", "/api/local-engine/update"))).toEqual({ code: "update.engine_not_ready", data: {} });
 });
 
 // Criterion: a successful update marks the new version current and keeps the old one.
@@ -453,4 +491,196 @@ test("the engine log follows the new container after an update", async () => {
   await updateTo(h, "2.6.0");
   runtime.emitLog(CONTAINER_NAME, "hello from the new version");
   await eventually(async () => h.localEngine.logs.lines().includes("hello from the new version"));
+});
+
+// Review fixes.
+
+const GiB = 1024 ** 3;
+
+/** A fetch that fails while `down.now` is true, the way a task API that does not answer fails. */
+function flakyFetch(down: { now: boolean }): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    down.now ? Promise.reject(new Error("no answer")) : fetch(input, init)) as unknown as typeof fetch;
+}
+
+/** A sleep that holds until the test lets it go, the way the wait before a restart is held. */
+function heldSleep() {
+  const gates: Array<() => void> = [];
+  return {
+    release: () => gates.splice(0).forEach((open) => open()),
+    sleep: (_ms: number) => new Promise<void>((resolve) => gates.push(resolve)),
+  };
+}
+
+async function rollbackAndWait(h: Harness, version: string): Promise<void> {
+  expect((await send(h, "POST", "/api/local-engine/rollback")).status).toBe(202);
+  await untilCurrent(h, version);
+}
+
+test("a failed update never removes the image that stays as the previous version, and Go back still works", async () => {
+  const runtime = runtimeOf();
+  const h = start({ runtime, timeoutMs: 600 });
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  await updateTo(h, "2.6.0");
+  await rollbackAndWait(h, "2.5.0");
+  expect((await localView(h)).update.previous).toEqual({ packageVersion: "2.6.0" });
+  await eventually(async () => (await localView(h)).update.available?.packageVersion === "2.6.0");
+
+  runtime.silent = (image) => image === IMAGES["2.6.0"];
+  expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => (await localView(h)).problem?.code === "update.failed_rolled_back");
+  await eventually(async () => (await runningVersion(h)) === "2.5.0");
+
+  expect(runtime.removedImages).toEqual([]);
+  expect(runtime.images.has(IMAGES["2.6.0"])).toBe(true);
+  expect((await localView(h)).update.previous).toEqual({ packageVersion: "2.6.0" });
+
+  runtime.silent = () => false;
+  await rollbackAndWait(h, "2.6.0");
+  expect((await localView(h)).installed?.packageVersion).toBe("2.6.0");
+});
+
+/** The engine is killed and the wait before its restart is held. */
+async function crashedEngine(h: Harness, runtime: FakeRuntime): Promise<void> {
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  await runtime.kill(CONTAINER_NAME);
+  await eventually(async () => (await localView(h)).restarts !== null);
+}
+
+test("a refused update does not cancel the restart of a crashed engine", async () => {
+  const runtime = runtimeOf();
+  const waiting = heldSleep();
+  let free = 1024 * GiB;
+  const h = start({ runtime, harness: { sleep: waiting.sleep, startingGraceMs: 0, freeBytes: () => free } });
+  await crashedEngine(h, runtime);
+  free = 1;
+
+  expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(409);
+  expect((await send(h, "POST", "/api/local-engine/rollback")).status).toBe(409);
+  waiting.release();
+  await eventually(async () => (await localView(h)).state === "ready");
+  expect(runtime.starts).toHaveLength(2);
+});
+
+test("an engine that crashed cannot be updated until it answers, and the view says so", async () => {
+  const runtime = runtimeOf();
+  const waiting = heldSleep();
+  const h = start({ runtime, harness: { sleep: waiting.sleep, startingGraceMs: 0 } });
+  await crashedEngine(h, runtime);
+
+  const blocked: ApiError = { code: "update.engine_not_ready", data: {} };
+  expect((await localView(h)).update.blockedBy).toEqual(blocked);
+  expect(await errorOf(await send(h, "POST", "/api/local-engine/update"))).toEqual(blocked);
+  waiting.release();
+});
+
+function clientsThatCanBeCut(down: { now: boolean }): NonNullable<Parameters<typeof openHarness>[0]>["clientFor"] {
+  return (endpoint, options) => new TaskClient(endpoint, { ...options, fetch: flakyFetch(down) });
+}
+
+test("aidm-ui stopping after the new engine started and before it answered commits the update at the next start", async () => {
+  const folder = keptFolder();
+  const down = { now: false };
+  const runtime = hookedRuntime();
+  runtime.afterStart = (image) => {
+    // The new engine is up but nobody has heard from it yet.
+    if (image === IMAGES["2.6.0"]) down.now = true;
+  };
+  const first = start({ runtime, timeoutMs: 5000, harness: { dataFolder: folder, clientFor: clientsThatCanBeCut(down) } });
+  await installAndWaitReady(first);
+  await offer(first, release("2.6.0", 2));
+  expect((await send(first, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => runtime.starts.length === 2);
+  await first.stop({ leaveEngines: true });
+
+  down.now = false;
+  const second = start({ runtime, harness: { dataFolder: folder } });
+  await untilCurrent(second, "2.6.0");
+  expect(second.settings.get("local.package")?.packageVersion).toBe("2.6.0");
+  expect(second.settings.get("local.previous")?.packageVersion).toBe("2.5.0");
+  expect(second.settings.get("local.switch")).toBeNull();
+  expect(second.engineStore.local()?.installedVersion).toBe("2.6.0");
+  expect((await localView(second)).problem).toBeNull();
+  // The engine that was running is kept, not started a third time.
+  expect(runtime.starts).toHaveLength(2);
+  expect(runtime.removedImages).toEqual([]);
+});
+
+test("aidm-ui stopping while the new engine never answers puts the previous version back at the next start", async () => {
+  const folder = keptFolder();
+  const runtime = runtimeOf({ silent: (image) => image === IMAGES["2.6.0"] });
+  const first = start({ runtime, timeoutMs: 5000, harness: { dataFolder: folder } });
+  await installAndWaitReady(first);
+  await offer(first, release("2.6.0", 2));
+  expect((await send(first, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => runtime.starts.length === 2);
+  await first.stop({ leaveEngines: true });
+
+  const second = start({ runtime, timeoutMs: 600, harness: { dataFolder: folder } });
+  await eventually(async () => (await localView(second)).problem?.code === "update.failed_rolled_back");
+  await eventually(async () => (await runningVersion(second)) === "2.5.0");
+
+  const view = await localView(second);
+  expect(view.problem).toEqual({ code: "update.failed_rolled_back", data: { version: "2.6.0" } });
+  expect(view.installed?.packageVersion).toBe("2.5.0");
+  expect(view.update.previous).toBeNull();
+  expect(second.settings.get("local.switch")).toBeNull();
+  expect(second.engineStore.local()?.installedVersion).toBe("2.5.0");
+  expect(runtime.starts.map((started) => started.spec.image)).toEqual([IMAGES["2.5.0"], IMAGES["2.6.0"], IMAGES["2.5.0"]]);
+  expect(runtime.removedImages).toEqual([IMAGES["2.6.0"]]);
+});
+
+test("while an update downloads, the local engine takes no new run", async () => {
+  const runtime = hookedRuntime();
+  const h = start({ runtime });
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  const engineId = h.engineStore.local()?.id as number;
+  let letGo: () => void = () => {};
+  runtime.pullHeld = { image: IMAGES["2.6.0"], until: new Promise<void>((resolve) => (letGo = resolve)) };
+
+  expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => (await localView(h)).update.applying?.phase === "pulling");
+  expect(h.engines.isUsable(engineId)).toBe(false);
+  const refused = await fetch(`${h.base}/api/sample/start`, { method: "POST", body: JSON.stringify({ engineId }) });
+  expect(refused.status).toBe(409);
+  expect(await errorOf(refused)).toEqual({ code: "sample.engine_not_usable", data: {} });
+
+  letGo();
+  await untilCurrent(h, "2.6.0");
+  await eventually(async () => h.engines.isUsable(engineId));
+});
+
+test("a new version counts when its answer names the same release in other digits, and not when it cannot be read", async () => {
+  const spelled = runtimeOf({ versionOf: (image) => (image === IMAGES["2.6.0"] ? "2.6" : "2.5.0") });
+  const h = start({ runtime: spelled, timeoutMs: 600 });
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => (await localView(h)).installed?.packageVersion === "2.6.0" && (await localView(h)).update.applying === null);
+  expect((await localView(h)).problem).toBeNull();
+  await harness?.stop();
+
+  const garbled = runtimeOf({ versionOf: (image) => (image === IMAGES["2.6.0"] ? "banana" : "2.5.0") });
+  const g = start({ runtime: garbled, timeoutMs: 600 });
+  await installAndWaitReady(g);
+  await offer(g, release("2.6.0", 2));
+  expect((await send(g, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => (await localView(g)).problem?.code === "update.failed_rolled_back");
+  expect((await localView(g)).installed?.packageVersion).toBe("2.5.0");
+});
+
+test("building the view does not look for unfinished runs every time", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const original = h.runs.listUnfinished.bind(h.runs);
+  let calls = 0;
+  h.runs.listUnfinished = () => {
+    calls++;
+    return original();
+  };
+  for (let i = 0; i < 20; i++) await localView(h);
+  expect(calls).toBeLessThanOrEqual(2);
 });

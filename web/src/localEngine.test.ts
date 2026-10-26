@@ -5,6 +5,7 @@ import {
   appendLogLines,
   canInstall,
   capsRequest,
+  finishedVersion,
   gibDraft,
   installStatus,
   installSteps,
@@ -16,6 +17,7 @@ import {
   parseLogLines,
   parseRuntimeSetup,
   setupUnderWay,
+  updateProblem,
 } from "./localEngine.ts";
 
 const GIB = 1024 ** 3;
@@ -188,4 +190,40 @@ test("the steps come from the plan before the click and from the install after i
   expect(at("approve", "failed")).toEqual(["done", "failed", "pending", "pending", "pending"]);
   expect(at("engine", "pulling")).toEqual(["done", "done", "done", "done", "current"]);
   expect(at("engine", "done")).toEqual(["done", "done", "done", "done", "done"]);
+});
+
+const applying = {
+  phase: "starting",
+  variant: "linux-amd64-cpu",
+  steps: [{ id: "engine", size: 1 }],
+  step: "engine",
+  stepReceived: null,
+  size: 1,
+  layersDone: null,
+  layersTotal: null,
+  attempt: 1,
+  maxAttempts: 5,
+} as const;
+const onVersion = (packageVersion: string, working: boolean): LocalEngineView => ({
+  ...fresh,
+  installed: { packageVersion, variant: "linux-amd64-cpu", kind: "container", runtime: "podman" },
+  update: { ...fresh.update, applying: working ? applying : null },
+});
+
+test("a change of version is finished when the work ends with another version installed", () => {
+  expect(finishedVersion(onVersion("2.5.0", true), onVersion("2.6.0", false))).toBe("2.6.0");
+  expect(finishedVersion(onVersion("2.6.0", true), onVersion("2.5.0", false))).toBe("2.5.0");
+  // Undone: the same version again. Still working, or not working before: nothing to say.
+  expect(finishedVersion(onVersion("2.5.0", true), onVersion("2.5.0", false))).toBeNull();
+  expect(finishedVersion(onVersion("2.5.0", true), onVersion("2.6.0", true))).toBeNull();
+  expect(finishedVersion(onVersion("2.5.0", false), onVersion("2.6.0", false))).toBeNull();
+});
+
+test("the update block shows what an update says, and a download problem unless the engines list shows it", () => {
+  const withProblem = (code: NonNullable<LocalEngineView["problem"]>["code"], state: LocalEngineView["state"]): LocalEngineView => ({ ...fresh, state, problem: { code, data: {} } });
+  expect(updateProblem(withProblem("update.failed_rolled_back", "ready"))?.code).toBe("update.failed_rolled_back");
+  expect(updateProblem(withProblem("install.pull_failed", "ready"))?.code).toBe("install.pull_failed");
+  expect(updateProblem(withProblem("install.start_failed", "failed"))).toBeNull();
+  expect(updateProblem(withProblem("engine.unreachable", "ready"))).toBeNull();
+  expect(updateProblem(fresh)).toBeNull();
 });

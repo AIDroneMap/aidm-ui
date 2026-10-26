@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiFailure, asApiFailure } from "./api.ts";
+import type { ApiError } from "../../shared/api-error.ts";
 import {
   ENGINE_STATES,
   SETUP_PHASES,
@@ -151,6 +152,27 @@ export function progressStatus(progress: InstallProgressView | null): InstallSta
   if (progress?.phase === "removing_gpu_package") return { kind: "removing_gpu_package", size: progress.size };
   if (progress?.phase === "starting") return { kind: "starting" };
   return { kind: "none" };
+}
+
+/**
+ * The problem the update block shows: what an update or a rollback says about
+ * itself, and what stopped it before the engine was touched (a download that
+ * failed, no room). A problem of the engine that failed to start is on the
+ * engines list already.
+ */
+export function updateProblem(view: LocalEngineView): ApiError | null {
+  const problem = view.problem;
+  if (problem === null) return null;
+  if (problem.code.startsWith("update.")) return problem;
+  const download = problem.code.startsWith("install.") || problem.code.startsWith("runtime.");
+  return download && view.state !== "failed" ? problem : null;
+}
+
+/** The version the engine changed to between two views, when an update or a rollback has just ended well; else null. */
+export function finishedVersion(before: LocalEngineView, after: LocalEngineView): string | null {
+  if (before.update.applying === null || after.update.applying !== null) return null;
+  const version = after.installed?.packageVersion ?? null;
+  return version !== null && version !== before.installed?.packageVersion ? version : null;
 }
 
 /** True when the install button should be offered: nothing is installed and no install is under way. */

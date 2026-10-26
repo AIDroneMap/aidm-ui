@@ -18,6 +18,17 @@ export interface InstalledPackage {
   gpuPackageLeft?: ApiError | null;
 }
 
+/** A change of engine version that has begun and not yet ended. It lets the next start finish or undo it. */
+export interface PendingSwitch {
+  kind: "update" | "rollback";
+  /** The package that was current when the switch began. */
+  from: InstalledPackage;
+  /** The package the engine is being switched to. */
+  to: InstalledPackage;
+  /** An ISO time. */
+  startedAt: string;
+}
+
 export interface SettingValues {
   /** The port tried first on the next start; null means the default. */
   "server.port": number | null;
@@ -32,6 +43,8 @@ export interface SettingValues {
   "local.package": InstalledPackage | null;
   /** The version kept next to the current one after an update or a rollback; null when there is none. */
   "local.previous": InstalledPackage | null;
+  /** Set from just before the old engine is stopped until the new version is current or the old one is back; null otherwise. */
+  "local.switch": PendingSwitch | null;
   /** The switch for the local engine. Off: the manager keeps it stopped, also when aidm-ui starts. */
   "local.enabled": boolean;
   /** The caps the operator lowered, used from the next start; null means the most the computer allows. */
@@ -65,6 +78,7 @@ const DEFAULTS: SettingValues = {
   "engine.dataFolder": null,
   "local.package": null,
   "local.previous": null,
+  "local.switch": null,
   "local.enabled": true,
   "local.memoryBytes": null,
   "local.cpus": null,
@@ -92,6 +106,11 @@ export class Settings {
   getRaw(key: keyof SettingValues): string | null {
     const row = this.db.query("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | null;
     return row === null ? null : row.value;
+  }
+
+  /** Runs the changes as one: all of them are stored, or none. Other tables that share the connection are part of it. */
+  atomically<T>(changes: () => T): T {
+    return this.db.transaction(changes)();
   }
 
   set<K extends keyof SettingValues>(key: K, value: SettingValues[K]): void {
