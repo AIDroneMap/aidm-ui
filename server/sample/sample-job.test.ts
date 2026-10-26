@@ -617,8 +617,11 @@ test("a run that was still being prepared when aidm-ui stopped is failed on the 
     const failed = await getJson<RunView>(`/api/runs/${run.id}`, second);
     expect(failed.state).toBe("failed");
     expect(failed.problem).toEqual({ code: "run.interrupted", data: {} });
-    // It does not block a new start, once the engine has answered its first poll after the restart.
-    await eventually(async () => (await getJson<SampleView>("/api/sample", second)).engines.some((offer) => offer.offered));
+    // It does not block a new start. After a restart an engine is usable only once it has
+    // answered a poll. The test asks for that poll itself, so no timer decides whether the
+    // start comes before the first answer (it did once in CI, and the start got 409).
+    await second.engines.pollNow(engine.id);
+    expect(second.engines.isUsable(engine.id)).toBe(true);
     expect((await send("POST", "/api/sample/start", { engineId: engine.id }, second)).status).toBe(202);
   } finally {
     await first?.stop();
