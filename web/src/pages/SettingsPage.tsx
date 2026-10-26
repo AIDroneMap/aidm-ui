@@ -10,9 +10,11 @@ import {
   type LanSettingRequest,
   type PortSettingRequest,
   type SettingsView as SettingsData,
+  type WizardUpdateRequest,
+  type WizardView,
 } from "../../../shared/api-types.ts";
 
-export type Section = "load" | "port" | "lan";
+export type Section = "load" | "port" | "lan" | "wizard";
 
 export interface SettingsFormProps {
   /** Null while the settings are loading. */
@@ -20,7 +22,7 @@ export interface SettingsFormProps {
   /** The last failure and the section it belongs to, so it shows next to the cause. */
   failure: { section: Section; error: ApiFailure } | null;
   /** The section being saved, or null. */
-  saving: "port" | "lan" | null;
+  saving: "port" | "lan" | "wizard" | null;
   /** The section that was just saved, or null. */
   saved: "port" | "lan-on" | "lan-off" | null;
   portDraft: string;
@@ -33,6 +35,8 @@ export interface SettingsFormProps {
   onPassphraseChange: (value: string) => void;
   onSaveLan: () => void;
   onTurnLanOff: () => void;
+  /** Opens the setup wizard again, from its first screen. */
+  onRunWizard: () => void;
 }
 
 function Failure({ props, section, id }: { props: SettingsFormProps; section: Section; id?: string }) {
@@ -163,11 +167,30 @@ export function SettingsForm(props: SettingsFormProps) {
           {props.saved === "lan-on" ? t("settings.lan.saved_on") : props.saved === "lan-off" ? t("settings.lan.saved_off") : ""}
         </p>
       </section>
+
+      <section aria-labelledby="settings-wizard-title">
+        <h2 id="settings-wizard-title">{t("settings.wizard.title")}</h2>
+        <p>{t("settings.wizard.explain")}</p>
+        <Failure props={props} section="wizard" />
+        <div className="actions">
+          <button type="button" disabled={props.saving === "wizard"} onClick={props.onRunWizard}>
+            {props.saving === "wizard" ? t("settings.wizard.running") : t("settings.wizard.run")}
+          </button>
+          <a href="#/wizard/check">{t("settings.wizard.check_link")}</a>
+        </div>
+      </section>
     </>
   );
 }
 
-export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void }) {
+export function SettingsPage({
+  onAuthRequired,
+  onWizardReopened,
+}: {
+  onAuthRequired: () => void;
+  /** Called once the server has recorded that the wizard is open again. */
+  onWizardReopened: () => void;
+}) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [failure, setFailure] = useState<SettingsFormProps["failure"]>(null);
   const [saving, setSaving] = useState<SettingsFormProps["saving"]>(null);
@@ -232,6 +255,22 @@ export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void })
     void save("port", "/api/settings/port", { port }, "port");
   };
 
+  const runWizard = async () => {
+    setSaving("wizard");
+    setFailure(null);
+    setSaved(null);
+    try {
+      const body: WizardUpdateRequest = { completed: false };
+      await api<WizardView>("PUT", "/api/wizard", body);
+      onWizardReopened();
+      window.location.hash = "#/wizard";
+    } catch (error) {
+      fail("wizard", error);
+    } finally {
+      setSaving(null);
+    }
+  };
+
   return (
     <SettingsForm
       settings={settings}
@@ -251,6 +290,7 @@ export function SettingsPage({ onAuthRequired }: { onAuthRequired: () => void })
       onPassphraseChange={setPassphrase}
       onSaveLan={() => void save("lan", "/api/settings/lan", { enabled: true, passphrase }, "lan-on")}
       onTurnLanOff={() => void save("lan", "/api/settings/lan", { enabled: false }, "lan-off")}
+      onRunWizard={() => void runWizard()}
     />
   );
 }

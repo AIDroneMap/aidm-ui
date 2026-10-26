@@ -19,6 +19,7 @@ import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
+import { recordedMachine } from "../../test-support/recorded-machine.ts";
 
 export const TEST_IDENTITY = { app: "aidm-ui", version: "9.9.9", instance: "abc" } as const;
 
@@ -68,6 +69,8 @@ export function openHarness(
     /** The sample dataset entry; tests point it at a fake file server. */
     sampleDataset?: SampleDatasetEntry;
     freeBytes?: FreeBytes;
+    /** The computer the machine check reads; default: a Linux computer with 32 GiB and no container runtime. */
+    machine?: RouteContext["machine"];
     /** process.arch of the computer, for the reference time. */
     architecture?: string;
     /**
@@ -130,6 +133,7 @@ export function openHarness(
     streams: new EventStreams(sessions),
     tracker,
     sample,
+    machine: options.machine ?? recordedMachine(),
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {

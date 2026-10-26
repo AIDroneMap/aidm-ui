@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "failed to connect to the docker API at unix:///nonexistent.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent.sock: connect: no such file or directory\n"
+}

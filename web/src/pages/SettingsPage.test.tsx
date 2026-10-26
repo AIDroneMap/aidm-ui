@@ -22,6 +22,7 @@ function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsDa
     onPassphraseChange: () => {},
     onSaveLan: () => {},
     onTurnLanOff: () => {},
+    onRunWizard: () => {},
     ...overrides,
   };
   return renderToStaticMarkup(<SettingsForm {...props} />);
@@ -110,4 +111,23 @@ test("a bad port marks the field invalid and points it at the hint and the error
   const fine = render();
   expect(fine).not.toContain("aria-invalid");
   expect(fine).toContain('aria-describedby="settings-port-hint"');
+});
+
+test("the page offers the setup wizard again and a link to the machine check", () => {
+  const html = render();
+  expect(html).toContain(">Run the setup wizard again</button>");
+  expect(html).toContain('<a href="#/wizard/check">Check this computer again</a>');
+  expect(untranslatedText(html, ["8823"])).toEqual([]);
+});
+
+test("while the wizard opens, its button says so and is disabled", () => {
+  const html = render({ saving: "wizard" });
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Opening the wizard\.\.\.<\/button>/);
+});
+
+test("a failure to reopen the wizard shows in its own section", () => {
+  const failure = new ApiFailure(500, "server.internal_error");
+  const html = render({ failure: { section: "wizard", error: failure } });
+  expect(html).toContain('role="alert"');
+  expect(html.indexOf("Setup wizard")).toBeLessThan(html.indexOf('role="alert"'));
 });

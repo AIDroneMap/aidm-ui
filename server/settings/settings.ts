@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { RuntimeId } from "../runtimes/runtime.ts";
 
 export interface SettingValues {
   /** The port tried first on the next start; null means the default. */
@@ -6,12 +7,18 @@ export interface SettingValues {
   "lan.enabled": boolean;
   /** Argon2id hash of the passphrase for the local network. */
   "lan.passphraseHash": string | null;
+  /** The container runtime the operator chose over the automatic pick; null means automatic. */
+  "runtime.preferred": RuntimeId | null;
+  /** True once the operator has finished the wizard or chosen the interface only. */
+  "wizard.completed": boolean;
 }
 
 const DEFAULTS: SettingValues = {
   "server.port": null,
   "lan.enabled": false,
   "lan.passphraseHash": null,
+  "runtime.preferred": null,
+  "wizard.completed": false,
 };
 
 export class Settings {
