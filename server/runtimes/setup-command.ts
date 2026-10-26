@@ -11,6 +11,8 @@ import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
 export const OS_RELEASE_FILE = "/etc/os-release";
 export const SUBUID_FILE = "/etc/subuid";
 export const SUBGID_FILE = "/etc/subgid";
+/** Read for the numeric ID of the user, because the ID range files may name a user by name or by number. */
+export const PASSWD_FILE = "/etc/passwd";
 
 /** What the command exits with. 126 and 127 are left to pkexec, which uses them for a dismissed prompt and a refusal. */
 export const SETUP_EXIT = {
@@ -89,17 +91,30 @@ export function packageManagerFor(release: OsRelease): PackageManager | null {
 
 export type Distribution = { supported: true; id: string; manager: PackageManager } | { supported: false; id: string };
 
+const MAX_DISTRIBUTION_ID = 64;
+
+/**
+ * The ID as it may leave this program: at most 64 characters, each one a
+ * lowercase letter, a digit, a dot, an underscore or a hyphen. The file is the
+ * computer's own, but the ID goes to the browser, so it is cleaned first.
+ */
+export function safeDistributionId(id: string): string {
+  return id.slice(0, MAX_DISTRIBUTION_ID).replace(/[^a-z0-9._-]/g, "_");
+}
+
 /** Reads the one file that names the distribution. An unreadable file is an unsupported "unknown". */
 export function readDistribution(files: SystemFiles): Distribution {
   const text = files.readFile(OS_RELEASE_FILE);
   if (text === null) return { supported: false, id: "unknown" };
   const release = parseOsRelease(text);
   const manager = packageManagerFor(release);
-  return manager === null ? { supported: false, id: release.id } : { supported: true, id: release.id, manager };
+  const id = safeDistributionId(release.id);
+  return manager === null ? { supported: false, id } : { supported: true, id, manager };
 }
 
 export interface PlannedCommand {
   argv: string[];
+  /** Added to the fixed environment of the setup command. */
   env?: Record<string, string>;
   /** A failure of this step is not the end: the install after it decides. */
   optional?: boolean;
@@ -127,7 +142,13 @@ export function installCommands(manager: PackageManager): PlannedCommand[] {
 
 // The user and the ID ranges -----------------------------------------------
 
-/** Letters, digits, dot, underscore and hyphen, as POSIX allows, and no hyphen first so it cannot pass for an option. */
+/**
+ * Letters, digits, dot, underscore and hyphen, as POSIX allows, and no hyphen first so it cannot pass for an option.
+ * The user name is checked three times on purpose, once in the command line
+ * reader, once in the server before it asks for approval, and once here
+ * before anything runs, because this program runs with administrator rights and
+ * must not trust that an earlier check happened.
+ */
 export function isValidUserName(name: string): boolean {
   return /^[A-Za-z0-9_][A-Za-z0-9._-]{0,31}$/.test(name);
 }
@@ -159,9 +180,21 @@ function subIdLines(text: string | null): SubIdLine[] {
   return lines;
 }
 
-/** True when the file has a line for this user name. */
-export function hasSubIds(text: string | null, user: string): boolean {
-  return subIdLines(text).some((line) => line.name === user);
+/**
+ * True when the file has a line of at least 65536 IDs for one of these names.
+ * The files name a user either by name or by number, so the caller gives both.
+ */
+export function hasSubIds(text: string | null, names: string[]): boolean {
+  return subIdLines(text).some((line) => names.includes(line.name) && line.count >= RANGE_SIZE);
+}
+
+/** The numeric ID of the user in the text of a passwd file, or null when the user has no line. */
+export function userIdOf(passwd: string | null, user: string): string | null {
+  for (const line of (passwd ?? "").split("\n")) {
+    const parts = line.split(":");
+    if (parts[0] === user && /^\d+$/.test(parts[2] ?? "")) return parts[2] as string;
+  }
+  return null;
 }
 
 /**
@@ -190,6 +223,15 @@ export interface SetupCommandDeps {
 /** A package manager may run for a long time on a slow connection. */
 const STEP_TIMEOUT_MS = 30 * 60_000;
 
+/**
+ * Where the package managers are looked for, and the only environment they get.
+ * Nothing is taken from the environment this program was started with. The
+ * desktop's approval prompt cleans it, but this must also be safe if the
+ * command is run through sudo, which can pass much of it on.
+ */
+export const SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const SAFE_ENV = { PATH: SAFE_PATH, LANG: "C" };
+
 function lastLine(text: string): string {
   const lines = text.split("\n").filter((line) => line.trim() !== "");
   return (lines[lines.length - 1] ?? "").trim().slice(0, 200);
@@ -198,6 +240,7 @@ function lastLine(text: string): string {
 /** Runs the setup. Returns the exit code. */
 export async function runPodmanSetup(deps: SetupCommandDeps): Promise<number> {
   const { user, files, runner, print } = deps;
+  // Checked again here on purpose: see isValidUserName.
   if (!isValidUserName(user)) {
     print("The user name has characters that are not allowed.");
     return SETUP_EXIT.badArguments;
@@ -212,7 +255,11 @@ export async function runPodmanSetup(deps: SetupCommandDeps): Promise<number> {
 
   print(`Installing Podman with ${distribution.manager}.`);
   for (const command of installCommands(distribution.manager)) {
-    const result = await runner.run(command.argv, { timeoutMs: STEP_TIMEOUT_MS, env: command.env });
+    const result = await runner.run(command.argv, {
+      timeoutMs: STEP_TIMEOUT_MS,
+      env: { ...SAFE_ENV, ...command.env },
+      inheritEnv: false,
+    });
     if (result.exitCode !== 0 && command.optional !== true) {
       print(`Installing Podman failed (${command.argv[0]} exited with ${result.exitCode}). ${lastLine(result.stderr)}`.trim());
       return SETUP_EXIT.packageManagerFailed;
@@ -223,8 +270,10 @@ export async function runPodmanSetup(deps: SetupCommandDeps): Promise<number> {
   // Read after the install, because installing the tools can create the files.
   const subuid = files.readFile(SUBUID_FILE);
   const subgid = files.readFile(SUBGID_FILE);
-  const missingUid = !hasSubIds(subuid, user);
-  const missingGid = !hasSubIds(subgid, user);
+  const uid = userIdOf(files.readFile(PASSWD_FILE), user);
+  const names = uid === null ? [user] : [user, uid];
+  const missingUid = !hasSubIds(subuid, names);
+  const missingGid = !hasSubIds(subgid, names);
   if (!missingUid && !missingGid) {
     print(`${user} already has a range of IDs for containers.`);
     return SETUP_EXIT.done;
@@ -241,7 +290,7 @@ export async function runPodmanSetup(deps: SetupCommandDeps): Promise<number> {
   if (missingGid) argv.push("--add-subgids", text);
   argv.push(user);
   print(`Adding a range of IDs for containers to ${user}.`);
-  const result = await runner.run(argv, { timeoutMs: STEP_TIMEOUT_MS });
+  const result = await runner.run(argv, { timeoutMs: STEP_TIMEOUT_MS, env: SAFE_ENV, inheritEnv: false });
   if (result.exitCode !== 0) {
     print(`Adding the range of IDs failed (usermod exited with ${result.exitCode}). ${lastLine(result.stderr)}`.trim());
     return SETUP_EXIT.usermodFailed;

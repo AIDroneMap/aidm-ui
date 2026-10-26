@@ -100,6 +100,7 @@ export const MESSAGE_CODES = [
   "setup.already_running",
   "setup.dismissed",
   "setup.not_authorised",
+  "setup.not_available",
   "setup.unsupported_distribution",
   "setup.failed",
   "setup.runtime_not_working",

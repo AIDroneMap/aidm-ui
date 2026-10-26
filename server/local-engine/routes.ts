@@ -47,9 +47,21 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
     },
 
     "/api/local-engine/install": {
+      // One button for the operator. Where no container tool works and Podman can be set up, this starts the setup,
+      // which carries on with the install itself, so a page that reloads in between still sees it through.
       POST: async () => {
+        if (ctx.runtimeSetup.isRunning()) return errorResponse(409, "setup.already_running");
         const outcome = await localEngine.install();
-        if (!outcome.ok) return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
+        if (!outcome.ok) {
+          if (outcome.error.code === "install.no_runtime") {
+            const started = await ctx.runtimeSetup.start();
+            if (started.ok) return Response.json(localEngine.view(), { status: 202 });
+            if (started.error.code === "setup.already_running") {
+              return errorResponse(started.status, started.error.code, started.error.data);
+            }
+          }
+          return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
+        }
         return Response.json(localEngine.view(), { status: 202 });
       },
     },

@@ -2,13 +2,21 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /**
+   * Set only when the program could not be started at all, so the exit code is
+   * the runner's own and not the program's. A caller that must tell a missing
+   * program from one that exited with 127 or 126 reads this.
+   */
+  spawnFailure?: "not_found" | "cannot_run";
 }
 
 export interface CommandRunOptions {
   /** Default 15 seconds. */
   timeoutMs?: number;
-  /** Added to this process's environment. */
+  /** Added to this process's environment, or the whole environment when `inheritEnv` is false. */
   env?: Record<string, string>;
+  /** Default true. False starts the program with `env` alone, and the program is looked up on that PATH. */
+  inheritEnv?: boolean;
 }
 
 export interface CommandStreamOptions {
@@ -177,6 +185,20 @@ function errorCode(error: unknown): string | undefined {
 }
 
 /**
+ * The environment and the program to start. With an environment of its own the
+ * program is looked up on that PATH and not on ours, so the lookup cannot be
+ * steered by what this process inherited.
+ */
+function launchPlan(argv: string[], options: CommandRunOptions): { argv: string[]; env: Record<string, string | undefined> } | null {
+  if (options.inheritEnv !== false) return { argv, env: { ...process.env, ...options.env } };
+  const env = { ...options.env };
+  const program = argv[0] ?? "";
+  if (program.includes("/")) return { argv, env };
+  const found = Bun.which(program, { PATH: env["PATH"] ?? "" });
+  return found === null ? null : { argv: [found, ...argv.slice(1)], env };
+}
+
+/**
  * Runs real programs. A missing program is exit 127, one that cannot be started
  * is 126, and one that outlives its time is killed with everything it started
  * and gives 124.
@@ -187,16 +209,25 @@ export function systemRunner(): CommandRunner {
       const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
       let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
       try {
-        proc = Bun.spawn(argv, {
+        const plan = launchPlan(argv, options);
+        if (plan === null) return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "not found", spawnFailure: "not_found" };
+        proc = Bun.spawn(plan.argv, {
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
-          env: { ...process.env, ...options.env },
+          env: plan.env,
           detached: true,
         });
       } catch (error) {
-        if (errorCode(error) === "ENOENT") return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "not found" };
-        return { exitCode: EXIT_CANNOT_RUN, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+        if (errorCode(error) === "ENOENT") {
+          return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "not found", spawnFailure: "not_found" };
+        }
+        return {
+          exitCode: EXIT_CANNOT_RUN,
+          stdout: "",
+          stderr: error instanceof Error ? error.message : String(error),
+          spawnFailure: "cannot_run",
+        };
       }
 
       const out = capture(proc.stdout);
@@ -232,9 +263,9 @@ export function systemRunner(): CommandRunner {
           detached: true,
         });
       } catch (error) {
-        if (errorCode(error) === "ENOENT") return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "" };
+        if (errorCode(error) === "ENOENT") return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "", spawnFailure: "not_found" };
         options.onLine(error instanceof Error ? error.message : String(error), "stderr");
-        return { exitCode: EXIT_CANNOT_RUN, stdout: "", stderr: "" };
+        return { exitCode: EXIT_CANNOT_RUN, stdout: "", stderr: "", spawnFailure: "cannot_run" };
       }
 
       const out = readLines(proc.stdout, (line) => options.onLine(line, "stdout"));

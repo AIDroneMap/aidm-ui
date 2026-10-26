@@ -19,7 +19,7 @@ test("a program that runs gives its output and exit code", async () => {
 
 test("a program that is not installed gives 127 and not found", async () => {
   const result = await systemRunner().run(["aidm-no-such-program-7"]);
-  expect(result).toEqual({ exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "not found" });
+  expect(result).toEqual({ exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "not found", spawnFailure: "not_found" });
 });
 
 test("a program that outlives its time is killed and gives 124", async () => {
@@ -72,6 +72,7 @@ test("a program that is there but cannot be started gives 126 and the reason", a
     chmodSync(file, 0o644);
     const result = await systemRunner().run([file]);
     expect(result.exitCode).toBe(EXIT_CANNOT_RUN);
+    expect(result.spawnFailure).toBe("cannot_run");
     expect(result.stdout).toBe("");
     expect(result.stderr).not.toBe("");
     expect(result.stderr).not.toBe("not found");
@@ -132,6 +133,60 @@ test("a streamed line of exactly 64 KiB is one line", async () => {
 test("a streamed program that is not installed gives 127", async () => {
   const result = await systemRunner().stream(["aidm-no-such-program-7"], { onLine: () => {} });
   expect(result.exitCode).toBe(EXIT_NOT_FOUND);
+  expect(result.spawnFailure).toBe("not_found");
+});
+
+test("a program that itself exits with 127 or 126 is not a failure to start it", async () => {
+  for (const code of [126, 127]) {
+    const ran = await systemRunner().run(["sh", "-c", `exit ${code}`]);
+    expect(ran.exitCode).toBe(code);
+    expect(ran.spawnFailure).toBeUndefined();
+    const streamed = await systemRunner().stream(["sh", "-c", `exit ${code}`], { onLine: () => {} });
+    expect(streamed.exitCode).toBe(code);
+    expect(streamed.spawnFailure).toBeUndefined();
+  }
+});
+
+test("a streamed program that cannot be started says so apart from its exit code", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "aidm-runner-"));
+  try {
+    const file = join(folder, "not-executable");
+    writeFileSync(file, "#!/bin/sh\necho hi\n");
+    chmodSync(file, 0o644);
+    const result = await systemRunner().stream([file], { onLine: () => {} });
+    expect(result.exitCode).toBe(EXIT_CANNOT_RUN);
+    expect(result.spawnFailure).toBe("cannot_run");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("without the inherited environment the program sees only the variables it was given", async () => {
+  process.env["AIDM_TEST_INHERITED"] = "leaked";
+  try {
+    const result = await systemRunner().run(["sh", "-c", 'printf "%s|%s|%s" "${AIDM_TEST_INHERITED-unset}" "${AIDM_TEST_VALUE-unset}" "$HOME"'], {
+      env: { PATH: "/usr/bin:/bin", AIDM_TEST_VALUE: "given" },
+      inheritEnv: false,
+    });
+    expect(result.stdout).toBe("unset|given|");
+  } finally {
+    delete process.env["AIDM_TEST_INHERITED"];
+  }
+});
+
+test("without the inherited environment the program is looked up on the given PATH only", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "aidm-runner-"));
+  try {
+    const file = join(folder, "aidm-own-tool");
+    writeFileSync(file, "#!/bin/sh\nprintf mine\n");
+    chmodSync(file, 0o755);
+    const found = await systemRunner().run(["aidm-own-tool"], { env: { PATH: folder }, inheritEnv: false });
+    expect(found.stdout).toBe("mine");
+    const missing = await systemRunner().run(["aidm-own-tool"], { env: { PATH: "/usr/bin:/bin" }, inheritEnv: false });
+    expect(missing.spawnFailure).toBe("not_found");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 });
 
 test("a streamed program stops when its signal fires", async () => {

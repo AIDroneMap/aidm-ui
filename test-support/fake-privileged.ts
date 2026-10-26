@@ -42,9 +42,9 @@ export class FakeSystemFiles implements SystemFiles {
   }
 }
 
-/** A command runner that records every command with its environment and answers exit 0 unless told otherwise. */
+/** A command runner that records every command, its environment and whether it inherits ours, and answers exit 0 unless told otherwise. */
 export class RecordingRunner implements CommandRunner {
-  readonly calls: Array<{ argv: string[]; env: Record<string, string> | undefined }> = [];
+  readonly calls: Array<{ argv: string[]; env: Record<string, string> | undefined; inheritEnv: boolean }> = [];
 
   constructor(private readonly answer: (argv: string[]) => CommandResult = () => exited(0)) {}
 
@@ -53,12 +53,12 @@ export class RecordingRunner implements CommandRunner {
   }
 
   async run(argv: string[], options?: CommandRunOptions): Promise<CommandResult> {
-    this.calls.push({ argv, env: options?.env });
+    this.calls.push({ argv, env: options?.env, inheritEnv: options?.inheritEnv !== false });
     return this.answer(argv);
   }
 
   async stream(argv: string[]): Promise<CommandResult> {
-    this.calls.push({ argv, env: undefined });
+    this.calls.push({ argv, env: undefined, inheritEnv: true });
     return this.answer(argv);
   }
 }

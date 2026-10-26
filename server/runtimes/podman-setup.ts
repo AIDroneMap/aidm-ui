@@ -2,16 +2,17 @@ import { isAbsolute } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { CheckLine, RuntimeSetupView, SetupPhase } from "../../shared/api-types.ts";
 import type { MachineChecks } from "../machine/machine-checks.ts";
-import { systemRunner, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { EXIT_CANNOT_RUN, systemRunner, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
 import { isValidUserName, readDistribution, SETUP_EXIT, type SystemFiles } from "./setup-command.ts";
 
 /** What pkexec exits with when the operator closed the password window, and when it was not allowed or had nobody to ask. */
 export const EXIT_DISMISSED = 126;
 export const EXIT_NOT_AUTHORISED = 127;
 
-/** The operator may take a while to find the password, and the install may take minutes after that. */
-const PRIVILEGED_TIMEOUT_MS = 45 * 60_000;
 const MIGRATE_TIMEOUT_MS = 2 * 60_000;
+/** How many of the last lines the privileged step printed are kept for the server log when it fails. */
+const KEPT_LINES = 20;
+const KEPT_LINE_LENGTH = 300;
 
 /** The one way the server asks for administrator rights, so that tests can answer for it. */
 export interface PrivilegedRunner {
@@ -19,6 +20,11 @@ export interface PrivilegedRunner {
    * Runs the aidm-ui executable with these arguments as the administrator,
    * after the desktop has asked the operator once. `onLine` hears each line the
    * program prints, which is how the server knows the approval was given.
+   *
+   * It has no time limit: a program that runs as the administrator cannot be
+   * stopped from here, so the call waits for it to end. A result with
+   * `spawnFailure` set means the asking program could not be started at all,
+   * and its exit code is not an answer from the operator or the desktop.
    */
   runAsRoot(argv: string[], onLine?: (line: string) => void): Promise<CommandResult>;
 }
@@ -27,6 +33,11 @@ export interface PrivilegedRunner {
  * The real one. The executable is named by its full path, so that the
  * desktop's window shows a path the operator recognises, and no script is
  * written anywhere.
+ *
+ * The setup subcommand is reachable only from the compiled executable. In
+ * development `process.execPath` is bun itself, so this would ask the desktop
+ * to run bun as the administrator with arguments it does not understand, and
+ * the setup is not meant to be tried that way.
  */
 export function pkexecRunner(executable: string, runner: CommandRunner = systemRunner()): PrivilegedRunner {
   if (!isAbsolute(executable)) throw new Error("The program to run with administrator rights needs a full path.");
@@ -37,7 +48,6 @@ export function pkexecRunner(executable: string, runner: CommandRunner = systemR
         onLine: (line, from) => {
           if (from === "stdout") onLine?.(line);
         },
-        timeoutMs: PRIVILEGED_TIMEOUT_MS,
       }),
   };
 }
@@ -86,6 +96,11 @@ export class RuntimeSetup {
     return this.current;
   }
 
+  /** True from the click until the setup has ended, whatever way it ended. */
+  isRunning(): boolean {
+    return this.running;
+  }
+
   subscribe(listener: (view: RuntimeSetupView) => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -120,6 +135,7 @@ export class RuntimeSetup {
         this.set("failed", { code: "setup.unsupported_distribution", data: { id: distribution.id } });
         return { ok: true };
       }
+      // The second of three checks of the user name, kept on purpose: see isValidUserName.
       if (!isValidUserName(this.deps.operator)) {
         this.set("failed", { code: "setup.failed", data: { code: SETUP_EXIT.badArguments } });
         return { ok: true };
@@ -138,14 +154,26 @@ export class RuntimeSetup {
 
   private async run(distributionId: string): Promise<void> {
     const { deps } = this;
+    // The last lines of what the privileged step said, for the server log and never for the browser.
+    const printed: string[] = [];
+    const logPrinted = () => {
+      for (const line of printed) deps.log(`  setup output: ${line}`);
+    };
     try {
-      const result = await deps.privileged.runAsRoot(["setup-podman", "--user", deps.operator], () => {
+      const result = await deps.privileged.runAsRoot(["setup-podman", "--user", deps.operator], (line) => {
+        printed.push(line.slice(0, KEPT_LINE_LENGTH));
+        if (printed.length > KEPT_LINES) printed.shift();
         // The first line comes after the approval, so the password window is gone by now.
         if (this.current?.phase === "approval") this.set("installing");
       });
-      const problem = problemFor(result.exitCode, distributionId);
+      const problem = problemFor(result, distributionId);
       if (problem !== null) {
-        deps.log(`Setting up Podman failed with exit code ${result.exitCode}.`);
+        deps.log(
+          result.spawnFailure === undefined
+            ? `Setting up Podman failed with exit code ${result.exitCode}.`
+            : `Setting up Podman failed: the program that asks for approval could not be started (${result.spawnFailure}).`,
+        );
+        logPrinted();
         this.set("failed", problem);
         return;
       }
@@ -156,6 +184,8 @@ export class RuntimeSetup {
       if (migrated.exitCode !== 0) deps.log(`podman system migrate exited with ${migrated.exitCode}.`);
       const check = await deps.checks.fresh();
       if (!runtimeWorks(check.lines.find((candidate) => candidate.id === "runtime"))) {
+        deps.log("Podman was installed but the check still finds no working container tool.");
+        logPrinted();
         this.set("failed", { code: "setup.runtime_not_working", data: {} });
         return;
       }
@@ -187,8 +217,12 @@ export class RuntimeSetup {
   }
 }
 
-/** The message for an exit code of the privileged step, or null for success. */
-function problemFor(exitCode: number, distributionId: string): ApiError | null {
+/** The message for the end of the privileged step, or null for success. */
+function problemFor(result: CommandResult, distributionId: string): ApiError | null {
+  // A program that could not be started gave no answer, so its exit code is not read as one of pkexec's.
+  if (result.spawnFailure === "not_found") return { code: "setup.not_available", data: {} };
+  if (result.spawnFailure === "cannot_run") return { code: "setup.failed", data: { code: EXIT_CANNOT_RUN } };
+  const exitCode = result.exitCode;
   if (exitCode === SETUP_EXIT.done) return null;
   if (exitCode === EXIT_DISMISSED) return { code: "setup.dismissed", data: {} };
   if (exitCode === EXIT_NOT_AUTHORISED) return { code: "setup.not_authorised", data: {} };

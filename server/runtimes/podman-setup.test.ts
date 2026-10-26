@@ -8,7 +8,8 @@ import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner
 import { parseSetupCommand } from "../app/cli.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import { pkexecRunner } from "./podman-setup.ts";
-import { OS_RELEASE_FILE, SUBGID_FILE, SUBUID_FILE, runPodmanSetup } from "./setup-command.ts";
+import type { CommandRunner, CommandStreamOptions } from "../process/command-runner.ts";
+import { OS_RELEASE_FILE, PASSWD_FILE, SUBGID_FILE, SUBUID_FILE, runPodmanSetup } from "./setup-command.ts";
 
 const open: Harness[] = [];
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -265,11 +266,11 @@ test("a second click while the first is under way is refused", async () => {
 });
 
 // Criterion: the setup subcommand reads nothing from the operator's data folder while running as root.
-test("the files read while running as the administrator are os-release and the two ID range files only", async () => {
+test("the files read while running as the administrator are os-release, the two ID range files and the user list only", async () => {
   const c = computer();
   await setupRuntime(c.h);
   await finished(c.h);
-  expect(new Set(c.rootFiles.reads)).toEqual(new Set([OS_RELEASE_FILE, SUBUID_FILE, SUBGID_FILE]));
+  expect(new Set(c.rootFiles.reads)).toEqual(new Set([OS_RELEASE_FILE, SUBUID_FILE, SUBGID_FILE, PASSWD_FILE]));
   for (const path of c.rootFiles.reads) expect(path.startsWith(c.h.dataFolder)).toBe(false);
 });
 
@@ -322,4 +323,190 @@ test("the real privileged runner passes on the lines the program prints, not the
 
 test("the real privileged runner needs a full path, so the prompt shows one", () => {
   expect(() => pkexecRunner("aidm-ui")).toThrow();
+});
+
+// One button: the install itself starts the setup where no container tool works.
+
+const installEngine = (h: Harness) => post(h, "/api/local-engine/install");
+
+test("with no container tool the install starts the setup and goes on to install the engine by itself", async () => {
+  const c = computer();
+  const response = await installEngine(c.h);
+  expect(response.status).toBe(202);
+  expect(c.privileged.calls).toEqual([["setup-podman", "--user", "alice"]]);
+  expect(await finished(c.h)).toEqual({ phase: "done", problem: null });
+  await eventually(async () => {
+    const view = (await (await fetch(`${c.h.base}/api/local-engine`)).json()) as LocalEngineView;
+    return view.state === "ready";
+  });
+  expect(c.privileged.calls).toHaveLength(1);
+  expect(c.podman.pulls).toHaveLength(1);
+  expect(c.podman.starts).toHaveLength(1);
+});
+
+test("a second click on the install while the setup is under way is refused with setup.already_running", async () => {
+  const c = computer();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  c.privileged.answerWith(async () => {
+    await gate;
+    return exited(126);
+  });
+  expect((await installEngine(c.h)).status).toBe(202);
+  const second = await installEngine(c.h);
+  expect(second.status).toBe(409);
+  expect(await errorOf(second)).toEqual({ code: "setup.already_running", data: {} });
+  release();
+  await finished(c.h);
+  expect(c.privileged.calls).toHaveLength(1);
+});
+
+test("the install on an unsupported distribution answers at once and the view tells why, with no prompt", async () => {
+  const c = computer({ release: "gentoo" });
+  expect((await installEngine(c.h)).status).toBe(202);
+  expect(c.h.runtimeSetup.view()).toEqual({
+    phase: "failed",
+    problem: { code: "setup.unsupported_distribution", data: { id: "gentoo" } },
+  });
+  expect(c.privileged.calls).toEqual([]);
+});
+
+test("the install is refused as before when the setup is not needed", async () => {
+  // The check finds a working tool, but the runtime the engine would use is not there.
+  const machine = recordedMachine(linuxInputs({ rules: podmanRules("info-rootless") }));
+  const privileged = new FakePrivilegedRunner();
+  const podman = new FakeRuntime({ detection: { available: false, version: null, problem: null } });
+  const h = openHarness({ machine, runtimes: { podman }, setup: { privileged } });
+  open.push(h);
+  const response = await installEngine(h);
+  expect(response.status).toBe(409);
+  expect((await errorOf(response)).code).toBe("install.no_runtime");
+  expect(privileged.calls).toEqual([]);
+});
+
+// A program that could not be started is not an answer of the desktop.
+
+test("an approval program that is not there is setup.not_available, not a refusal", async () => {
+  const c = computer();
+  c.privileged.answerWith(() => ({ exitCode: 127, stdout: "", stderr: "", spawnFailure: "not_found" }));
+  await setupRuntime(c.h);
+  expect(await finished(c.h)).toEqual({ phase: "failed", problem: { code: "setup.not_available", data: {} } });
+});
+
+test("an approval program that cannot be run is setup.failed", async () => {
+  const c = computer();
+  c.privileged.answerWith(() => ({ exitCode: 126, stdout: "", stderr: "", spawnFailure: "cannot_run" }));
+  await setupRuntime(c.h);
+  const view = await finished(c.h);
+  expect(view.problem?.code).toBe("setup.failed");
+});
+
+test("with the real runner a missing pkexec ends as setup.not_available and an exit code from pkexec as before", async () => {
+  const missing = new ScriptedRunner([]);
+  const c = computer();
+  const h = openHarness({
+    enginePollMs: 50,
+    machine: c.machine,
+    runtimes: { podman: c.podman },
+    setup: { privileged: pkexecRunner("/opt/aidm/aidm-ui", missing), files: c.operatorFiles, runner: c.operatorRunner, operator: "alice" },
+  });
+  open.push(h);
+  await setupRuntime(h);
+  expect((await finished(h)).problem).toEqual({ code: "setup.not_available", data: {} });
+
+  const dismissed = new ScriptedRunner([
+    { argv: ["pkexec", "/opt/aidm/aidm-ui", "setup-podman", "--user", "alice"], result: exited(126) },
+  ]);
+  const h2 = openHarness({
+    enginePollMs: 50,
+    machine: c.machine,
+    runtimes: { podman: c.podman },
+    setup: { privileged: pkexecRunner("/opt/aidm/aidm-ui", dismissed), files: c.operatorFiles, runner: c.operatorRunner, operator: "alice" },
+  });
+  open.push(h2);
+  await setupRuntime(h2);
+  expect((await finished(h2)).problem).toEqual({ code: "setup.dismissed", data: {} });
+});
+
+// No time limit on a step that runs as the administrator.
+
+test("the real privileged runner sets no time limit and no signal, because it cannot stop the program", async () => {
+  let seen: CommandStreamOptions | undefined;
+  const runner: CommandRunner = {
+    run: async () => exited(0),
+    stream: async (_argv, options) => {
+      seen = options;
+      return exited(0);
+    },
+  };
+  await pkexecRunner("/opt/aidm/aidm-ui", runner).runAsRoot(["setup-podman", "--user", "alice"]);
+  expect(seen).toBeDefined();
+  expect(seen?.timeoutMs).toBeUndefined();
+  expect(seen?.signal).toBeUndefined();
+});
+
+test("a step that is slow to end stays under way, and the view says so, until pkexec ends", async () => {
+  const c = computer();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  c.privileged.answerWith(async (_argv, say) => {
+    say("Installing Podman with apt.");
+    await gate;
+    return exited(126);
+  });
+  await setupRuntime(c.h);
+  await eventually(async () => c.h.runtimeSetup.view()?.phase === "installing");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(c.h.runtimeSetup.view()?.phase).toBe("installing");
+  release();
+  await finished(c.h);
+});
+
+// What the privileged step printed goes to the log and nowhere else.
+
+test("when the privileged step fails the last 20 lines it printed are in the server log and not in what the browser gets", async () => {
+  const c = computer();
+  c.privileged.answerWith((_argv, say) => {
+    for (let n = 1; n <= 30; n++) say(`printed line ${n}`);
+    return exited(4);
+  });
+  const response = await setupRuntime(c.h);
+  const body = JSON.stringify(await response.json());
+  await finished(c.h);
+  const logged = c.h.logs.join("\n");
+  expect(logged).toContain("printed line 30");
+  expect(logged).toContain("printed line 11");
+  expect(c.h.logs.some((line) => line.endsWith("printed line 10"))).toBe(false);
+  expect(JSON.stringify(c.h.runtimeSetup.view())).not.toContain("printed line");
+  expect(body).not.toContain("printed line");
+});
+
+test("the lines are also logged when Podman was installed but still does not work", async () => {
+  const c = computer();
+  c.staysBroken();
+  c.privileged.answerWith((_argv, say) => {
+    say("Podman is installed.");
+    return exited(0);
+  });
+  await setupRuntime(c.h);
+  await finished(c.h);
+  expect(c.h.logs.some((line) => line.endsWith("Podman is installed."))).toBe(true);
+});
+
+// The distribution name reaches the browser, so it is cleaned.
+
+test("a distribution ID is cut to 64 characters of letters, digits, dot, underscore and hyphen", async () => {
+  const c = computer();
+  c.operatorFiles.files[OS_RELEASE_FILE] = `ID="Odd id/with<b>markup & more${"x".repeat(100)}"\n`;
+  await setupRuntime(c.h);
+  const problem = c.h.runtimeSetup.view()?.problem;
+  expect(problem?.code).toBe("setup.unsupported_distribution");
+  const id = (problem?.data as { id: string }).id;
+  expect(id).toMatch(/^[a-z0-9._-]{1,64}$/);
+  expect(id.startsWith("odd_id_with_b_markup")).toBe(true);
+  expect(id).toHaveLength(64);
 });

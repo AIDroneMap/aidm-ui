@@ -64,6 +64,7 @@ export function parseSetupCommand(argv: string[]): SetupParseResult | null {
     return { ok: false, problem: error instanceof Error ? firstLine(error.message) : String(error) };
   }
   if (user === undefined) return { ok: false, problem: "setup-podman needs --user <name>" };
+  // The first of three checks of the user name, kept on purpose: see isValidUserName.
   if (!isValidUserName(user)) return { ok: false, problem: "--user must be a user name made of letters, digits, dots, hyphens and underscores" };
   return { ok: true, user };
 }

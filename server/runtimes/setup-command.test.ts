@@ -4,6 +4,8 @@ import { FakeSystemFiles, RecordingRunner, exited } from "../../test-support/fak
 import { recordedText } from "../../test-support/scripted-runner.ts";
 import {
   OS_RELEASE_FILE,
+  PASSWD_FILE,
+  SAFE_PATH,
   SETUP_EXIT,
   SUBGID_FILE,
   SUBUID_FILE,
@@ -13,6 +15,7 @@ import {
   packageManagerFor,
   parseOsRelease,
   runPodmanSetup,
+  safeDistributionId,
   type PackageManager,
 } from "./setup-command.ts";
 
@@ -112,8 +115,6 @@ test("on Debian with no ranges the commands are the update, the install and the 
     ["apt-get", "install", "-y", "podman"],
     ["usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", "alice"],
   ]);
-  expect(runner.calls[0]?.env).toEqual({ DEBIAN_FRONTEND: "noninteractive" });
-  expect(runner.calls[1]?.env).toEqual({ DEBIAN_FRONTEND: "noninteractive" });
   expect(lines.length).toBeGreaterThanOrEqual(3);
 });
 
@@ -195,15 +196,90 @@ test("a user name with bad characters is refused with 2 before anything is read 
 });
 
 // Criterion: the setup subcommand reads nothing from the operator's data folder while running as root.
-test("the setup command reads only os-release and the two ID range files", async () => {
+test("the setup command reads only os-release, the two ID range files and the user list", async () => {
   const files = new FakeSystemFiles({ ...DEBIAN, [SUBUID_FILE]: "", [SUBGID_FILE]: "" });
   const { done } = run(files);
   expect(await done).toBe(0);
-  expect(new Set(files.reads)).toEqual(new Set([OS_RELEASE_FILE, SUBUID_FILE, SUBGID_FILE]));
+  expect(new Set(files.reads)).toEqual(new Set([OS_RELEASE_FILE, SUBUID_FILE, SUBGID_FILE, PASSWD_FILE]));
 });
 
 test("the setup command takes only a user: its dependencies hold no data folder", () => {
   // The type of the dependencies is the proof; this keeps the source from growing a path parameter unnoticed.
   const source = readFileSync(import.meta.dir + "/setup-command.ts", "utf8");
   expect(source).not.toMatch(/dataFolder|data-dir|settings|database/i);
+});
+
+// The environment of the child commands.
+
+test("every child command gets the fixed PATH and a minimal environment, never the inherited one", async () => {
+  const { done, runner } = run(new FakeSystemFiles({ ...DEBIAN, [SUBUID_FILE]: "", [SUBGID_FILE]: "" }));
+  expect(await done).toBe(0);
+  expect(SAFE_PATH).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  expect(runner.calls.map((call) => call.argv[0])).toEqual(["apt-get", "apt-get", "usermod"]);
+  for (const call of runner.calls) expect(call.inheritEnv).toBe(false);
+  expect(runner.calls[0]?.env).toEqual({ PATH: SAFE_PATH, LANG: "C", DEBIAN_FRONTEND: "noninteractive" });
+  expect(runner.calls[1]?.env).toEqual({ PATH: SAFE_PATH, LANG: "C", DEBIAN_FRONTEND: "noninteractive" });
+  expect(runner.calls[2]?.env).toEqual({ PATH: SAFE_PATH, LANG: "C" });
+});
+
+test("the other package managers get the same minimal environment, without the apt variable", async () => {
+  const files = new FakeSystemFiles({
+    [OS_RELEASE_FILE]: recordedText("os-release", "fedora-42"),
+    [SUBUID_FILE]: "alice:100000:65536\n",
+    [SUBGID_FILE]: "alice:100000:65536\n",
+  });
+  const { done, runner } = run(files);
+  expect(await done).toBe(0);
+  expect(runner.calls).toEqual([{ argv: ["dnf", "install", "-y", "podman"], env: { PATH: SAFE_PATH, LANG: "C" }, inheritEnv: false }]);
+});
+
+// Subordinate IDs named by user name or by number.
+
+const PASSWD = "root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\n";
+
+test("a line for the user's number counts, in either file, so no range is added", async () => {
+  const files = new FakeSystemFiles({ ...DEBIAN, [PASSWD_FILE]: PASSWD, [SUBUID_FILE]: "1000:100000:65536\n", [SUBGID_FILE]: "1000:100000:65536\n" });
+  const { done, runner } = run(files);
+  expect(await done).toBe(0);
+  expect(runner.argvs.some((argv) => argv[0] === "usermod")).toBe(false);
+});
+
+test("a line by number in one file and by name in the other also counts", async () => {
+  const files = new FakeSystemFiles({ ...DEBIAN, [PASSWD_FILE]: PASSWD, [SUBUID_FILE]: "1000:100000:65536\n", [SUBGID_FILE]: "alice:100000:131072\n" });
+  const { done, runner } = run(files);
+  expect(await done).toBe(0);
+  expect(runner.argvs.some((argv) => argv[0] === "usermod")).toBe(false);
+});
+
+test("a line with fewer than 65536 IDs does not count, by name or by number, so a range is added", async () => {
+  const small = new FakeSystemFiles({ ...DEBIAN, [PASSWD_FILE]: PASSWD, [SUBUID_FILE]: "alice:100000:65535\n", [SUBGID_FILE]: "1000:100000:1000\n" });
+  const { done, runner } = run(small);
+  expect(await done).toBe(0);
+  expect(runner.argvs.at(-1)).toEqual(["usermod", "--add-subuids", "165535-231070", "--add-subgids", "165535-231070", "alice"]);
+});
+
+test("a line by number does not count when the user list has no number for the user", async () => {
+  const files = new FakeSystemFiles({ ...DEBIAN, [PASSWD_FILE]: "root:x:0:0:root:/root:/bin/bash\n", [SUBUID_FILE]: "1000:100000:65536\n", [SUBGID_FILE]: "1000:100000:65536\n" });
+  const { done, runner } = run(files);
+  expect(await done).toBe(0);
+  expect(runner.argvs.at(-1)?.[0]).toBe("usermod");
+});
+
+test("a line for another user's number does not count", async () => {
+  const files = new FakeSystemFiles({ ...DEBIAN, [PASSWD_FILE]: PASSWD, [SUBUID_FILE]: "1001:100000:65536\n", [SUBGID_FILE]: "1001:100000:65536\n" });
+  const { done, runner } = run(files);
+  expect(await done).toBe(0);
+  expect(runner.argvs.at(-1)?.[0]).toBe("usermod");
+});
+
+// What leaves for the browser.
+
+test.each([
+  ["debian", "debian"],
+  ["rocky-linux_9.3", "rocky-linux_9.3"],
+  ["with space/and<tags>", "with_space_and_tags_"],
+  ["x".repeat(100), "x".repeat(64)],
+  ["\u00e9cole", "_cole"],
+])("the distribution ID %p leaves as %p", (id, cleaned) => {
+  expect(safeDistributionId(id)).toBe(cleaned);
 });
