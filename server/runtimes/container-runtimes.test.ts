@@ -14,7 +14,7 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
     image: IMAGE,
     platform: null,
     publish: { hostAddress: "127.0.0.1", hostPort: 41823, containerPort: 3000 },
-    mounts: [{ hostPath: "/home/operator/engine-data", containerPath: "/var/www/data" }],
+    mounts: [{ hostPath: "/home/operator/engine-data", containerPath: "/var/www/data", readOnly: false }],
     memoryBytes: 8 * GIB,
     cpus: 4,
     gpu: false,
@@ -37,6 +37,7 @@ const tools = [
     make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => podmanRuntime(runner, log),
     runArgv: podmanRunArgv,
     mountSuffix: ":Z",
+    readOnlySuffix: ":ro,Z",
     inspect: (name: string) => ["podman", "container", "inspect", name],
     detectRules: [
       { argv: ["podman", "version", "--format", "json"], result: recorded("podman", "version") },
@@ -50,6 +51,7 @@ const tools = [
     make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => dockerRuntime(runner, log),
     runArgv: dockerRunArgv,
     mountSuffix: "",
+    readOnlySuffix: ":ro",
     inspect: (name: string) => ["docker", "inspect", "--type", "container", name],
     detectRules: [
       { argv: ["docker", "version", "--format", "json"], result: recorded("docker", "version") },
@@ -127,11 +129,30 @@ describe("the command line that starts the container", () => {
 
     test(`${tool.id} mounts every folder the spec lists`, () => {
       const argv = tool.runArgv(
-        spec({ mounts: [{ hostPath: "/a", containerPath: "/x" }, { hostPath: "/b", containerPath: "/y" }] }),
+        spec({
+          mounts: [
+            { hostPath: "/a", containerPath: "/x", readOnly: false },
+            { hostPath: "/b", containerPath: "/y", readOnly: false },
+          ],
+        }),
         detection(tool.id),
       );
       expect(argv.filter((part) => part === "-v")).toHaveLength(2);
       expect(argv).toContain(`/a:/x${tool.mountSuffix}`);
+      expect(argv).toContain(`/b:/y${tool.mountSuffix}`);
+    });
+
+    test(`${tool.id} marks a read-only mount and leaves a writable one as it was`, () => {
+      const argv = tool.runArgv(
+        spec({
+          mounts: [
+            { hostPath: "/a", containerPath: "/x", readOnly: true },
+            { hostPath: "/b", containerPath: "/y", readOnly: false },
+          ],
+        }),
+        detection(tool.id),
+      );
+      expect(argv).toContain(`/a:/x${tool.readOnlySuffix}`);
       expect(argv).toContain(`/b:/y${tool.mountSuffix}`);
     });
   }

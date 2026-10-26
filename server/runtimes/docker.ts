@@ -12,10 +12,10 @@ import {
   type RuntimeDetection,
 } from "./runtime.ts";
 
-/** The command line that starts the container. */
+/** The command line that starts the container. Docker adds no SELinux label, so a mount has no option unless it is read-only (":ro"). */
 export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): string[] {
   return sharedRunArgs("docker", spec, {
-    mountSuffix: "",
+    selinuxLabel: false,
     memoryCap: detection.memoryCapEnforced !== false,
     cpuCap: detection.cpuCapEnforced !== false,
   });

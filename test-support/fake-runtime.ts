@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
 import { runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
 import {
@@ -37,6 +39,28 @@ function recordedPullProgress(): PullProgress[] {
     if (step !== null) progress.push(step);
   }
   return progress;
+}
+
+/**
+ * The token in the config file the arguments point to, as the task API reads
+ * it. Undefined when the arguments name no config file. Null when they do and
+ * the file cannot be read, has no usable JSON or has no token.
+ */
+function readConfigToken(spec: ContainerSpec): string | null | undefined {
+  const at = spec.args.indexOf("--config");
+  if (at === -1) return undefined;
+  const path = spec.args[at + 1];
+  if (path === undefined || !path.endsWith(".json")) return null;
+  // The file is seen through the mount whose folder holds it, as in a container.
+  const mount = spec.mounts.find((candidate) => path.startsWith(`${candidate.containerPath}/`));
+  if (mount === undefined) return null;
+  try {
+    const text = readFileSync(join(mount.hostPath, path.slice(mount.containerPath.length + 1)), "utf8");
+    const token = (JSON.parse(text) as { token?: unknown } | null)?.token;
+    return typeof token === "string" ? token : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -114,12 +138,16 @@ export class FakeRuntime implements ContainerRuntime {
     );
     if (taken) return fail("runtime.port_in_use", { port: spec.publish.hostPort });
 
-    const tokenAt = spec.args.indexOf("--token");
-    const api = new FakeTaskApi({ token: spec.args[tokenAt + 1] ?? "fake-token" });
-    try {
-      await api.start(spec.publish.hostPort);
-    } catch {
-      return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+    // The real task API exits with status 1 when it cannot read its config file.
+    // The fake does the same: the container is created and is already stopped.
+    const config = readConfigToken(spec);
+    const api = new FakeTaskApi({ token: config === undefined ? "fake-token" : (config ?? "") });
+    if (config !== null) {
+      try {
+        await api.start(spec.publish.hostPort);
+      } catch {
+        return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+      }
     }
 
     const argv = (this.id === "docker" ? dockerRunArgv : podmanRunArgv)(spec, this.detection);
@@ -129,8 +157,8 @@ export class FakeRuntime implements ContainerRuntime {
       spec,
       containerId,
       api,
-      running: true,
-      exitCode: null,
+      running: config !== null,
+      exitCode: config === null ? 1 : null,
       lines: [],
       followers: new Set(),
       endFollowers: new Set(),

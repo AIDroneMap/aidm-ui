@@ -12,13 +12,14 @@ import {
 } from "./runtime.ts";
 
 /**
- * The command line that starts the container. ":Z" labels the mounted folder
- * for SELinux, which Podman does and Docker does not. Rootless Podman refuses
- * a cap whose controller it was not given, so each cap is left out on its own.
+ * The command line that starts the container. The "Z" mount option labels the
+ * mounted folder for SELinux, which Podman does and Docker does not, so a
+ * read-only mount becomes ":ro,Z". Rootless Podman refuses a cap whose
+ * controller it was not given, so each cap is left out on its own.
  */
 export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): string[] {
   return sharedRunArgs("podman", spec, {
-    mountSuffix: ":Z",
+    selinuxLabel: true,
     memoryCap: detection.memoryCapEnforced !== false,
     cpuCap: detection.cpuCapEnforced !== false,
   });

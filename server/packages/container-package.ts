@@ -1,3 +1,5 @@
+import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
@@ -12,6 +14,18 @@ export const CONTAINER_NAME = "aidm-local-engine";
 export const ENGINE_DATA_PATH = "/var/www/data";
 /** The port the task API listens on inside the container. */
 export const ENGINE_PORT = 3000;
+/** Where the folder with the task API's config file is mounted inside the container. */
+export const ENGINE_CONFIG_FOLDER_IN_CONTAINER = "/etc/aidm-ui";
+export const ENGINE_CONFIG_FILE_NAME = "task-api.json";
+
+/**
+ * The folder on this computer that holds the task API's config file. It holds
+ * only that file, because the whole folder is mounted read-only into the
+ * container. The file has the token, so the folder is readable by this user only.
+ */
+export function containerConfigFolder(dataFolder: string): string {
+  return join(resolve(dataFolder), "engine-config", "container");
+}
 export const PULL_ATTEMPTS = 5;
 /** Seconds to wait after each failed try: 2, 4, 8, 16. */
 const BACKOFF_SECONDS = [2, 4, 8, 16];
@@ -96,16 +110,28 @@ export class ContainerPackage implements EnginePackage {
       if (!removed.ok) return removed;
     }
 
+    const configFolder = containerConfigFolder(this.deps.dataFolder);
+    try {
+      writeEngineConfig(configFolder, options.token);
+    } catch {
+      return fail("local.engine_config_write_failed", {});
+    }
+
     const spec: ContainerSpec = {
       name: CONTAINER_NAME,
       image: this.image,
       platform: null,
       publish: { hostAddress: "127.0.0.1", hostPort: options.hostPort, containerPort: ENGINE_PORT },
-      mounts: [{ hostPath: options.engineDataFolder, containerPath: ENGINE_DATA_PATH }],
+      mounts: [
+        { hostPath: options.engineDataFolder, containerPath: ENGINE_DATA_PATH, readOnly: false },
+        { hostPath: configFolder, containerPath: ENGINE_CONFIG_FOLDER_IN_CONTAINER, readOnly: true },
+      ],
       memoryBytes: options.memoryBytes,
       cpus: options.cpus,
       gpu: options.gpu,
-      args: ["--port", String(ENGINE_PORT), "--token", options.token, "--parallel_queue_processing", "1"],
+      // The token is in the config file. Every user of the computer can read
+      // this command line, and the runtime's inspect command shows it.
+      args: ["--config", `${ENGINE_CONFIG_FOLDER_IN_CONTAINER}/${ENGINE_CONFIG_FILE_NAME}`],
     };
     const started = await runtime.start(spec);
     if (!started.ok) return started;
@@ -138,6 +164,26 @@ export class ContainerPackage implements EnginePackage {
   async remove(): Promise<PackageResult<void>> {
     const container = await this.deps.runtime.remove(CONTAINER_NAME);
     if (!container.ok) return container;
-    return this.deps.runtime.removeImage(this.image);
+    const image = await this.deps.runtime.removeImage(this.image);
+    if (!image.ok) return image;
+    rmSync(containerConfigFolder(this.deps.dataFolder), { recursive: true, force: true });
+    return ok(undefined);
   }
+}
+
+/**
+ * Writes the task API's config file. The file is written next to its final name
+ * and renamed, so the engine never reads half a file. Both the folder and the
+ * file are private to this user, because the file holds the token.
+ */
+function writeEngineConfig(folder: string, token: string): void {
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  // A folder that already exists keeps its old mode otherwise.
+  chmodSync(folder, 0o700);
+  const file = join(folder, ENGINE_CONFIG_FILE_NAME);
+  const temporary = `${file}.new`;
+  rmSync(temporary, { force: true });
+  const config = { token, port: ENGINE_PORT, parallelQueueProcessing: 1 };
+  writeFileSync(temporary, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  renameSync(temporary, file);
 }

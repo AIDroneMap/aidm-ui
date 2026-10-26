@@ -191,7 +191,7 @@ function readState(state: Record<string, unknown>, exitCode: number): RuntimeRes
 export function sharedRunArgs(
   binary: string,
   spec: ContainerSpec,
-  options: { mountSuffix: string; memoryCap: boolean; cpuCap: boolean },
+  options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean },
 ): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
   return [
@@ -204,7 +204,11 @@ export function sharedRunArgs(
     spec.name,
     "-p",
     `${hostAddress}:${hostPort}:${containerPort}`,
-    ...spec.mounts.flatMap((mount) => ["-v", `${mount.hostPath}:${mount.containerPath}${options.mountSuffix}`]),
+    ...spec.mounts.flatMap((mount) => {
+      const mountOptions = [...(mount.readOnly ? ["ro"] : []), ...(options.selinuxLabel ? ["Z"] : [])];
+      const suffix = mountOptions.length === 0 ? "" : `:${mountOptions.join(",")}`;
+      return ["-v", `${mount.hostPath}:${mount.containerPath}${suffix}`];
+    }),
     ...(options.memoryCap && spec.memoryBytes !== null ? ["--memory", `${spec.memoryBytes}b`] : []),
     ...(options.cpuCap && spec.cpus !== null ? ["--cpus", String(spec.cpus)] : []),
     ...(spec.platform === null ? [] : ["--platform", spec.platform]),

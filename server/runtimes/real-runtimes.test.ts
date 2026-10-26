@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { systemRunner } from "../process/command-runner.ts";
@@ -45,6 +45,8 @@ for (const id of ["podman", "docker"]) {
     const name = `aidm-ui-ci-${crypto.randomUUID().slice(0, 8)}`;
     const folder = mkdtempSync(join(tmpdir(), "aidm-ui-ci-"));
     chmodSync(folder, 0o755);
+    const settingsFolder = mkdtempSync(join(tmpdir(), "aidm-ui-ci-settings-"));
+    chmodSync(settingsFolder, 0o755);
     let port = 0;
     let spec: ContainerSpec;
 
@@ -52,6 +54,7 @@ for (const id of ["podman", "docker"]) {
       await runtime.remove(name);
       await runtime.removeImage(IMAGE);
       rmSync(folder, { recursive: true, force: true });
+      rmSync(settingsFolder, { recursive: true, force: true });
     }, SLOW);
 
     test("it is available", async () => {
@@ -87,12 +90,18 @@ for (const id of ["podman", "docker"]) {
     test("it starts a detached container that serves the mounted folder on the published loopback port", async () => {
       port = await freePort();
       writeFileSync(join(folder, "hello.txt"), "hello from the mounted folder\n");
+      writeFileSync(join(settingsFolder, "settings.txt"), "read-only settings\n");
+      // The mount point exists beforehand, so the runtime does not create it as another user.
+      mkdirSync(join(folder, "settings"));
       spec = {
         name,
         image: IMAGE,
         platform: null,
         publish: { hostAddress: "127.0.0.1", hostPort: port, containerPort: 3000 },
-        mounts: [{ hostPath: folder, containerPath: "/var/www/data" }],
+        mounts: [
+          { hostPath: folder, containerPath: "/var/www/data", readOnly: false },
+          { hostPath: settingsFolder, containerPath: "/var/www/data/settings", readOnly: true },
+        ],
         memoryBytes: 256 * 1024 ** 2,
         cpus: 1,
         gpu: false,
@@ -107,6 +116,19 @@ for (const id of ["podman", "docker"]) {
         return response.ok ? await response.text() : undefined;
       });
       expect(text).toBe("hello from the mounted folder\n");
+
+      const settings = await fetch(`http://127.0.0.1:${port}/settings/settings.txt`);
+      expect(await settings.text()).toBe("read-only settings\n");
+
+      // The tool's own inspect command says the folder is read-only.
+      const inspect = id === "podman" ? ["podman", "container", "inspect", name] : ["docker", "inspect", "--type", "container", name];
+      const inspecting = Bun.spawn(inspect, { stdout: "pipe", stderr: "pipe" });
+      const details = JSON.parse(await new Response(inspecting.stdout).text()) as Array<{
+        Mounts: Array<{ Destination: string; RW: boolean }>;
+      }>;
+      const mounts = details[0]?.Mounts ?? [];
+      expect(mounts.find((mount) => mount.Destination === "/var/www/data/settings")?.RW).toBe(false);
+      expect(mounts.find((mount) => mount.Destination === "/var/www/data")?.RW).toBe(true);
     }, SLOW);
 
     test("a second container under the same name is refused", async () => {

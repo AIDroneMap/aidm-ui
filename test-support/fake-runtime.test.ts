@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ContainerSpec, PullProgress } from "../server/runtimes/runtime.ts";
 import { FakeRuntime } from "./fake-runtime.ts";
 
@@ -6,9 +9,23 @@ const IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:" + "a".repeat(64);
 const NAME = "aidm-engine";
 
 const runtimes: FakeRuntime[] = [];
+const folders: string[] = [];
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.remove(NAME);
+  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
+
+/** A spec whose task API reads its token from a config file in a mounted folder, as the real one does. */
+function specWithConfig(content: string | null, patch: Partial<ContainerSpec> = {}): ContainerSpec {
+  const folder = mkdtempSync(join(tmpdir(), "aidm-fake-runtime-"));
+  folders.push(folder);
+  if (content !== null) writeFileSync(join(folder, "task-api.json"), content);
+  return spec({
+    mounts: [{ hostPath: folder, containerPath: "/etc/aidm-ui", readOnly: true }],
+    args: ["--config", "/etc/aidm-ui/task-api.json"],
+    ...patch,
+  });
+}
 
 function fake(options?: ConstructorParameters<typeof FakeRuntime>[0]): FakeRuntime {
   const runtime = new FakeRuntime(options);
@@ -22,7 +39,7 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
     image: IMAGE,
     platform: null,
     publish: { hostAddress: "127.0.0.1", hostPort: 0, containerPort: 3000 },
-    mounts: [{ hostPath: "/home/operator/engine-data", containerPath: "/var/www/data" }],
+    mounts: [{ hostPath: "/home/operator/engine-data", containerPath: "/var/www/data", readOnly: false }],
     memoryBytes: 4 * 1024 ** 3,
     cpus: 2,
     gpu: false,
@@ -106,10 +123,12 @@ test("a container cannot start on a port in use", async () => {
   expect(result).toEqual({ ok: false, error: { code: "runtime.port_in_use", data: { port } } });
 });
 
-test("a started container runs a task API that wants the token from its arguments", async () => {
+test("a started container runs a task API that wants the token from its config file", async () => {
   const runtime = fake();
-  const { containerId } = await started(runtime);
-  expect(containerId).toMatch(/^[0-9a-f]{64}$/);
+  await runtime.pull(IMAGE);
+  const result = await runtime.start(specWithConfig(JSON.stringify({ token: "run-token", port: 3000 })));
+  if (!result.ok) throw new Error(`start failed: ${result.error.code}`);
+  expect(result.value.containerId).toMatch(/^[0-9a-f]{64}$/);
   const engine = runtime.engine(NAME)!;
   expect(engine.token).toBe("run-token");
   const good = await (await fetch(`${engine.address}/info?token=run-token`)).json();
@@ -225,4 +244,20 @@ test("the log of a container that is not there ends at once", async () => {
   const result = await fake().logs("nothing", { follow: true, onLine: (line) => lines.push(line) });
   expect(result).toEqual({ ok: true, value: undefined });
   expect(lines).toEqual([]);
+});
+
+test("a container whose config file is missing or is not JSON is created and has already exited with status 1", async () => {
+  for (const content of [null, "not json", JSON.stringify({ port: 3000 })]) {
+    const runtime = fake();
+    await runtime.pull(IMAGE);
+    expect((await runtime.start(specWithConfig(content))).ok).toBe(true);
+    expect(await runtime.status(NAME)).toEqual({ ok: true, value: { state: "stopped", exitCode: 1, oomKilled: false } });
+    await runtime.remove(NAME);
+  }
+});
+
+test("a container started without a config option uses a token of its own", async () => {
+  const runtime = fake();
+  await started(runtime);
+  expect(runtime.engine(NAME)!.token).toBe("fake-token");
 });

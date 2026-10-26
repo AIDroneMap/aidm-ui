@@ -33,7 +33,11 @@ export interface ContainerSpec {
   /** e.g. "linux/arm64"; null lets the runtime pick (Apple's tool always gets one). */
   platform: string | null;
   publish: { hostAddress: "127.0.0.1"; hostPort: number; containerPort: number };
-  mounts: Array<{ hostPath: string; containerPath: string }>;
+  /**
+   * Folders shared with the container. A read-only mount cannot be changed from
+   * inside, which protects a folder that holds a secret or a setting.
+   */
+  mounts: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>;
   /** Null: no cap. */
   memoryBytes: number | null;
   cpus: number | null;

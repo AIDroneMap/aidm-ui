@@ -328,6 +328,7 @@
   "install.already_running": "The engine is already being installed.",
   "install.already_installed": "An engine is already installed on this computer.",
   "local.not_installed": "The engine is not installed on this computer yet.",
+  "local.engine_config_write_failed": "AIDM UI could not write the engine's settings file in its data folder. Check that the disk is not full and that the folder can be written.",
   "local.memory_cap_not_enforced": "This computer cannot limit the memory the engine uses, so the memory limit has no effect.",
   "local.cpu_cap_not_enforced": "This computer cannot limit the CPU cores the engine uses, so the CPU core limit has no effect.",
   "caps.memory_invalid": "Memory must be between {min} and {max}.",

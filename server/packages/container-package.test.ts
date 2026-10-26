@@ -1,8 +1,18 @@
 import { afterEach, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { InstallProgressView } from "../../shared/api-types.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
+import { WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
-import { CONTAINER_NAME, ContainerPackage, type ContainerVariant } from "./container-package.ts";
+import {
+  CONTAINER_NAME,
+  ContainerPackage,
+  containerConfigFolder,
+  ENGINE_CONFIG_FILE_NAME,
+  type ContainerVariant,
+} from "./container-package.ts";
 
 const GiB = 1024 ** 3;
 const VARIANT: ContainerVariant = {
@@ -15,13 +25,17 @@ const VARIANT: ContainerVariant = {
 const IMAGE = `${VARIANT.image}@${VARIANT.digest}`;
 
 const runtimes: FakeRuntime[] = [];
+const folders: string[] = [];
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.remove(CONTAINER_NAME);
+  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
 
 function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: string | null } = {}) {
   const runtime = options.runtime ?? new FakeRuntime();
   runtimes.push(runtime);
+  const dataFolder = mkdtempSync(join(tmpdir(), "aidm-container-package-"));
+  folders.push(dataFolder);
   const sleeps: number[] = [];
   const asked: string[] = [];
   const pkg = new ContainerPackage({
@@ -32,12 +46,12 @@ function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: st
       return options.free ?? 100 * GiB;
     },
     storagePath: options.storagePath ?? null,
-    dataFolder: "/data",
+    dataFolder,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
   });
-  return { runtime, pkg, sleeps, asked };
+  return { runtime, pkg, sleeps, asked, dataFolder };
 }
 
 const startOptions = {
@@ -90,9 +104,9 @@ test("the free space is measured where the runtime keeps its images", async () =
 });
 
 test("the free space is measured in the data folder when the runtime does not say where it keeps its images", async () => {
-  const { pkg, asked } = setup({ storagePath: null });
+  const { pkg, asked, dataFolder } = setup({ storagePath: null });
   await pkg.preflight();
-  expect(asked).toEqual(["/data"]);
+  expect(asked).toEqual([dataFolder]);
 });
 
 test("exactly the package size plus 20 percent is enough", async () => {
@@ -128,8 +142,8 @@ test("a pull that is aborted is not tried again", async () => {
   expect(runtime.pulls).toHaveLength(1);
 });
 
-test("start publishes on the loopback address, mounts the data folder and passes the arguments after the image", async () => {
-  const { runtime, pkg } = setup();
+test("start publishes on the loopback address, mounts the data folder and the config folder, and names the config file after the image", async () => {
+  const { runtime, pkg, dataFolder } = setup();
   await pkg.install({});
   const started = await pkg.start({ ...startOptions, hostPort: 45123 });
   expect(started).toEqual({ ok: true, value: { address: "http://127.0.0.1:45123" } });
@@ -138,12 +152,70 @@ test("start publishes on the loopback address, mounts the data folder and passes
     name: "aidm-local-engine",
     image: IMAGE,
     publish: { hostAddress: "127.0.0.1", hostPort: 45123, containerPort: 3000 },
-    mounts: [{ hostPath: "/data/engine-data", containerPath: "/var/www/data" }],
+    mounts: [
+      { hostPath: "/data/engine-data", containerPath: "/var/www/data", readOnly: false },
+      { hostPath: containerConfigFolder(dataFolder), containerPath: "/etc/aidm-ui", readOnly: true },
+    ],
     memoryBytes: 4 * GiB,
     cpus: 2,
     gpu: false,
-    args: ["--port", "3000", "--token", "t0ken", "--parallel_queue_processing", "1"],
+    args: ["--config", "/etc/aidm-ui/task-api.json"],
   });
+});
+
+test("the token is in a private config file and not in anything the runtime is given", async () => {
+  const { runtime, pkg, dataFolder } = setup();
+  await pkg.install({});
+  expect((await pkg.start(startOptions)).ok).toBe(true);
+  const folder = containerConfigFolder(dataFolder);
+  const file = join(folder, ENGINE_CONFIG_FILE_NAME);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ token: "t0ken", port: 3000, parallelQueueProcessing: 1 });
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(statSync(folder).mode & 0o777).toBe(0o700);
+  expect(existsSync(`${file}.new`)).toBe(false);
+  expect(JSON.stringify(runtime.starts[0]?.spec)).not.toContain("t0ken");
+  expect(runtime.starts[0]?.argv.join(" ")).not.toContain("t0ken");
+});
+
+test("the engine answers with the token from the config file", async () => {
+  const { runtime, pkg } = setup();
+  await pkg.install({});
+  expect((await pkg.start({ ...startOptions, token: "from-the-file" })).ok).toBe(true);
+  const api = runtime.engine(CONTAINER_NAME);
+  const address = api?.address ?? "";
+  const right = (await (await fetch(`${address}/info?token=from-the-file`)).json()) as { error?: string };
+  const wrong = (await (await fetch(`${address}/info?token=t0ken`)).json()) as { error?: string };
+  expect(right.error).toBeUndefined();
+  expect(wrong.error).toBe(WRONG_TOKEN_MESSAGE);
+});
+
+test("a second start with a new token rewrites the config file", async () => {
+  const { pkg, dataFolder } = setup();
+  await pkg.install({});
+  await pkg.start(startOptions);
+  await pkg.start({ ...startOptions, token: "second-token" });
+  const file = join(containerConfigFolder(dataFolder), ENGINE_CONFIG_FILE_NAME);
+  expect(JSON.parse(readFileSync(file, "utf8")).token).toBe("second-token");
+});
+
+test("start tightens a config folder that already exists with looser rights", async () => {
+  const { pkg, dataFolder } = setup();
+  await pkg.install({});
+  await pkg.start(startOptions);
+  const folder = containerConfigFolder(dataFolder);
+  chmodSync(folder, 0o755);
+  await pkg.start(startOptions);
+  expect(statSync(folder).mode & 0o777).toBe(0o700);
+});
+
+test("a config file that cannot be written is a message code and no container starts", async () => {
+  const { runtime, pkg, dataFolder } = setup();
+  await pkg.install({});
+  // A file where the folder should be makes the write fail on every platform.
+  writeFileSync(join(dataFolder, "engine-config"), "not a folder");
+  const result = await pkg.start(startOptions);
+  expect(result).toEqual({ ok: false, error: { code: "local.engine_config_write_failed", data: {} } });
+  expect(runtime.starts).toHaveLength(0);
 });
 
 test("a container left from an earlier start is removed first, running or not", async () => {
@@ -182,4 +254,15 @@ test("remove takes away the container and the image", async () => {
   expect(runtime.removals).toEqual([CONTAINER_NAME]);
   expect(runtime.removedImages).toEqual([IMAGE]);
   expect(await pkg.status()).toEqual({ ok: true, value: { state: "missing", exitCode: null } });
+});
+
+test("remove deletes the config folder with the token, and removing the container alone leaves it", async () => {
+  const { pkg, dataFolder } = setup();
+  await pkg.install({});
+  await pkg.start(startOptions);
+  const folder = containerConfigFolder(dataFolder);
+  expect((await pkg.removeContainer()).ok).toBe(true);
+  expect(existsSync(folder)).toBe(true);
+  expect((await pkg.remove()).ok).toBe(true);
+  expect(existsSync(folder)).toBe(false);
 });

@@ -11,7 +11,7 @@ import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, freePort, openHarness, type Harness } from "../testing/harness.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
-import { CONTAINER_NAME } from "../packages/container-package.ts";
+import { CONTAINER_NAME, containerConfigFolder, ENGINE_CONFIG_FILE_NAME } from "../packages/container-package.ts";
 
 const GiB = 1024 ** 3;
 const DIGEST_2_5_0 = "sha256:a58c2a633f0f7c1df2a1a441321b1404bad98ece8896ef01ca9b18dfeb2e035e";
@@ -57,6 +57,12 @@ async function installAndWaitReady(h: Harness): Promise<LocalEngineView> {
   expect(response.status).toBe(202);
   await eventually(async () => (await localView(h)).state === "ready");
   return localView(h);
+}
+
+/** The token the engine reads from the config file in the data folder. */
+function configTokenOf(h: Harness): string {
+  const text = readFileSync(join(containerConfigFolder(h.dataFolder), ENGINE_CONFIG_FILE_NAME), "utf8");
+  return (JSON.parse(text) as { token: string }).token;
 }
 
 /** The engine's own token, which no response may carry. */
@@ -197,9 +203,9 @@ test("a pull that fails five times ends in failed with the attempts, and a later
   expect(view.installed?.packageVersion).toBe("2.5.0");
 });
 
-// Criterion: the start command carries the loopback publish, the token, one parallel job, the caps, the bind mount and the fixed name.
+// Criterion: the start command carries the loopback publish, the config file with the token, the caps, the bind mounts and the fixed name.
 
-test("the start command carries the loopback publish, the token, one parallel job, the caps, the bind mount and the name", async () => {
+test("the start command carries the loopback publish, the config file with the token, the caps, the bind mounts and the name", async () => {
   const h = start();
   await installAndWaitReady(h);
   const [started] = podman(h).starts;
@@ -217,14 +223,11 @@ test("the start command carries the loopback publish, the token, one parallel jo
   // Everything after the image name goes to the task API.
   const image = argv.indexOf(IMAGE_2_5_0);
   expect(image).toBeGreaterThan(0);
-  expect(argv.slice(image + 1)).toEqual([
-    "--port",
-    "3000",
-    "--token",
-    tokenOf(h),
-    "--parallel_queue_processing",
-    "1",
-  ]);
+  expect(argv.slice(image + 1)).toEqual(["--config", "/etc/aidm-ui/task-api.json"]);
+  // The command line is readable by every user of the computer, so the token is not on it.
+  expect(argv.join(" ")).not.toContain(tokenOf(h));
+  expect(argv).toContain(`${containerConfigFolder(h.dataFolder)}:/etc/aidm-ui:ro,Z`);
+  expect(configTokenOf(h)).toBe(tokenOf(h));
   expect(argv.some((part) => part.startsWith("--restart"))).toBe(false);
   expect(existsSync(join(h.dataFolder, "engine-data"))).toBe(true);
   expect((await localView(h)).caps).toEqual({
@@ -242,7 +245,10 @@ test("the engine data folder setting moves the bind mount", async () => {
   cleanups.push(() => rmSync(elsewhere, { recursive: true, force: true }));
   h.settings.set("engine.dataFolder", elsewhere);
   await installAndWaitReady(h);
-  expect(podman(h).starts[0]?.spec.mounts).toEqual([{ hostPath: elsewhere, containerPath: "/var/www/data" }]);
+  expect(podman(h).starts[0]?.spec.mounts).toEqual([
+    { hostPath: elsewhere, containerPath: "/var/www/data", readOnly: false },
+    { hostPath: containerConfigFolder(h.dataFolder), containerPath: "/etc/aidm-ui", readOnly: true },
+  ]);
 });
 
 // Criterion: lowering the caps changes the next start command.
@@ -271,7 +277,8 @@ test("lowering the caps changes the next start command, and not the engine that 
   expect(argv[argv.indexOf("--cpus") + 1]).toBe("2");
   expect((await localView(h)).caps.applied).toEqual({ memoryBytes: 4 * GiB, cpus: 2 });
   // The same token and the same engine row after a stop and a start.
-  expect(argv[argv.indexOf("--token") + 1]).toBe(tokenOf(h));
+  expect(argv.join(" ")).not.toContain(tokenOf(h));
+  expect(configTokenOf(h)).toBe(tokenOf(h));
   expect(await engineList(h)).toHaveLength(1);
 });
 
@@ -567,7 +574,9 @@ test("the install makes a token of its own, and the token is in no response and 
   const token = tokenOf(h);
   expect(token).toMatch(/^[0-9a-f]{64}$/);
   const argv = podman(h).starts[0]?.argv ?? [];
-  expect(argv[argv.indexOf("--token") + 1]).toBe(token);
+  expect(argv.join(" ")).not.toContain(token);
+  expect(argv).toContain("--config");
+  expect(configTokenOf(h)).toBe(token);
   const engine = (await engineList(h))[0] as EngineView;
   expect((await new TaskClient({ address: engine.address, token }).info()).ok).toBe(true);
   expect((await new TaskClient({ address: engine.address, token: "0".repeat(64) }).info()).ok).toBe(false);
