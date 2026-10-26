@@ -12,12 +12,16 @@ import {
   type RuntimeDetection,
 } from "./runtime.ts";
 
+/** Needs the NVIDIA Container Toolkit set up for Docker (an "nvidia" runtime). */
+export const GPU_FLAGS = ["--gpus", "all"] as const;
+
 /** The command line that starts the container. Docker adds no SELinux label, so a mount has no option unless it is read-only (":ro"). */
 export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): string[] {
   return sharedRunArgs("docker", spec, {
     selinuxLabel: false,
     memoryCap: detection.memoryCapEnforced !== false,
     cpuCap: detection.cpuCapEnforced !== false,
+    gpuFlags: GPU_FLAGS,
   });
 }
 
@@ -89,5 +93,5 @@ export function dockerRuntime(runner: CommandRunner, log?: (line: string) => voi
     };
   }
 
-  return cliRuntime({ id: "docker", detect, inspectArgv, pullParser: dockerPullParser }, runner, runArgv, log);
+  return cliRuntime({ id: "docker", detect, inspectArgv, pullParser: dockerPullParser, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
 }

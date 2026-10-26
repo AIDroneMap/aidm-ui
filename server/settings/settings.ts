@@ -12,6 +12,8 @@ export interface InstalledPackage {
   runtime: RuntimeId;
   /** What the manifest said about the image at install time. */
   container: Extract<ManifestVariant, { kind: "container" }>;
+  /** Why the engine does not use the graphics card although the computer has one, when it is known. */
+  gpuNote?: ApiError | null;
 }
 
 export interface SettingValues {
@@ -29,6 +31,8 @@ export interface SettingValues {
   /** The caps the operator lowered, used from the next start; null means the most the computer allows. */
   "local.memoryBytes": number | null;
   "local.cpus": number | null;
+  /** True when the operator chose the processor package and no graphics card, whatever the checks say. */
+  "local.forceCpu": boolean;
   /** What the running local engine was started with; null when it is not running. Null memory means no cap. */
   "local.applied": { memoryBytes: number | null; cpus: number | null } | null;
   /** True once the operator has finished the wizard or chosen the interface only. */
@@ -55,6 +59,7 @@ const DEFAULTS: SettingValues = {
   "local.memoryBytes": null,
   "local.cpus": null,
   "local.applied": null,
+  "local.forceCpu": false,
   "wizard.completed": false,
   "updates.check": null,
   "updates.lastCheck": null,

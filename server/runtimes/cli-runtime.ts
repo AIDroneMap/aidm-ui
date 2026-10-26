@@ -7,6 +7,7 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type OneOffSpec,
   type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
@@ -23,6 +24,8 @@ export interface CliRuntimeTool {
   inspectArgv(name: string): string[];
   /** A new parser for each pull, because it keeps count. */
   pullParser(): PullLineParser;
+  /** The flags that hand the NVIDIA graphics card to a container. */
+  gpuFlags: readonly string[];
 }
 
 export const DEFAULT_STOP_TIMEOUT_SECONDS = 30;
@@ -114,6 +117,10 @@ export function cliRuntime(
       return fail("runtime.start_failed", { exitCode: result.exitCode });
     },
 
+    async runOnce(spec, timeoutMs) {
+      return ok(await run(oneOffArgv(binary, spec, tool.gpuFlags), timeoutMs));
+    },
+
     async stop(name, timeoutSeconds = DEFAULT_STOP_TIMEOUT_SECONDS) {
       const result = await run([binary, "stop", "-t", String(timeoutSeconds), name], (timeoutSeconds + 30) * 1000);
       if (result.exitCode === 0 || NO_SUCH_CONTAINER.test(result.stderr)) return ok(undefined);
@@ -191,7 +198,7 @@ function readState(state: Record<string, unknown>, exitCode: number): RuntimeRes
 export function sharedRunArgs(
   binary: string,
   spec: ContainerSpec,
-  options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean },
+  options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean; gpuFlags: readonly string[] },
 ): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
   return [
@@ -211,6 +218,22 @@ export function sharedRunArgs(
     }),
     ...(options.memoryCap && spec.memoryBytes !== null ? ["--memory", `${spec.memoryBytes}b`] : []),
     ...(options.cpuCap && spec.cpus !== null ? ["--cpus", String(spec.cpus)] : []),
+    ...(spec.platform === null ? [] : ["--platform", spec.platform]),
+    ...(spec.gpu ? options.gpuFlags : []),
+    spec.image,
+    ...spec.args,
+  ];
+}
+
+/** `run --rm` of one command. Like a start, it never pulls: a missing image must not become a 5 GB download. */
+export function oneOffArgv(binary: string, spec: OneOffSpec, gpuFlags: readonly string[]): string[] {
+  return [
+    binary,
+    "run",
+    "--rm",
+    "--pull=never",
+    ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
+    ...(spec.gpu ? gpuFlags : []),
     ...(spec.platform === null ? [] : ["--platform", spec.platform]),
     spec.image,
     ...spec.args,

@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
-import { runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
+import type { CommandResult } from "../server/process/command-runner.ts";
+import { oneOffArgv } from "../server/runtimes/cli-runtime.ts";
+import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
+import { GPU_FLAGS as PODMAN_GPU_FLAGS, runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
 import {
   fail,
   ok,
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type OneOffSpec,
   type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
@@ -74,12 +77,19 @@ export class FakeRuntime implements ContainerRuntime {
   readonly images = new Set<string>();
   readonly pulls: string[] = [];
   readonly starts: Array<{ spec: ContainerSpec; argv: string[] }> = [];
+  /** Every one-off run, with the command line the real adapter would use. */
+  readonly oneOffs: Array<{ spec: OneOffSpec; argv: string[] }> = [];
   readonly stops: string[] = [];
   readonly removals: string[] = [];
   readonly removedImages: string[] = [];
 
   private readonly pullOutput: PullProgress[];
   private failingPulls = 0;
+  private oneOffAnswer: RuntimeResult<CommandResult> = ok({
+    exitCode: 0,
+    stdout: recordedText("nvidia", "smi-l"),
+    stderr: "",
+  });
   private readonly containers = new Map<string, FakeContainer>();
   private nextContainer = 1;
 
@@ -125,6 +135,19 @@ export class FakeRuntime implements ContainerRuntime {
     }
     this.images.add(image);
     return ok(undefined);
+  }
+
+  /** What the next one-off runs answer, until it is set again. Default: the recorded `nvidia-smi -L`, exit 0. */
+  answerOneOffs(answer: RuntimeResult<CommandResult>): void {
+    this.oneOffAnswer = answer;
+  }
+
+  async runOnce(spec: OneOffSpec): Promise<RuntimeResult<CommandResult>> {
+    const flags = this.id === "docker" ? DOCKER_GPU_FLAGS : PODMAN_GPU_FLAGS;
+    this.oneOffs.push({ spec, argv: oneOffArgv(this.id, spec, flags) });
+    // Like the real tools, it never pulls.
+    if (!this.images.has(spec.image)) return ok({ exitCode: 125, stdout: "", stderr: "Error: image not known" });
+    return this.oneOffAnswer;
   }
 
   async start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>> {

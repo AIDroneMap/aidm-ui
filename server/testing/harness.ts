@@ -32,6 +32,8 @@ import { FakePrivilegedRunner, FakeSystemFiles } from "../../test-support/fake-p
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { ScriptedRunner, recordedText } from "../../test-support/scripted-runner.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
+import { ScriptedRunner } from "../../test-support/scripted-runner.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
 
 const GiB = 1024 ** 3;
 
@@ -94,6 +96,8 @@ export function openHarness(
     freeBytes?: FreeBytes;
     /** The fake container runtimes by id; default: one Podman that works. */
     runtimes?: Partial<Record<RuntimeId, FakeRuntime>>;
+    /** Answers the NVIDIA driver and toolkit commands of the graphics card checks; default: none is installed. */
+    gpuRunner?: CommandRunner;
     /** The computer the local engine is sized for; default: Linux on x64 with 32 GiB and 8 cores. */
     localMachine?: LocalEngineDeps["machine"];
     /** The port the local engine is published on; a test passes one that repeats to reuse a port. */
@@ -174,6 +178,7 @@ export function openHarness(
     manifests,
     runtimes: (id) => runtimes[id] ?? null,
     detectRuntimes: () => Promise.all(Object.values(runtimes).map((runtime) => runtime.detect())),
+    runner: options.gpuRunner ?? new ScriptedRunner([]),
     machine: options.localMachine ?? { platform: "linux", arch: "x64", totalMemory: 32 * GiB, cpuCount: 8 },
     dataFolder,
     // Not the disk of the machine that runs the tests.

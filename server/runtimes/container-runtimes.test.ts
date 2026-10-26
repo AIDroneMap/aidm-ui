@@ -158,6 +158,54 @@ describe("the command line that starts the container", () => {
   }
 });
 
+const GPU_FLAGS = { podman: ["--device", "nvidia.com/gpu=all"], docker: ["--gpus", "all"] } as const;
+
+describe("the graphics card flag", () => {
+  for (const tool of tools) {
+    test(`${tool.id} passes the graphics card through when the spec asks, just before the image`, () => {
+      const argv = tool.runArgv(spec({ gpu: true }), detection(tool.id));
+      const at = argv.indexOf(IMAGE);
+      expect(argv.slice(at - 2, at)).toEqual([...GPU_FLAGS[tool.id]]);
+    });
+
+    test(`${tool.id} passes no graphics card flag for the processor package`, () => {
+      const argv = tool.runArgv(spec({ gpu: false }), detection(tool.id));
+      expect(argv).not.toContain("--gpus");
+      expect(argv).not.toContain("--device");
+    });
+
+    test(`${tool.id} runs one command with the entry point replaced, the card passed through, and removes the container`, async () => {
+      const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
+      const argv = [
+        tool.id, "run", "--rm", "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+      ];
+      const runner = new ScriptedRunner([{ argv, result: recorded("nvidia", "smi-l") }]);
+      const result = await tool.make(runner).runOnce(oneOff, 120_000);
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: recordedText("nvidia", "smi-l"), stderr: "" } });
+      expect(runner.calls).toEqual([argv]);
+    });
+
+    test(`${tool.id} hands back the exit code and the message of a one-off run that failed`, async () => {
+      const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
+      const argv = [
+        tool.id, "run", "--rm", "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+      ];
+      const runner = new ScriptedRunner([{ argv, result: recorded("nvidia", "smi-l-no-driver") }]);
+      const result = await tool.make(runner).runOnce(oneOff, 120_000);
+      expect(result).toEqual({
+        ok: true,
+        value: { exitCode: 9, stdout: "", stderr: expect.stringContaining("couldn't communicate with the NVIDIA driver") },
+      });
+    });
+
+    test(`${tool.id} leaves the card flag out of a one-off run for the processor package`, async () => {
+      const runner = new ScriptedRunner([]);
+      await tool.make(runner).runOnce(spec({ gpu: false, args: ["true"] }), 1000);
+      expect(runner.calls[0]).toEqual([tool.id, "run", "--rm", "--pull=never", IMAGE, "true"]);
+    });
+  }
+});
+
 for (const tool of tools) {
   describe(`${tool.id} through recorded outputs`, () => {
     const binary = tool.id;

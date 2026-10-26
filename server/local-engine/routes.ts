@@ -1,5 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
-import { RUNTIME_IDS, type CapsRequest, type RuntimeChoiceRequest, type RuntimeId } from "../../shared/api-types.ts";
+import { RUNTIME_IDS, type CapsRequest, type ForceCpuRequest, type RuntimeChoiceRequest, type RuntimeId } from "../../shared/api-types.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
 import { LOG_MEMORY_LINES } from "./engine-log.ts";
 
@@ -108,6 +108,17 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
         if (typeof memoryBytes !== "number" || typeof cpus !== "number") return errorResponse(400, "api.invalid_body");
         const result = localEngine.setCaps({ memoryBytes, cpus });
         if (!result.ok) return errorResponse(400, result.error.code, result.error.data);
+        return Response.json(localEngine.view());
+      },
+    },
+
+    "/api/local-engine/force-cpu": {
+      PUT: async (req) => {
+        const parsed = await readJson(req);
+        if (!parsed.ok) return parsed.response;
+        const { forceCpu } = parsed.body as Partial<Record<keyof ForceCpuRequest, unknown>>;
+        if (typeof forceCpu !== "boolean") return errorResponse(400, "api.invalid_body");
+        localEngine.setForceCpu(forceCpu);
         return Response.json(localEngine.view());
       },
     },

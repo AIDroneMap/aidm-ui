@@ -2,6 +2,7 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { EnginePackageOffer, PackagesView, RefreshResult, VariantId } from "../../shared/api-types.ts";
 import { base64ToBytes, bytesToBase64 } from "../../shared/base64.ts";
 import { compareVersions, isReadableVersion } from "../engines/versions.ts";
+import { describeGpu, mayUseGpuPackage, type GpuPrecheck } from "../machine/gpu.ts";
 import type { Settings } from "../settings/settings.ts";
 import { verifyBuiltinManifest } from "./builtin.ts";
 import { ACCEPTED_KEYS, type AcceptedKey } from "./keys.ts";
@@ -77,12 +78,26 @@ async function readLimited(response: Response, step: string): Promise<Uint8Array
   return bytes;
 }
 
-function variantFor(manifest: Manifest, facts: { platform: string; arch: string }): { id: VariantId; variant: ManifestVariant } | null {
+/** What decides the package: the computer, and what is known about its graphics card before any download. */
+export interface OfferFacts {
+  platform: string;
+  arch: string;
+  /** Checks a and b. Without it the processor package is chosen and the graphics card is not checked. */
+  gpu?: GpuPrecheck;
+  /** The operator chose the processor only. */
+  forceCpu?: boolean;
+}
+
+function variantFor(manifest: Manifest, facts: OfferFacts): { id: VariantId; variant: ManifestVariant } | null {
   const pick = (id: VariantId) => {
     const variant = manifest.variants[id];
     return variant === undefined ? null : { id, variant };
   };
-  if (facts.platform === "linux" && facts.arch === "x64") return pick("linux-amd64-cpu");
+  if (facts.platform === "linux" && facts.arch === "x64") {
+    // Check c, inside the pulled image, comes after this choice and can still turn it back to the processor package.
+    const graphics = mayUseGpuPackage(facts.gpu, facts.forceCpu === true) ? pick("linux-amd64-gpu") : null;
+    return graphics ?? pick("linux-amd64-cpu");
+  }
   if (facts.platform === "linux" && facts.arch === "arm64") return pick("linux-arm64-cpu");
   if (facts.platform === "darwin" && facts.arch === "arm64") {
     // A native package when the release has one, else the Linux arm64 image through the container tool.
@@ -260,19 +275,23 @@ export class ManifestService {
    * the newest manifest this interface can run. When a newer one is waiting
    * for a newer interface, the offer stays and the reason says so.
    */
-  async offer(facts: { platform: string; arch: string }): Promise<PackagesView> {
+  async offer(facts: OfferFacts): Promise<PackagesView> {
     return (await this.offerWithVariant(facts)).view;
   }
 
   /** The offer, and the manifest's own entry for it, which holds the image and its digest. */
-  async offerWithVariant(facts: { platform: string; arch: string }): Promise<{ view: PackagesView; variant: ManifestVariant | null }> {
+  async offerWithVariant(facts: OfferFacts): Promise<{ view: PackagesView; variant: ManifestVariant | null }> {
+    const noGpu = describeGpu(undefined, { forceCpu: false, manifestHasGpuPackage: false });
     const base = {
       updateCheck: this.deps.settings.get("updates.check"),
       lastCheck: this.deps.settings.get("updates.lastCheck"),
     };
     // The Windows local engine has no spec yet, so whatever a manifest holds, nothing is offered.
     if (facts.platform === "win32") {
-      return { view: { ...base, offer: null, reason: { code: "machine.windows_not_yet", data: {} } }, variant: null };
+      return {
+        view: { ...base, offer: null, gpu: noGpu, reason: { code: "machine.windows_not_yet", data: {} } },
+        variant: null,
+      };
     }
 
     const candidates = await this.candidates();
@@ -286,7 +305,7 @@ export class ManifestService {
       usable === newest
         ? null
         : { code: "manifest.update_interface", data: { minimum: newest.manifest.minimumUiVersion, running } };
-    if (usable === undefined) return { view: { ...base, offer: null, reason: waiting }, variant: null };
+    if (usable === undefined) return { view: { ...base, offer: null, gpu: noGpu, reason: waiting }, variant: null };
 
     const { manifest, source, tag } = usable;
     const chosen = variantFor(manifest, facts);
@@ -295,6 +314,7 @@ export class ManifestService {
         view: {
           ...base,
           offer: null,
+          gpu: noGpu,
           reason: { code: "manifest.no_variant", data: { platform: facts.platform, arch: facts.arch } },
         },
         variant: null,
@@ -309,6 +329,10 @@ export class ManifestService {
       source,
       tag,
     };
-    return { view: { ...base, offer, reason: waiting }, variant: chosen.variant };
+    const gpu = describeGpu(facts.gpu, {
+      forceCpu: facts.forceCpu === true,
+      manifestHasGpuPackage: manifest.variants["linux-amd64-gpu"] !== undefined,
+    });
+    return { view: { ...base, offer, gpu, reason: waiting }, variant: chosen.variant };
   }
 }

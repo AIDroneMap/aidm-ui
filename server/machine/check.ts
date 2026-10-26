@@ -5,6 +5,7 @@ import { preferredRuntime } from "../runtimes/registry.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
 import { missingCpuFeatures } from "./cpu.ts";
 import type { MachineFacts } from "./facts.ts";
+import { gpuApplies } from "./gpu.ts";
 import { RAM_REFUSE_BELOW, RAM_WARN_BELOW, RUN_FREE_DISK } from "./thresholds.ts";
 
 /** The first macOS that Apple's container tool runs on. */
@@ -64,9 +65,9 @@ function diskLine(facts: MachineFacts): CheckLine {
   return line("disk", "pass", "machine.disk_ok", { free: facts.freeDisk });
 }
 
-/** The passthrough checks come with the GPU ticket. */
+/** Only the driver is looked at here. Whether a container can use the card is decided when the engine is installed. */
 function gpuLine(facts: MachineFacts): CheckLine | null {
-  if (facts.platform !== "linux") return null;
+  if (!gpuApplies(facts)) return null;
   if (facts.nvidia.driverAnswers) return line("gpu", "pass", "machine.gpu_nvidia", { count: facts.nvidia.gpus.length });
   return line("gpu", "pass", "machine.gpu_none");
 }

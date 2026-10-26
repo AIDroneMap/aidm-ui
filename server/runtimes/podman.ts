@@ -11,6 +11,10 @@ import {
   type RuntimeDetection,
 } from "./runtime.ts";
 
+/** A CDI device name, which needs the NVIDIA Container Toolkit's device list (`nvidia-ctk cdi generate`). */
+export const GPU_DEVICE = "nvidia.com/gpu=all";
+export const GPU_FLAGS = ["--device", GPU_DEVICE] as const;
+
 /**
  * The command line that starts the container. The "Z" mount option labels the
  * mounted folder for SELinux, which Podman does and Docker does not, so a
@@ -22,6 +26,7 @@ export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): strin
     selinuxLabel: true,
     memoryCap: detection.memoryCapEnforced !== false,
     cpuCap: detection.cpuCapEnforced !== false,
+    gpuFlags: GPU_FLAGS,
   });
 }
 
@@ -83,5 +88,5 @@ export function podmanRuntime(runner: CommandRunner, log?: (line: string) => voi
     };
   }
 
-  return cliRuntime({ id: "podman", detect, inspectArgv, pullParser: podmanPullParser }, runner, runArgv, log);
+  return cliRuntime({ id: "podman", detect, inspectArgv, pullParser: podmanPullParser, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
 }

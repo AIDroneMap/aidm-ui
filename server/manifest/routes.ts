@@ -5,7 +5,7 @@ import { readJson, type RouteContext, type RouteTable } from "../http/route-tabl
 export function manifestRoutes(ctx: RouteContext): RouteTable {
   const view = async () => {
     const { platform, arch } = await ctx.machine.gather();
-    return ctx.manifests.offer({ platform, arch });
+    return ctx.localEngine.packages({ platform, arch });
   };
 
   return {

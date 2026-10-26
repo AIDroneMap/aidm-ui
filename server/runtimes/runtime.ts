@@ -1,4 +1,5 @@
 import type { ApiError } from "../../shared/api-error.ts";
+import type { CommandResult } from "../process/command-runner.ts";
 
 import type { RuntimeId } from "../../shared/api-types.ts";
 
@@ -41,11 +42,17 @@ export interface ContainerSpec {
   /** Null: no cap. */
   memoryBytes: number | null;
   cpus: number | null;
-  /** Pass the GPU through (a later ticket fills the flags). */
+  /** Pass the graphics card through: Docker `--gpus all`, Podman `--device nvidia.com/gpu=all`. */
   gpu: boolean;
   /** Arguments after the image name. */
   args: string[];
 }
+
+/** A container that runs one command and is removed: the name, ports and mounts are not used. */
+export type OneOffSpec = ContainerSpec & {
+  /** Replaces the image's own entry point. */
+  entrypoint?: string;
+};
 
 export type ContainerState = "running" | "stopped" | "missing";
 
@@ -71,6 +78,12 @@ export interface ContainerRuntime extends RuntimeProbe {
   ): Promise<RuntimeResult<void>>;
   /** Detached. */
   start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>>;
+  /**
+   * Runs one command in a new container that is removed afterwards, and waits
+   * for it. Never pulls. The result is ok whatever the command's exit code
+   * was; it fails only when the runtime cannot run containers like this.
+   */
+  runOnce(spec: OneOffSpec, timeoutMs: number): Promise<RuntimeResult<CommandResult>>;
   stop(name: string, timeoutSeconds?: number): Promise<RuntimeResult<void>>;
   status(name: string): Promise<RuntimeResult<ContainerStatus>>;
   /** Resolves when the log stream ends (container gone, follow false, or signal). */

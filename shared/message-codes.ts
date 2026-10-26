@@ -104,6 +104,9 @@ export const MESSAGE_CODES = [
   "setup.unsupported_distribution",
   "setup.failed",
   "setup.runtime_not_working",
+  "gpu.no_passthrough",
+  "gpu.in_image_failed",
+  "gpu.forced_cpu",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

@@ -4,8 +4,9 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
 import type { FreeBytes } from "../machine/disk.ts";
+import { IN_IMAGE_CHECK_TIMEOUT_MS, NVIDIA_TOOLKIT_GUIDE_URL, parseGpuListing } from "../machine/gpu.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
-import type { ContainerRuntime, ContainerSpec } from "../runtimes/runtime.ts";
+import type { ContainerRuntime, ContainerSpec, OneOffSpec } from "../runtimes/runtime.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
 
 /** The fixed name, so the manager finds the container again after a restart. */
@@ -100,6 +101,31 @@ export class ContainerPackage implements EnginePackage {
     return fail("install.pull_failed", { attempts, cause });
   }
 
+  /**
+   * Check c: the driver's listing, run once inside the pulled image with the
+   * graphics card passed through. It never pulls, so it is for after install().
+   */
+  async confirmGpu(): Promise<PackageResult<void>> {
+    const spec: OneOffSpec = {
+      name: `${CONTAINER_NAME}-gpu-check`,
+      image: this.image,
+      platform: null,
+      publish: { hostAddress: "127.0.0.1", hostPort: 0, containerPort: ENGINE_PORT },
+      mounts: [],
+      memoryBytes: null,
+      cpus: null,
+      gpu: true,
+      entrypoint: "nvidia-smi",
+      args: ["-L"],
+    };
+    const ran = await this.deps.runtime.runOnce(spec, IN_IMAGE_CHECK_TIMEOUT_MS);
+    const data = { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL };
+    if (!ran.ok) return fail("gpu.in_image_failed", data);
+    const { exitCode, stdout } = ran.value;
+    if (exitCode === 0 && parseGpuListing(stdout).length > 0) return ok(undefined);
+    return fail("gpu.in_image_failed", { ...data, exitCode });
+  }
+
   async start(options: PackageStartOptions): Promise<PackageResult<{ address: string }>> {
     const { runtime } = this.deps;
     // A container with our name from an earlier start must go, or the name is taken.
@@ -159,6 +185,11 @@ export class ContainerPackage implements EnginePackage {
 
   removeContainer(): Promise<PackageResult<void>> {
     return this.deps.runtime.remove(CONTAINER_NAME);
+  }
+
+  /** Only the image, for one that turned out not to be the right one. */
+  removeImage(): Promise<PackageResult<void>> {
+    return this.deps.runtime.removeImage(this.image);
   }
 
   async remove(): Promise<PackageResult<void>> {

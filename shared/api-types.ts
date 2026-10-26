@@ -264,8 +264,22 @@ export interface EnginePackageOffer {
 
 export type UpdateCheck = "daily" | "never";
 
+/** Whether the engine will use the NVIDIA graphics card, and the one reason when it will not. */
+export interface GpuView {
+  /**
+   * "used": the graphics card package is offered (a test run after the download still confirms it).
+   * "not_used": the checks ran and the processor package is offered; the reason is null when there is no NVIDIA card.
+   * "not_checked": the checks do not apply here (not Linux on an Intel or AMD processor) or there is no container tool yet.
+   */
+  state: "used" | "not_used" | "not_checked";
+  reason: ApiError | null;
+  /** A page the operator may open to fix the reason. Nothing is fetched from it. Null when there is none. */
+  guideUrl: string | null;
+}
+
 export interface PackagesView {
   offer: EnginePackageOffer | null;
+  gpu: GpuView;
   /** Why there is no offer. */
   reason: ApiError | null;
   /** Null until the operator has answered the question in the wizard. */
@@ -332,8 +346,10 @@ export interface LocalEngineView {
     /** The operator's own choice, or null for automatic. */
     preferred: RuntimeId | null;
   };
-  /** For example local.memory_cap_not_enforced. */
+  /** For example local.memory_cap_not_enforced, or why the installed engine does not use the graphics card. */
   warnings: ApiError[];
+  /** True when the operator chose to use the processor only. */
+  forceCpu: boolean;
   problem: ApiError | null;
 }
 
@@ -358,4 +374,9 @@ export interface RuntimeSetupView {
   phase: SetupPhase;
   /** Why it failed, when it did. */
   problem: ApiError | null;
+}
+
+/** PUT /api/local-engine/force-cpu */
+export interface ForceCpuRequest {
+  forceCpu: boolean;
 }
