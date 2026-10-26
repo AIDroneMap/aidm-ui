@@ -3,9 +3,15 @@
 //
 //   bun scripts/build.ts                  all four targets
 //   bun scripts/build.ts linux-x64        only the named targets
+//   bun scripts/build.ts --release        refuses to build while a test key is accepted
+//   bun scripts/build.ts --release --check-keys-only
+//                                         only the key check, exit 1 when it fails
 import { $ } from "bun";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { verifyBuiltinManifest } from "../server/manifest/builtin.ts";
+import { ACCEPTED_KEYS } from "../server/manifest/keys.ts";
+import { releaseKeyProblems } from "../server/manifest/verify.ts";
 
 const root = join(import.meta.dir, "..");
 const webDist = join(root, "web", "dist");
@@ -67,7 +73,29 @@ async function writeEntry(): Promise<void> {
   await writeFile(join(buildDir, "entry.ts"), source);
 }
 
-const wanted = process.argv.slice(2);
+const args = process.argv.slice(2);
+const release = args.includes("--release");
+const checkKeysOnly = args.includes("--check-keys-only");
+const wanted = args.filter((arg) => !arg.startsWith("--"));
+const unknownFlags = args.filter((arg) => arg.startsWith("--") && arg !== "--release" && arg !== "--check-keys-only");
+if (unknownFlags.length > 0) {
+  console.error(`Unknown flag: ${unknownFlags.join(", ")}. Known: --release, --check-keys-only`);
+  process.exit(2);
+}
+
+// A release build must not carry the development test key. This runs before anything is built.
+if (release) {
+  const builtin = await verifyBuiltinManifest();
+  const problems = releaseKeyProblems(ACCEPTED_KEYS, builtin.ok ? builtin.keyId : null);
+  if (problems.length > 0) {
+    console.error("A release build cannot go ahead:");
+    for (const problem of problems) console.error(`- ${problem}`);
+    process.exit(1);
+  }
+  console.log("Release key check passed.");
+}
+if (checkKeysOnly) process.exit(0);
+
 const unknown = wanted.filter((name) => !targets.some((target) => target.name === name));
 if (unknown.length > 0) {
   console.error(`Unknown target: ${unknown.join(", ")}. Known: ${targets.map((t) => t.name).join(", ")}`);
