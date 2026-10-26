@@ -18,6 +18,7 @@ import { openDatabase } from "../db/database.ts";
 import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { EventStreams } from "../http/event-streams.ts";
+import { systemMachine } from "../machine/system.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts";
 import { SampleJob } from "../sample/sample-job.ts";
@@ -127,6 +128,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       streams: new EventStreams(sessions),
       tracker,
       sample,
+      machine: systemMachine(dataFolder),
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
       rebind: async (hostname) => {
