@@ -15,6 +15,8 @@ import { platformOpener, type OpenBrowser } from "./open-browser.ts";
 import { currentAuth } from "../auth/current.ts";
 import { Sessions } from "../auth/sessions.ts";
 import { openDatabase } from "../db/database.ts";
+import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monitor.ts";
+import { EngineStore } from "../engines/engine-store.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
@@ -88,6 +90,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   try {
     const settings = new Settings(db);
     const sessions = new Sessions();
+    const engineStore = new EngineStore(db);
+    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: options.log });
     let listener: Listener | undefined;
 
     const routes = createRoutes({
@@ -95,6 +99,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       assets: options.assets,
       settings,
       sessions,
+      engines,
+      engineStore,
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
       rebind: async (hostname) => {
@@ -123,6 +129,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       const url = urlFor(port);
       options.log(`aidm-ui is running at ${url}`);
       databaseBelongsToServer = true;
+      engines.start();
       await options.openBrowser(url);
       const result: StartResult = {
         kind: "started",
@@ -130,6 +137,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         port,
         dataFolder,
         async stop() {
+          await engines.stop();
           await running.stop();
           db.close();
           removeLock(dataFolder, process.pid);

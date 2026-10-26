@@ -3,6 +3,8 @@ import os from "node:os";
 import { currentAuth } from "../auth/current.ts";
 import { Sessions } from "../auth/sessions.ts";
 import { applyMigrations, migrations } from "../db/migrations.ts";
+import { EngineMonitor } from "../engines/engine-monitor.ts";
+import { EngineStore } from "../engines/engine-store.ts";
 import { listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
@@ -18,6 +20,8 @@ export interface Harness {
   ctx: RouteContext;
   settings: Settings;
   sessions: Sessions;
+  engines: EngineMonitor;
+  engineStore: EngineStore;
   /** Milliseconds the throttle sees as now; move it to move time. */
   clock: { now: number };
   /** Every line the server wrote to its log. */
@@ -37,6 +41,8 @@ export function openHarness(
     assets?: AssetMap;
     /** What a rebind does after it is recorded; throw to make the listener fail to move. */
     rebind?: (hostname: string) => Promise<void>;
+    /** How often the engines are polled; short, so tests do not wait. */
+    enginePollMs?: number;
   } = {},
 ): Harness {
   const db = new Database(":memory:", { strict: true });
@@ -47,12 +53,17 @@ export function openHarness(
   const logs: string[] = [];
   const rebinds: string[] = [];
   let listener: Listener | undefined;
+  const log = (line: string) => logs.push(line);
+  const engineStore = new EngineStore(db);
+  const engines = new EngineMonitor({ store: engineStore, intervalMs: options.enginePollMs ?? 100, log });
 
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     assets: options.assets ?? new Map(),
     settings,
     sessions,
+    engines,
+    engineStore,
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {
@@ -60,7 +71,7 @@ export function openHarness(
       await options.rebind?.(hostname);
     },
     now: () => clock.now,
-    log: (line) => logs.push(line),
+    log,
   };
   listener = listen({
     hostname: options.hostname ?? LOOPBACK,
@@ -68,6 +79,7 @@ export function openHarness(
     routes: createRoutes(ctx),
     fetch: fallbackFetch(),
   });
+  engines.start();
 
   return {
     base: `http://${LOOPBACK}:${listener.port}`,
@@ -75,10 +87,13 @@ export function openHarness(
     ctx,
     settings,
     sessions,
+    engines,
+    engineStore,
     clock,
     logs,
     rebinds,
     async stop() {
+      await engines.stop();
       await listener?.stop();
       db.close();
     },

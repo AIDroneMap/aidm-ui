@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import settingsSql from "./migrations/0001-settings.sql" with { type: "text" };
+import enginesSql from "./migrations/0002-engines.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -8,8 +9,11 @@ export interface Migration {
 }
 
 // Imported as text so that the compiled executable carries them. Later tickets
-// add the engines, projects and runs tables as 0002, 0003 and so on.
-export const migrations: Migration[] = [{ version: 1, name: "settings", sql: settingsSql }];
+// add the projects and runs tables as 0003 and so on.
+export const migrations: Migration[] = [
+  { version: 1, name: "settings", sql: settingsSql },
+  { version: 2, name: "engines", sql: enginesSql },
+];
 
 function storedVersion(db: Database): number {
   return (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
