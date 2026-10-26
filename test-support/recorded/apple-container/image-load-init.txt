@@ -1,0 +1,1 @@
+ghcr.io/apple/containerization/vminit:0.53.0

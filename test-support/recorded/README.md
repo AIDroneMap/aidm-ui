@@ -97,6 +97,20 @@ modern x86-64 CPU and an Armv8.2 CPU, two processors each, in the shape the
 kernel prints. They are not copies of one machine. The other two are edits of
 them (see the table above).
 
+## From the second Mac test
+
+The second install on a real Mac (27 October 2026, Apple's container tool 1.6.1) showed how the tool answers for
+its startup files, which it treats as an infrastructure image and hides from `image inspect`, `image list` and
+`image delete` (`Utility.isInfraImage` in `ImageInspect.swift` at 1.6.1). The recording file itself was not at hand
+when these were written, so they hold the answers as reported from that run; the error text follows the format of
+the tool's other errors here.
+
+| File | Command | What it shows |
+| --- | --- | --- |
+| `apple-container/image-inspect-init-missing.*` | `container image inspect ghcr.io/apple/containerization/vminit:0.53.0` before the load | exit 1, `image not found` |
+| `apple-container/image-load-init.txt` | `container image load` of the startup files | exit 0, the reference it loaded on stdout |
+| `apple-container/image-inspect-init-present.txt` | the same inspect after the load | exit 0, an empty JSON list (`[`, a blank line, `]`) |
+
 ## Reconstructed from source
 
 No Mac was available. These are rebuilt from the output formats in the Apple

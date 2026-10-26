@@ -225,14 +225,14 @@ function mac(
     {
       argv: INSPECT_INIT,
       result: () =>
-        startupFilesThere || startupFilesLoaded
-          ? { exitCode: 0, stdout: JSON.stringify([{ variants: [{ digest: initPin.digest, size: initPin.size }] }]), stderr: "" }
-          : NOT_FOUND,
+        // The tool hides its startup files from inspect: present is exit 0 with an empty list (recorded on a real Mac).
+        startupFilesThere || startupFilesLoaded ? recorded("apple-container", "image-inspect-init-present") : recorded("apple-container", "image-inspect-init-missing"),
     },
     {
       argv: LOAD,
       result: async (called) => {
-        const result = options.load === undefined ? OK : typeof options.load === "function" ? await options.load(called) : options.load;
+        // A load prints the reference it loaded (recorded on a real Mac).
+        const result = options.load === undefined ? recorded("apple-container", "image-load-init") : typeof options.load === "function" ? await options.load(called) : options.load;
         if (result.exitCode === 0) startupFilesLoaded = true;
         return result;
       },
@@ -559,12 +559,12 @@ test("a kernel the tool refuses ends in mac.kernel_failed at the kernel step, ke
   expect(existsSync(archive)).toBe(false);
 });
 
-test("startup files the tool cannot load end in mac.init_failed at the init step", async () => {
+test("startup files the tool cannot load end in mac.init_load_failed at the init step", async () => {
   const { h } = mac("stopped", { init: false, load: { exitCode: 1, stdout: "", stderr: "Error: internalError\n" } });
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "failed");
   const view = await localView(h);
-  expect(view.problem).toEqual({ code: "mac.init_failed", data: { cause: { code: "runtime.load_failed", data: { exitCode: 1 } } } });
+  expect(view.problem).toEqual({ code: "mac.init_load_failed", data: { exitCode: 1 } });
   expect(view.install).toMatchObject({ phase: "failed", step: "init" });
 });
 
