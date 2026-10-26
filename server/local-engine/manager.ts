@@ -206,7 +206,7 @@ export interface LocalEngineDeps {
   /** How long a new version may take to answer before an update or a rollback is undone; default 120 seconds. */
   updateReadyTimeoutMs?: number;
   /** Runs tar to unpack a native package, and systemctl and systemd-run to look for systemd. Default: the real programs. */
-  runner?: CommandRunner;
+  nativeRunner?: CommandRunner;
   /** For native packages; a test swaps the way the program is started and the way the archive is fetched. */
   native?: NativeOptions;
 }
@@ -300,7 +300,7 @@ export class LocalEngineManager {
 
   constructor(private readonly deps: LocalEngineDeps) {
     this.settings = deps.settings;
-    this.runner = deps.runner ?? systemRunner();
+    this.runner = deps.nativeRunner ?? systemRunner();
     this.store = deps.engineStore;
     this.monitor = deps.monitor;
     this.engineLog = new EngineLog({ dataFolder: deps.dataFolder, token: () => this.token, log: deps.log, ...deps.logOptions });
@@ -1255,15 +1255,17 @@ export class LocalEngineManager {
 
   /** What the operator is told about the graphics card, from the stored state each time the picture is made. */
   private gpuWarnings(installed: InstalledPackage | null): ApiError[] {
-    if (installed?.container.gpu) {
+    if (installed !== null && kindOf(installed).gpu) {
       return this.settings.get("local.forceCpu") ? [{ code: "gpu.forced_cpu", data: {} }] : [];
     }
+    // The notes about the graphics card come from the container install, the only one that checks it.
+    const container = installed !== null && !isNativePackage(installed) ? installed : null;
     const notes: ApiError[] = [];
     if (this.settings.get("local.gpuCheckFailed") !== null && (installed !== null || this.installing)) {
       notes.push(inImageFailed());
     }
-    if (installed?.gpuNote) notes.push(installed.gpuNote);
-    const left = installed === null ? this.packageLeft : (installed.gpuPackageLeft ?? null);
+    if (container?.gpuNote) notes.push(container.gpuNote);
+    const left = installed === null ? this.packageLeft : (container?.gpuPackageLeft ?? null);
     if (left !== null) notes.push(left);
     return notes;
   }
@@ -1271,11 +1273,12 @@ export class LocalEngineManager {
   /** The note that the container tool cannot hand over the card goes once it can, since the operator may have set it up since. */
   private async recheckGpuNote(): Promise<void> {
     const installed = this.settings.get("local.package");
-    if (installed?.gpuNote?.code !== "gpu.no_passthrough" || this.settings.get("local.forceCpu")) return;
+    if (installed === null || isNativePackage(installed)) return;
+    if (installed.gpuNote?.code !== "gpu.no_passthrough" || this.settings.get("local.forceCpu")) return;
     const precheck = await this.gpuPrecheck(this.deps.machine);
     if (precheck.state === "no_passthrough") return;
     const latest = this.settings.get("local.package");
-    if (latest === null) return;
+    if (latest === null || isNativePackage(latest)) return;
     this.settings.set("local.package", { ...latest, gpuNote: null });
     this.publish();
   }
@@ -1704,6 +1707,7 @@ export class LocalEngineManager {
         pkg = new NativePackage({
           ...this.deps.native,
           variant: installed.native,
+          variantId: installed.variant,
           version: installed.packageVersion,
           dataFolder: this.deps.dataFolder,
           freeBytes: this.deps.freeBytes,

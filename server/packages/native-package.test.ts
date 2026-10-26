@@ -54,6 +54,7 @@ function packageWith(overrides: Partial<NativePackageDeps> = {}) {
   const children = new Map<number, ChildState>();
   const pkg = new NativePackage({
     variant: { kind: "native", url: "https://example.test/a.tar.gz", size: 1000, sha256: "ab".repeat(32), gpu: false },
+    variantId: "linux-amd64-cpu",
     version: "2.6.0",
     dataFolder,
     freeBytes: () => 100 * GiB,

@@ -22,7 +22,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
-import type { InstallProgressView } from "../../shared/api-types.ts";
+import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
 import { downloadVerified } from "../downloads/downloader.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
@@ -121,6 +121,8 @@ export interface NativeOptions {
 
 export interface NativePackageDeps extends NativeOptions {
   variant: NativeVariant;
+  /** The manifest's name for the package, which the progress of its download carries. */
+  variantId: VariantId;
   /** The package version, which names the folder. */
   version: string;
   dataFolder: string;
@@ -273,7 +275,18 @@ export class NativePackage implements EnginePackage {
     // A version that is kept as the previous one is already here.
     if (this.isInstalled()) return ok(undefined);
 
-    options.onProgress?.({ phase: "pulling", size: variant.size, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 1 });
+    options.onProgress?.({
+      phase: "pulling",
+      variant: this.deps.variantId,
+      steps: [{ id: "engine", size: variant.size }],
+      step: "engine",
+      stepReceived: null,
+      size: variant.size,
+      layersDone: null,
+      layersTotal: null,
+      attempt: 1,
+      maxAttempts: 1,
+    });
     const archive = join(this.deps.dataFolder, "downloads", `aidm-api-${this.deps.version}.tar.gz`);
     const downloaded = await downloadVerified(
       { url: variant.url, size: variant.size, sha256: variant.sha256, path: archive },

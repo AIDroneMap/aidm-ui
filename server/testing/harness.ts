@@ -217,7 +217,7 @@ export function openHarness(
     freePort: options.freePort,
     logOptions: options.localLog,
     updateReadyTimeoutMs: options.updateReadyTimeoutMs,
-    runner: options.runner ?? runnerWithSystemd(false),
+    nativeRunner: options.runner ?? runnerWithSystemd(false),
     native: { stopGraceMs: 2000, logPollMs: 25, wrapWatchMs: 200, ...options.native },
   });
 
