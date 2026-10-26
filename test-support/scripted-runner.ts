@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { CommandResult, CommandRunner } from "../server/process/command-runner.ts";
+import type { CommandResult, CommandRunner, CommandStreamOptions } from "../server/process/command-runner.ts";
 
 export interface ScriptedRule {
   argv: string[];
@@ -14,13 +14,32 @@ export class ScriptedRunner implements CommandRunner {
   constructor(private readonly rules: ScriptedRule[]) {}
 
   run(argv: string[]): Promise<CommandResult> {
+    return Promise.resolve(this.answer(argv));
+  }
+
+  /** Replays the answer's stdout lines, then its stderr lines, through onLine; the result keeps only the exit code. */
+  stream(argv: string[], options: CommandStreamOptions): Promise<CommandResult> {
+    const result = this.answer(argv);
+    if (result.exitCode !== 127 || result.stderr !== "not found") {
+      for (const line of linesOf(result.stdout)) options.onLine(line, "stdout");
+      for (const line of linesOf(result.stderr)) options.onLine(line, "stderr");
+    }
+    return Promise.resolve({ exitCode: result.exitCode, stdout: "", stderr: "" });
+  }
+
+  private answer(argv: string[]): CommandResult {
     this.calls.push(argv);
     const rule = this.rules.find(
       (candidate) => candidate.argv.length === argv.length && candidate.argv.every((part, i) => part === argv[i]),
     );
-    if (rule === undefined) return Promise.resolve({ exitCode: 127, stdout: "", stderr: "not found" });
-    return Promise.resolve(typeof rule.result === "function" ? rule.result(argv) : rule.result);
+    if (rule === undefined) return { exitCode: 127, stdout: "", stderr: "not found" };
+    return typeof rule.result === "function" ? rule.result(argv) : rule.result;
   }
+}
+
+function linesOf(text: string): string[] {
+  if (text === "") return [];
+  return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
 }
 
 const RECORDED = join(import.meta.dir, "recorded");

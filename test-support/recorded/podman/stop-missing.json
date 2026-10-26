@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "Error: no container with name or ID \"aidm-engine\" found: no such container\n"
+}

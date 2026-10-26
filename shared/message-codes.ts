@@ -74,6 +74,12 @@ export const MESSAGE_CODES = [
   "manifest.update_interface",
   "manifest.no_variant",
   "manifest.fetch_failed",
+  "runtime.pull_failed",
+  "runtime.image_not_found",
+  "runtime.name_in_use",
+  "runtime.port_in_use",
+  "runtime.start_failed",
+  "runtime.command_failed",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

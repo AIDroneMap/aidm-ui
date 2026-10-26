@@ -1,0 +1,4 @@
+{
+  "exitCode": 2,
+  "stderr": "Error: image used by 7777777777777777777777777777777777777777777777777777777777777777: image is in use by a container: consider listing external containers and force-removing image\n"
+}

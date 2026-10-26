@@ -1,0 +1,26 @@
+[
+    {
+        "Id": "7777777777777777777777777777777777777777777777777777777777777777",
+        "Name": "aidm-engine",
+        "Image": "9999999999999999999999999999999999999999999999999999999999999999",
+        "State": {
+            "OciVersion": "1.3.0",
+            "Status": "exited",
+            "Running": false,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": true,
+            "Dead": false,
+            "Pid": 0,
+            "ConmonPid": 0,
+            "ExitCode": 137,
+            "Error": "",
+            "StartedAt": "2026-10-26T09:27:22.230201146+02:00",
+            "FinishedAt": "2026-10-26T09:27:29.77831102+02:00"
+        },
+        "HostConfig": {
+            "Memory": 268435456,
+            "NanoCpus": 1000000000
+        }
+    }
+]

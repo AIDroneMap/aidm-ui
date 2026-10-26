@@ -5,12 +5,12 @@ import {
   parseJson,
   unavailable,
   unusable,
-  type ContainerRuntime,
+  type RuntimeProbe,
   type RuntimeDetection,
 } from "./runtime.ts";
 
 /** Apple's container tool. Its VMs always have a memory size, so a cap is always enforced. */
-export function appleContainerRuntime(runner: CommandRunner): ContainerRuntime {
+export function appleContainerRuntime(runner: CommandRunner): RuntimeProbe {
   return {
     id: "apple-container",
     async detect(): Promise<RuntimeDetection> {
