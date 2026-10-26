@@ -263,6 +263,22 @@ test("a restarted run says so", () => {
   expect(renderRun({ state: "queued" })).not.toContain("started over");
 });
 
+test("the log shows a separator, in the interface's words, where the engine's output began again", () => {
+  const html = renderRun(
+    { state: "queued", restarted: true },
+    { lines: ["old one", "old two", "new one"], lineCount: 3, restartedAtLine: 2 },
+  );
+  expect(html).toContain("old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one");
+  // A run that did not restart has no separator.
+  expect(renderRun({ state: "processing" }, { restartedAtLine: null })).not.toContain("restarted here");
+  expect(
+    untranslatedText(html, [
+      "Barn engine",
+      "old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one",
+    ]),
+  ).toEqual([]);
+});
+
 test("a completed run offers the results", () => {
   const html = renderRun({ state: "completed", resultsAvailable: true });
   expect(html).toContain('<a href="/api/runs/7/results" download="">Download the results</a>');

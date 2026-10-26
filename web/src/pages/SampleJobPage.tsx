@@ -8,6 +8,7 @@ import {
   EMPTY_LOG,
   isFinished,
   isRunView,
+  linesWithRestart,
   mergeLog,
   parseLogEvent,
   parseRunEvent,
@@ -177,6 +178,10 @@ function LogView({ lines }: { lines: string[] }) {
 export interface RunProgressProps {
   run: RunView;
   lines: string[];
+  /** How many lines the run has written so far, counting the ones the page dropped. Needed to place the restart separator. */
+  lineCount?: number;
+  /** The line of the log where the engine's output began again after a restart. */
+  restartedAtLine?: number | null;
   /** True while the live connection is down. */
   connectionLost: boolean;
   cancelling: boolean;
@@ -186,7 +191,17 @@ export interface RunProgressProps {
 }
 
 /** A run in progress or finished: its state in words, its progress, its log and what the operator can do next. */
-export function RunProgress({ run, lines, connectionLost, cancelling, failure, onCancel, onAgain }: RunProgressProps) {
+export function RunProgress({
+  run,
+  lines,
+  lineCount,
+  restartedAtLine,
+  connectionLost,
+  cancelling,
+  failure,
+  onCancel,
+  onAgain,
+}: RunProgressProps) {
   const finished = isFinished(run);
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
@@ -237,7 +252,13 @@ export function RunProgress({ run, lines, connectionLost, cancelling, failure, o
       {run.problem && <ErrorMessage failure={new ApiFailure(0, run.problem.code, run.problem.data)} />}
       {failure && <ErrorMessage failure={failure} />}
 
-      <LogView lines={lines} />
+      <LogView
+        lines={linesWithRestart(
+          { lines, count: lineCount ?? lines.length },
+          restartedAtLine ?? null,
+          t("run.log_restarted"),
+        )}
+      />
 
       <div className="actions">
         {!finished && (
@@ -275,6 +296,7 @@ export function SampleJobPage({
   const [engineId, setEngineId] = useState<number | null>(null);
   const [run, setRun] = useState<RunView | null>(null);
   const [log, setLog] = useState<LogLines>(EMPTY_LOG);
+  const [restartedAtLine, setRestartedAtLine] = useState<number | null>(null);
   const [connectionLost, setConnectionLost] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -316,12 +338,15 @@ export function SampleJobPage({
     if (runId === null) return;
     let current = true;
     setLog(EMPTY_LOG);
+    setRestartedAtLine(null);
     logCount.current = 0;
+    let wasRestarted = false;
     const catchUp = (start?: number) => {
       const from = start ?? logCount.current;
       api<RunLogView>("GET", `/api/runs/${runId}/log?from=${from}`).then(
         (view) => {
           if (!current) return;
+          setRestartedAtLine(view.restartedAtLine ?? null);
           setLog((existing) => mergeLog(existing, from, view.lines));
           // The server sends at most one page of lines, so ask again from where it ended.
           if (view.next > from) catchUp(view.next);
@@ -340,6 +365,9 @@ export function SampleJobPage({
       if (!view || !current) return;
       setRun(view);
       setConnectionLost(false);
+      // Only the log route says where the new output begins, so ask when the run turns out to have restarted.
+      if (view.restarted && !wasRestarted) catchUp();
+      wasRestarted = view.restarted;
       if (isFinished(view)) {
         catchUp();
         source.close();
@@ -397,6 +425,8 @@ export function SampleJobPage({
         <RunProgress
           run={run}
           lines={log.lines}
+          lineCount={log.count}
+          restartedAtLine={restartedAtLine}
           connectionLost={connectionLost}
           cancelling={cancelling}
           failure={failure}

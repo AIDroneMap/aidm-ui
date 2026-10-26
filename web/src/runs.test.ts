@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { RunView } from "../../shared/api-types.ts";
-import { EMPTY_LOG, MAX_LOG_LINES, isFinished, mergeLog, parseLogEvent, parseRunEvent } from "./runs.ts";
+import { EMPTY_LOG, MAX_LOG_LINES, isFinished, linesWithRestart, mergeLog, parseLogEvent, parseRunEvent } from "./runs.ts";
 
 const run: RunView = {
   id: 4,
@@ -70,4 +70,30 @@ test("a log event is read", () => {
   expect(parseLogEvent('{"lines":[1],"from":3}')).toBeNull();
   expect(parseLogEvent('{"lines":["a"]}')).toBeNull();
   expect(parseLogEvent("x")).toBeNull();
+});
+
+const SEPARATOR = "-- restarted --";
+
+test("the separator goes in at the line where the engine's output began again", () => {
+  const log = mergeLog(EMPTY_LOG, 0, ["old one", "old two", "new one"]);
+  expect(linesWithRestart(log, 2, SEPARATOR)).toEqual(["old one", "old two", SEPARATOR, "new one"]);
+});
+
+test("the separator can come last, when the new output has not written a line yet", () => {
+  const log = mergeLog(EMPTY_LOG, 0, ["old one", "old two"]);
+  expect(linesWithRestart(log, 2, SEPARATOR)).toEqual(["old one", "old two", SEPARATOR]);
+});
+
+test("there is no separator for a run that never restarted, or when nothing came before it", () => {
+  const log = mergeLog(EMPTY_LOG, 0, ["a", "b"]);
+  expect(linesWithRestart(log, null, SEPARATOR)).toBe(log.lines);
+  expect(linesWithRestart(log, 0, SEPARATOR)).toBe(log.lines);
+});
+
+test("the separator is counted from the first line the page dropped, and left out when its place was dropped", () => {
+  const many = Array.from({ length: MAX_LOG_LINES + 10 }, (_, index) => `line ${index}`);
+  const log = mergeLog(EMPTY_LOG, 0, many);
+  // Line 10 is the first one still held.
+  expect(linesWithRestart(log, 12, SEPARATOR).indexOf(SEPARATOR)).toBe(2);
+  expect(linesWithRestart(log, 5, SEPARATOR)).toBe(log.lines);
 });
