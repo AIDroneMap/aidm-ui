@@ -7,6 +7,9 @@ export const LOG_KEPT_FILES = 3;
 /** The lines a new listener gets at once. */
 export const LOG_MEMORY_LINES = 500;
 const RETRY_BACKOFF_MS = 1000;
+/** A line longer than this many bytes is cut, so one runaway line cannot fill the file or the page. */
+export const LOG_LINE_MAX_BYTES = 4 * 1024;
+const LINE_CUT_MARK = "...";
 /** Reading the tail of the file at start never takes more than this. */
 const TAIL_READ_BYTES = 256 * 1024;
 
@@ -127,8 +130,19 @@ export class EngineLog {
     return token === null || token === "" ? line : line.split(token).join("[token]");
   }
 
+  /** The line as it is kept: at most LOG_LINE_MAX_BYTES, cut on a character boundary and marked. */
+  private shorten(line: string): string {
+    if (Buffer.byteLength(line) <= LOG_LINE_MAX_BYTES) return line;
+    const bytes = Buffer.from(line);
+    let end = LOG_LINE_MAX_BYTES - LINE_CUT_MARK.length;
+    // A byte of the form 10xxxxxx continues a character, so the cut moves back to where that character began.
+    while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString("utf8") + LINE_CUT_MARK;
+  }
+
   private add(raw: string): void {
-    const line = this.clean(raw);
+    // Cleaned before it is cut, so a token never survives as a piece of itself.
+    const line = this.shorten(this.clean(raw));
     this.recent.push(line);
     if (this.recent.length > LOG_MEMORY_LINES) this.recent.splice(0, this.recent.length - LOG_MEMORY_LINES);
     this.write(line);

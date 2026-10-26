@@ -11,6 +11,10 @@ export interface RuntimeDetection {
   version: string | null;
   /** Whether a memory cap would be enforced (rootless Podman without cgroup delegation cannot). Null when unknown. */
   memoryCapEnforced: boolean | null;
+  /** Whether a CPU cap would be enforced. Separate from memory, because a system can hand over one controller and not the other. Null when unknown. */
+  cpuCapEnforced: boolean | null;
+  /** The folder where the runtime keeps images and containers, so the disk check measures the right disk. Null when the tool does not say. */
+  storagePath: string | null;
   /** Why it is not available, as a code with its data. */
   problem: ApiError | null;
 }
@@ -85,7 +89,7 @@ export function fail<T = never>(code: ApiError["code"], data: Record<string, unk
 }
 
 export function unavailable(id: RuntimeId, problem: ApiError): RuntimeDetection {
-  return { id, available: false, version: null, memoryCapEnforced: null, problem };
+  return { id, available: false, version: null, memoryCapEnforced: null, cpuCapEnforced: null, storagePath: null, problem };
 }
 
 export function notInstalled(id: RuntimeId): RuntimeDetection {
@@ -110,3 +114,10 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
     ? (value as Record<string, unknown>)
     : undefined;
 }
+
+/**
+ * How long detect waits for each answer. The first run of a runtime on a fresh
+ * computer sets up its storage and can take many seconds (about 9 s for
+ * Podman on a GitHub-hosted runner).
+ */
+export const DETECT_TIMEOUT_MS = 60_000;

@@ -71,8 +71,17 @@ for (const id of ["podman", "docker"]) {
 
     test("it pulls the image by digest and reports progress", async () => {
       const steps: unknown[] = [];
-      const result = await runtime.pull(IMAGE, { onProgress: (progress) => steps.push(progress) });
+      const pull = () => runtime.pull(IMAGE, { onProgress: (progress) => steps.push(progress) });
+      let result = await pull();
+      if (!result.ok) {
+        // A registry may refuse a shared runner for a while, so one more try after a short wait.
+        await Bun.sleep(10_000);
+        steps.length = 0;
+        result = await pull();
+      }
       expect(result).toEqual({ ok: true, value: undefined });
+      // Docker's plain output names every layer. Podman's may name none for an image this small.
+      if (id === "docker") expect(steps.length).toBeGreaterThan(0);
     }, SLOW);
 
     test("it starts a detached container that serves the mounted folder on the published loopback port", async () => {

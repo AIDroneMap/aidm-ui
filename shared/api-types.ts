@@ -138,6 +138,8 @@ export interface RunView {
   projectId: number;
   engineId: number | null;
   engineName: string | null;
+  /** True when the engine is the one on this computer. Its name is interface text, so the page writes it itself. */
+  engineLocal: boolean;
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
   step: "download" | "upload" | null;
@@ -177,6 +179,8 @@ export interface ReferenceTimeView {
 export interface SampleEngineOffer {
   engineId: number;
   engineName: string;
+  /** True for the engine on this computer. Its name is interface text, so the page writes it itself. */
+  local: boolean;
   offered: boolean;
   /** Bytes the engine may use: its memory cap, or the total memory it reports. Null when unknown. */
   memoryCap: number | null;

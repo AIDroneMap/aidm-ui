@@ -39,6 +39,8 @@ export function appleContainerRuntime(runner: CommandRunner): RuntimeProbe {
         available: true,
         version: cli.version,
         memoryCapEnforced: true,
+        cpuCapEnforced: true,
+        storagePath: null,
         problem: null,
       };
     },

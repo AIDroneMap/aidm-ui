@@ -4,7 +4,7 @@ import os from "node:os";
 import { join } from "node:path";
 import type { EnginePackage } from "../packages/engine-package.ts";
 import { eventually } from "../testing/harness.ts";
-import { EngineLog, LOG_MEMORY_LINES } from "./engine-log.ts";
+import { EngineLog, LOG_LINE_MAX_BYTES, LOG_MEMORY_LINES } from "./engine-log.ts";
 
 let folder: string;
 let token: string | null;
@@ -42,6 +42,7 @@ function scripted(script: ScriptedStream): EnginePackage {
     install: async () => ({ ok: true, value: undefined }),
     start: async () => ({ ok: true, value: { address: "" } }),
     stop: async () => ({ ok: true, value: undefined }),
+    removeContainer: async () => ({ ok: true, value: undefined }),
     remove: async () => ({ ok: true, value: undefined }),
     status: async () => ({ ok: true, value: { state: script.state, exitCode: null } }),
     logs: async (options) => {
@@ -86,6 +87,43 @@ test("a line that holds the token is cleaned before it is kept or written", asyn
   expect(log.lines()).toEqual(["token is [token] here"]);
   expect(heard).toEqual(["token is [token] here"]);
   expect(readFileSync(join(folder, "logs", "engine.log"), "utf8")).not.toContain("secret-token-value");
+});
+
+test("a line longer than 4 KiB is cut with three dots, in the memory, the file and what listeners hear", async () => {
+  const log = make();
+  const heard: string[] = [];
+  log.subscribe((lines) => heard.push(...lines));
+  const long = "x".repeat(60_000);
+  log.follow(scripted({ streams: [["short", long, "after"]], calls: [], state: "stopped" }), { fresh: true });
+  await eventually(async () => !log.isFollowing());
+  const cut = `${"x".repeat(LOG_LINE_MAX_BYTES - 3)}...`;
+  expect(log.lines()).toEqual(["short", cut, "after"]);
+  expect(heard).toEqual(["short", cut, "after"]);
+  expect(readFileSync(join(folder, "logs", "engine.log"), "utf8")).toBe(`short\n${cut}\nafter\n`);
+  expect(Buffer.byteLength(cut)).toBe(4096);
+});
+
+test("a line is cut between characters, never through one", async () => {
+  const log = make();
+  // Each "é" is two bytes, so 3000 of them are 6000 bytes and the cut falls inside a character.
+  log.follow(scripted({ streams: [["é".repeat(3000)]], calls: [], state: "stopped" }), { fresh: true });
+  await eventually(async () => !log.isFollowing());
+  const [line] = log.lines();
+  expect(line?.endsWith("é...")).toBe(true);
+  expect(line).not.toContain("\ufffd");
+  expect(Buffer.byteLength(line ?? "")).toBeLessThanOrEqual(LOG_LINE_MAX_BYTES);
+});
+
+test("a token inside a long line is cleaned before the line is cut", async () => {
+  token = "secret-token-value";
+  const log = make();
+  // The token would be cut in half at the 4 KiB mark if the line were cut first.
+  const line = `${"y".repeat(4086)}secret-token-value${"z".repeat(100)}`;
+  log.follow(scripted({ streams: [[line]], calls: [], state: "stopped" }), { fresh: true });
+  await eventually(async () => !log.isFollowing());
+  expect(log.lines()[0]).toContain("[token]");
+  expect(log.lines()[0]).not.toContain("secret");
+  expect(readFileSync(join(folder, "logs", "engine.log"), "utf8")).not.toContain("secret");
 });
 
 test("the file is rotated at the size limit and three old files are kept", async () => {

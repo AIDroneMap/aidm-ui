@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { CapsRequest, EngineState, LocalEngineView, InstallProgressView, RuntimeId } from "../../shared/api-types.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
@@ -130,10 +130,15 @@ export class LocalEngineManager {
     const preferred = this.settings.get("runtime.preferred");
     const chosen = installedPackage?.runtime ?? preferredRuntime(available, preferred)?.id ?? null;
     const detection = this.detections.find((candidate) => candidate.id === chosen);
-    const warnings: ApiError[] =
-      detection !== undefined && detection.available && detection.memoryCapEnforced === false
-        ? [{ code: "local.memory_cap_not_enforced", data: { runtime: detection.id } }]
-        : [];
+    const warnings: ApiError[] = [];
+    if (detection !== undefined && detection.available) {
+      if (detection.memoryCapEnforced === false) {
+        warnings.push({ code: "local.memory_cap_not_enforced", data: { runtime: detection.id } });
+      }
+      if (detection.cpuCapEnforced === false) {
+        warnings.push({ code: "local.cpu_cap_not_enforced", data: { runtime: detection.id } });
+      }
+    }
 
     return {
       installed:
@@ -224,6 +229,8 @@ export class LocalEngineManager {
   /** Answers once the install has started; the work goes on in the background. */
   async install(): Promise<InstallOutcome> {
     if (this.busy) return refusal(409, "install.already_running");
+    // An install over a running engine would pull a package next to it and swap tokens under it. Updates come with ticket #14.
+    if (this.settings.get("local.package") !== null) return refusal(409, "install.already_installed");
     this.busy = true;
     let started = false;
     try {
@@ -246,8 +253,8 @@ export class LocalEngineManager {
       const pkg = new ContainerPackage({
         runtime: driver,
         variant,
-        packageVersion: offer.packageVersion,
         freeBytes: this.deps.freeBytes,
+        storagePath: runtime.storagePath,
         dataFolder: this.deps.dataFolder,
         sleep: this.deps.sleep,
       });
@@ -428,14 +435,21 @@ export class LocalEngineManager {
     await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
     const detection = this.detections.find((candidate) => candidate.id === installed.runtime);
 
-    // The memory cap is left out where the runtime cannot enforce it. Podman then refuses a CPU cap as well.
-    const enforced = detection?.memoryCapEnforced !== false;
+    // A cap is left out where the runtime cannot enforce it, each one on its own.
     const caps = this.capsNow();
-    const applied = { memoryBytes: enforced ? caps.memoryBytes : null, cpus: enforced ? caps.cpus : null };
+    const applied = {
+      memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
+      cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,
+    };
 
     let engineDataFolder: string;
     try {
       engineDataFolder = this.settings.get("engine.dataFolder") ?? join(this.deps.dataFolder, "engine-data");
+      // The folder goes into "-v host:container", where a colon would cut it in two, and a relative one means a named volume.
+      if (!isAbsolute(engineDataFolder) || engineDataFolder.includes(":")) {
+        this.deps.log("The engine data folder must be a full path without a colon. The engine was not started.");
+        return this.failStart(engine.id, { code: "server.internal_error", data: {} });
+      }
       mkdirSync(engineDataFolder, { recursive: true });
     } catch (error) {
       this.deps.log(`The engine data folder could not be made: ${error instanceof Error ? error.message : String(error)}`);
@@ -462,14 +476,33 @@ export class LocalEngineManager {
     }
     if (!started.ok) return this.failStart(engine.id, started.error);
 
-    this.token = engine.token;
-    this.settings.set("local.applied", applied);
-    this.store.update(engine.id, { address: started.value.address });
+    // The container runs now. If recording it fails, nothing would know about it, so it is taken away again.
+    try {
+      this.token = engine.token;
+      this.settings.set("local.applied", applied);
+      this.store.update(engine.id, { address: started.value.address });
+    } catch (error) {
+      this.deps.log(`The engine started but could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
+      await this.discard(pkg);
+      return this.failStart(engine.id, { code: "server.internal_error", data: {} });
+    }
     this.engineLog.follow(pkg, { fresh: true });
     if (this.progress !== null) this.progress = { ...this.progress, phase: "done" };
     this.publish();
     await this.monitor.pollNow(engine.id);
     return ok(undefined);
+  }
+
+  /** Stops and removes a container that must not keep running. Whatever fails here is logged, since the start has failed already. */
+  private async discard(pkg: EnginePackage): Promise<void> {
+    try {
+      const stopped = await pkg.stop();
+      if (!stopped.ok) this.deps.log(`The engine container could not be stopped (${stopped.error.code}).`);
+      const removed = await pkg.removeContainer();
+      if (!removed.ok) this.deps.log(`The engine container could not be removed (${removed.error.code}).`);
+    } catch (error) {
+      this.deps.log(`Clearing away the engine container failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** The package of what is installed, driven by the runtime that pulled it. Null when this version cannot drive that runtime. */
@@ -479,8 +512,8 @@ export class LocalEngineManager {
     return new ContainerPackage({
       runtime,
       variant: installed.container,
-      packageVersion: installed.packageVersion,
       freeBytes: this.deps.freeBytes,
+      storagePath: this.detections.find((candidate) => candidate.id === installed.runtime)?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
       sleep: this.deps.sleep,
     });

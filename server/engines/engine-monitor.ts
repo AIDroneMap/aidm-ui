@@ -37,6 +37,12 @@ interface Entry {
   info: EngineInfoView | null;
   supported: boolean | null;
   problem: ApiError | null;
+  /**
+   * Counts the times the manager changed what it does with this engine. A poll
+   * that began under an earlier number asked an engine that is gone or was
+   * stopped, even if the new one listens on the same address.
+   */
+  generation: number;
   /** While the clock is before this, a starting engine that does not answer is still starting. */
   startingUntil: number;
   /** The last line logged for each topic, so a value that stays wrong is logged once. */
@@ -145,6 +151,7 @@ export class EngineMonitor {
     const engine = this.store.get(id);
     if (engine === null || this.stopped) return;
     const entry = this.entryFor(engine);
+    entry.generation += 1;
     entry.status = nextEngineStatus(entry.status, { type: state });
     entry.problem = problem;
     // What an engine said before it was stopped or started again is old news.
@@ -173,6 +180,7 @@ export class EngineMonitor {
       info: null,
       supported: null,
       problem: null,
+      generation: 0,
       startingUntil: engine.kind === "local" && engine.enabled ? Date.now() + this.startingGraceMs : 0,
       logged: new Map(),
     };
@@ -232,12 +240,22 @@ export class EngineMonitor {
       if (engine === null || !engine.enabled || engine.address === "" || this.stopped) return;
       const entry = this.entryFor(engine);
       const source = sourceOf(engine);
+      const generation = entry.generation;
 
       const outcome = await this.ask(engine, entry);
 
-      // Stopped, or edited, switched off or removed while we waited: the answer is about something else now.
+      // Stopped, started again, edited, switched off or removed while we waited: the answer is about something else now.
       const now = this.store.get(id);
-      if (this.stopped || now === null || !now.enabled || sourceOf(now) !== source || this.entries.get(id) !== entry) return;
+      if (
+        this.stopped ||
+        now === null ||
+        !now.enabled ||
+        sourceOf(now) !== source ||
+        this.entries.get(id) !== entry ||
+        entry.generation !== generation
+      ) {
+        return;
+      }
 
       const before = entry.status.state;
       if (outcome.ok) {

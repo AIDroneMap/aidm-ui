@@ -39,6 +39,8 @@ export interface EnginePackage {
     onLine: (line: string) => void;
     signal?: AbortSignal;
   }): Promise<PackageResult<void>>;
+  /** Only the container, forced; the image stays. For clearing away a start that went wrong. */
+  removeContainer(): Promise<PackageResult<void>>;
   /** This version's container and image. */
   remove(): Promise<PackageResult<void>>;
 }

@@ -21,9 +21,10 @@ export type ContainerVariant = Extract<ManifestVariant, { kind: "container" }>;
 export interface ContainerPackageDeps {
   runtime: ContainerRuntime;
   variant: ContainerVariant;
-  packageVersion: string;
   freeBytes: FreeBytes;
-  /** The folder whose free space decides whether the pull may begin. */
+  /** Where the runtime keeps images, when it says; the pull lands there. */
+  storagePath: string | null;
+  /** The folder checked when the runtime does not say where it keeps images. */
   dataFolder: string;
   /** Waits for the given milliseconds; a test passes one that does not wait. */
   sleep?: (ms: number) => Promise<void>;
@@ -43,7 +44,7 @@ export class ContainerPackage implements EnginePackage {
 
   async preflight(): Promise<PackageResult<void>> {
     const needed = Math.ceil(this.deps.variant.size * (1 + DOWNLOAD_FREE_DISK_MARGIN));
-    const free = this.deps.freeBytes(this.deps.dataFolder);
+    const free = this.deps.freeBytes(this.deps.storagePath ?? this.deps.dataFolder);
     if (free < needed) return fail("install.not_enough_space", { needed, free });
     return ok(undefined);
   }
@@ -128,6 +129,10 @@ export class ContainerPackage implements EnginePackage {
     signal?: AbortSignal;
   }): Promise<PackageResult<void>> {
     return this.deps.runtime.logs(CONTAINER_NAME, options);
+  }
+
+  removeContainer(): Promise<PackageResult<void>> {
+    return this.deps.runtime.remove(CONTAINER_NAME);
   }
 
   async remove(): Promise<PackageResult<void>> {

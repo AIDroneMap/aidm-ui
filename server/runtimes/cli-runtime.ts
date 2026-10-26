@@ -19,6 +19,8 @@ export type PullLineParser = (line: string) => PullProgress | null;
 export interface CliRuntimeTool {
   id: Extract<RuntimeId, "podman" | "docker">;
   detect(): Promise<RuntimeDetection>;
+  /** The command that reads one container's state. */
+  inspectArgv(name: string): string[];
   /** A new parser for each pull, because it keeps count. */
   pullParser(): PullLineParser;
 }
@@ -28,6 +30,8 @@ export const DEFAULT_STOP_TIMEOUT_SECONDS = 30;
 /** Creating a container can take a while on a busy disk. */
 const START_TIMEOUT_MS = 60_000;
 const REMOVE_TIMEOUT_MS = 60_000;
+/** A pull can print thousands of lines. Only the last ones are kept, because the failure is told at the end. */
+const PULL_OUTPUT_LINES = 1000;
 
 const NO_SUCH_CONTAINER = /no such container|no container with name or ID|no such object/i;
 const NO_SUCH_IMAGE = /image not known|no such image/i;
@@ -73,6 +77,7 @@ export function cliRuntime(
         signal: options.signal,
         onLine: (line) => {
           text.push(line);
+          if (text.length > PULL_OUTPUT_LINES) text.shift();
           const progress = parse(line);
           if (progress !== null) options.onProgress?.(progress);
         },
@@ -91,6 +96,8 @@ export function cliRuntime(
       if (result.exitCode === 0) {
         const containerId = result.stdout.split("\n").find((line) => line.trim() !== "")?.trim();
         if (containerId !== undefined) return ok({ containerId });
+        // No ID is no proof that nothing was made, and the name is ours.
+        await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
         return fail("runtime.start_failed", { exitCode: 0 });
       }
       const text = `${result.stderr}\n${result.stdout}`;
@@ -114,7 +121,7 @@ export function cliRuntime(
     },
 
     async status(name) {
-      const result = await run([binary, "inspect", "--format", "json", name]);
+      const result = await run(tool.inspectArgv(name));
       if (result.exitCode !== 0) {
         const missing =
           NO_SUCH_CONTAINER.test(result.stderr) || (result.exitCode === 125 && result.stdout.trim() === "[]");
@@ -184,20 +191,22 @@ function readState(state: Record<string, unknown>, exitCode: number): RuntimeRes
 export function sharedRunArgs(
   binary: string,
   spec: ContainerSpec,
-  options: { mountSuffix: string; capsApply: boolean },
+  options: { mountSuffix: string; memoryCap: boolean; cpuCap: boolean },
 ): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
   return [
     binary,
     "run",
     "-d",
+    // Starting never pulls. The pull is its own step with its own progress and retries.
+    "--pull=never",
     "--name",
     spec.name,
     "-p",
     `${hostAddress}:${hostPort}:${containerPort}`,
     ...spec.mounts.flatMap((mount) => ["-v", `${mount.hostPath}:${mount.containerPath}${options.mountSuffix}`]),
-    ...(options.capsApply && spec.memoryBytes !== null ? ["--memory", `${spec.memoryBytes}b`] : []),
-    ...(options.capsApply && spec.cpus !== null ? ["--cpus", String(spec.cpus)] : []),
+    ...(options.memoryCap && spec.memoryBytes !== null ? ["--memory", `${spec.memoryBytes}b`] : []),
+    ...(options.cpuCap && spec.cpus !== null ? ["--cpus", String(spec.cpus)] : []),
     ...(spec.platform === null ? [] : ["--platform", spec.platform]),
     spec.image,
     ...spec.args,

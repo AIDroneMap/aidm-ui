@@ -53,6 +53,9 @@ export function describeCommand(argv: string[]): string {
     .join(" ");
 }
 
+/** A line longer than this many characters (64 KiB for plain text) is handed over in pieces, so a program that never breaks its lines cannot fill the memory. */
+export const MAX_LINE_LENGTH = 64 * 1024;
+
 /** Cuts a stream of text into lines, holding back the last partial line until the next chunk or the end. */
 function lineSplitter(onLine: (line: string) => void): { push(text: string): void; end(): void } {
   let pending = "";
@@ -60,11 +63,17 @@ function lineSplitter(onLine: (line: string) => void): { push(text: string): voi
   return {
     push(text) {
       pending += text;
-      let newline = pending.indexOf("\n");
-      while (newline !== -1) {
-        emit(pending.slice(0, newline));
-        pending = pending.slice(newline + 1);
-        newline = pending.indexOf("\n");
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline !== -1 && newline <= MAX_LINE_LENGTH) {
+          emit(pending.slice(0, newline));
+          pending = pending.slice(newline + 1);
+        } else if (pending.length > MAX_LINE_LENGTH) {
+          emit(pending.slice(0, MAX_LINE_LENGTH));
+          pending = pending.slice(MAX_LINE_LENGTH);
+        } else {
+          return;
+        }
       }
     },
     end() {

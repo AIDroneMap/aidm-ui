@@ -19,21 +19,25 @@ afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.remove(CONTAINER_NAME);
 });
 
-function setup(options: { free?: number; runtime?: FakeRuntime } = {}) {
+function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: string | null } = {}) {
   const runtime = options.runtime ?? new FakeRuntime();
   runtimes.push(runtime);
   const sleeps: number[] = [];
+  const asked: string[] = [];
   const pkg = new ContainerPackage({
     runtime,
     variant: VARIANT,
-    packageVersion: "2.5.0",
-    freeBytes: () => options.free ?? 100 * GiB,
+    freeBytes: (path) => {
+      asked.push(path);
+      return options.free ?? 100 * GiB;
+    },
+    storagePath: options.storagePath ?? null,
     dataFolder: "/data",
     sleep: async (ms) => {
       sleeps.push(ms);
     },
   });
-  return { runtime, pkg, sleeps };
+  return { runtime, pkg, sleeps, asked };
 }
 
 const startOptions = {
@@ -76,6 +80,19 @@ test("with too little free disk nothing is pulled, and both sizes are given", as
   expect(await pkg.preflight()).toEqual(expected);
   expect(await pkg.install({})).toEqual(expected);
   expect(runtime.pulls).toEqual([]);
+});
+
+test("the free space is measured where the runtime keeps its images", async () => {
+  const { pkg, asked } = setup({ storagePath: "/var/lib/containers/storage" });
+  expect((await pkg.preflight()).ok).toBe(true);
+  expect((await pkg.install({})).ok).toBe(true);
+  expect(asked).toEqual(["/var/lib/containers/storage", "/var/lib/containers/storage"]);
+});
+
+test("the free space is measured in the data folder when the runtime does not say where it keeps its images", async () => {
+  const { pkg, asked } = setup({ storagePath: null });
+  await pkg.preflight();
+  expect(asked).toEqual(["/data"]);
 });
 
 test("exactly the package size plus 20 percent is enough", async () => {

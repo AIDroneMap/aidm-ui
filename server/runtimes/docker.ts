@@ -2,6 +2,7 @@ import { EXIT_NOT_FOUND, type CommandRunner } from "../process/command-runner.ts
 import { cliRuntime, sharedRunArgs, type PullLineParser } from "./cli-runtime.ts";
 import {
   asRecord,
+  DETECT_TIMEOUT_MS,
   notInstalled,
   parseJson,
   unavailable,
@@ -13,8 +14,15 @@ import {
 
 /** The command line that starts the container. */
 export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): string[] {
-  return sharedRunArgs("docker", spec, { mountSuffix: "", capsApply: detection.memoryCapEnforced !== false });
+  return sharedRunArgs("docker", spec, {
+    mountSuffix: "",
+    memoryCap: detection.memoryCapEnforced !== false,
+    cpuCap: detection.cpuCapEnforced !== false,
+  });
 }
+
+/** Limited to containers, so an image or a volume of the same name is never read. */
+const inspectArgv = (name: string): string[] => ["docker", "inspect", "--type", "container", name];
 
 /**
  * Docker's plain pull output names each layer as "<id>: Pulling fs layer" and
@@ -52,7 +60,7 @@ export function dockerPullParser(): PullLineParser {
 
 export function dockerRuntime(runner: CommandRunner, log?: (line: string) => void): ContainerRuntime {
   async function detect(): Promise<RuntimeDetection> {
-    const version = await runner.run(["docker", "version", "--format", "json"]);
+    const version = await runner.run(["docker", "version", "--format", "json"], { timeoutMs: DETECT_TIMEOUT_MS });
     if (version.exitCode === EXIT_NOT_FOUND) return notInstalled("docker");
     const parsed = asRecord(parseJson(version.stdout));
     if (parsed === undefined) return unusable("docker");
@@ -68,16 +76,18 @@ export function dockerRuntime(runner: CommandRunner, log?: (line: string) => voi
     }
     if (typeof server.Version !== "string") return unusable("docker");
 
-    const info = await runner.run(["docker", "info", "--format", "json"]);
+    const info = await runner.run(["docker", "info", "--format", "json"], { timeoutMs: DETECT_TIMEOUT_MS });
     const details = info.exitCode === 0 ? asRecord(parseJson(info.stdout)) : undefined;
     return {
       id: "docker",
       available: true,
       version: server.Version,
       memoryCapEnforced: typeof details?.MemoryLimit === "boolean" ? details.MemoryLimit : null,
+      cpuCapEnforced: typeof details?.CpuCfsQuota === "boolean" ? details.CpuCfsQuota : null,
+      storagePath: typeof details?.DockerRootDir === "string" && details.DockerRootDir !== "" ? details.DockerRootDir : null,
       problem: null,
     };
   }
 
-  return cliRuntime({ id: "docker", detect, pullParser: dockerPullParser }, runner, runArgv, log);
+  return cliRuntime({ id: "docker", detect, inspectArgv, pullParser: dockerPullParser }, runner, runArgv, log);
 }

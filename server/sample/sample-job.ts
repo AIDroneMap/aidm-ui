@@ -186,7 +186,7 @@ export class SampleJob {
 
   private offerFor(engine: EngineView): SampleEngineOffer {
     const memoryCap = engineMemoryCap(engine, this.deps.localMemoryCap);
-    const base = { engineId: engine.id, engineName: engine.name, memoryCap };
+    const base = { engineId: engine.id, engineName: engine.name, local: engine.kind === "local", memoryCap };
     if (!this.deps.engines.isUsable(engine.id)) {
       return { ...base, offered: false, reason: { code: "sample.engine_not_usable", data: {} } };
     }

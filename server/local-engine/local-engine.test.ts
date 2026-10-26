@@ -9,7 +9,7 @@ import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
 import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { TaskClient } from "../task-api/task-client.ts";
-import { eventually, openHarness, type Harness } from "../testing/harness.ts";
+import { eventually, freePort, openHarness, type Harness } from "../testing/harness.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
 
@@ -383,7 +383,14 @@ test("the sample job completes on the local engine, end to end", async () => {
   // The sample job counts the memory the engine was started with.
   const offered = await getJson<SampleView>(h, "/api/sample");
   expect(offered.engines).toEqual([
-    { engineId: ready.engineId as number, engineName: "This computer", offered: true, memoryCap: DEFAULT_MEMORY, reason: null },
+    {
+      engineId: ready.engineId as number,
+      engineName: "This computer",
+      local: true,
+      offered: true,
+      memoryCap: DEFAULT_MEMORY,
+      reason: null,
+    },
   ]);
   expect(DEFAULT_MEMORY).toBeGreaterThan(SAMPLE_JOB_PEAK_MEMORY);
 
@@ -408,7 +415,7 @@ test("the sample job completes on the local engine, end to end", async () => {
   expect(download.status).toBe(200);
   expect(new Uint8Array(await download.arrayBuffer())).toEqual(results);
   // The engine row of the run is the local one.
-  expect((await getJson<RunView>(h, `/api/runs/${run.id}`)).engineName).toBe("This computer");
+  expect(await getJson<RunView>(h, `/api/runs/${run.id}`)).toMatchObject({ engineName: "This computer", engineLocal: true });
 });
 
 test("the sample job counts the cap the engine was started with, and the configured cap when it is not running", async () => {
@@ -431,7 +438,7 @@ test("the sample job counts the cap the engine was started with, and the configu
 
 // Where the runtime cannot enforce a memory cap.
 
-test("the memory cap is left out and a warning is shown when the runtime cannot enforce it", async () => {
+test("only the memory cap is left out, with a warning, when the runtime cannot enforce just that one", async () => {
   const h = start({ runtimes: { podman: new FakeRuntime({ detection: { memoryCapEnforced: false } }) } });
   // The warning is there before the install, so the page can say it first.
   expect((await localView(h)).warnings).toEqual([{ code: "local.memory_cap_not_enforced", data: { runtime: "podman" } }]);
@@ -440,12 +447,39 @@ test("the memory cap is left out and a warning is shown when the runtime cannot 
   const started = podman(h).starts[0];
   expect(started?.spec.memoryBytes).toBeNull();
   expect(started?.argv).not.toContain("--memory");
-  expect(started?.argv).not.toContain("--cpus");
+  expect(started?.argv).toContain("--cpus");
   const view = await localView(h);
   expect(view.warnings).toEqual([{ code: "local.memory_cap_not_enforced", data: { runtime: "podman" } }]);
-  expect(view.caps.applied).toEqual({ memoryBytes: null, cpus: null });
+  expect(view.caps.applied).toEqual({ memoryBytes: null, cpus: 8 });
   // The configured cap is still shown, so the operator sees what they asked for.
   expect(view.caps.memoryBytes).toBe(DEFAULT_MEMORY);
+});
+
+test("only the CPU cap is left out, with its own warning, when the runtime cannot enforce just that one", async () => {
+  const h = start({ runtimes: { podman: new FakeRuntime({ detection: { cpuCapEnforced: false } }) } });
+  expect((await localView(h)).warnings).toEqual([{ code: "local.cpu_cap_not_enforced", data: { runtime: "podman" } }]);
+
+  await installAndWaitReady(h);
+  const started = podman(h).starts[0];
+  expect(started?.spec.cpus).toBeNull();
+  expect(started?.argv).toContain("--memory");
+  expect(started?.argv).not.toContain("--cpus");
+  const view = await localView(h);
+  expect(view.warnings).toEqual([{ code: "local.cpu_cap_not_enforced", data: { runtime: "podman" } }]);
+  expect(view.caps.applied).toEqual({ memoryBytes: DEFAULT_MEMORY, cpus: null });
+  expect(view.caps.cpus).toBe(8);
+});
+
+test("a runtime that enforces neither cap gets both warnings and no cap", async () => {
+  const h = start({
+    runtimes: { podman: new FakeRuntime({ detection: { memoryCapEnforced: false, cpuCapEnforced: false } }) },
+  });
+  expect((await localView(h)).warnings.map((warning) => warning.code)).toEqual([
+    "local.memory_cap_not_enforced",
+    "local.cpu_cap_not_enforced",
+  ]);
+  await installAndWaitReady(h);
+  expect((await localView(h)).caps.applied).toEqual({ memoryBytes: null, cpus: null });
 });
 
 // Runtime choice.
@@ -520,7 +554,7 @@ test("an install that is already running is refused", async () => {
 
 // The token.
 
-test("every install makes a new token, and the token is in no response and no log", async () => {
+test("the install makes a token of its own, and the token is in no response and no log", async () => {
   const h = start();
   const seen: string[] = [];
   const record = async (path: string, method = "GET") => {
@@ -530,25 +564,17 @@ test("every install makes a new token, and the token is in no response and no lo
   const events = listen(h, "/api/local-engine/events");
   const logStream = listen(h, "/api/local-engine/logs");
   await installAndWaitReady(h);
-  const first = tokenOf(h);
-  expect(first).toMatch(/^[0-9a-f]{64}$/);
-  const row = h.engineStore.local()?.id;
+  const token = tokenOf(h);
+  expect(token).toMatch(/^[0-9a-f]{64}$/);
+  const argv = podman(h).starts[0]?.argv ?? [];
+  expect(argv[argv.indexOf("--token") + 1]).toBe(token);
+  const engine = (await engineList(h))[0] as EngineView;
+  expect((await new TaskClient({ address: engine.address, token }).info()).ok).toBe(true);
+  expect((await new TaskClient({ address: engine.address, token: "0".repeat(64) }).info()).ok).toBe(false);
 
   // The engine itself prints its arguments, and a runtime may print them too: the file and the stream are cleaned.
-  podman(h).emitLog(CONTAINER_NAME, `started with --token ${first}`);
+  podman(h).emitLog(CONTAINER_NAME, `started with --token ${token}`);
   await eventually(async () => h.localEngine.logs.lines().length === 1);
-
-  await installAndWaitReady(h);
-  const second = tokenOf(h);
-  expect(second).toMatch(/^[0-9a-f]{64}$/);
-  expect(second).not.toBe(first);
-  expect(h.engineStore.local()?.id).toBe(row);
-  const argv = podman(h).starts[1]?.argv ?? [];
-  expect(argv[argv.indexOf("--token") + 1]).toBe(second);
-  // The engine that was started with the first token is gone; the new one answers to the second.
-  const engine = (await engineList(h))[0] as EngineView;
-  expect((await new TaskClient({ address: engine.address, token: first }).info()).ok).toBe(false);
-  expect((await new TaskClient({ address: engine.address, token: second }).info()).ok).toBe(true);
 
   for (const path of ["/api/local-engine", "/api/engines", "/api/sample", "/api/settings", "/api/machine-check"]) {
     await record(path);
@@ -558,10 +584,34 @@ test("every install makes a new token, and the token is in no response and no lo
   seen.push(...events.events.map((event) => event.text), ...logStream.events.map((event) => event.text));
   seen.push(h.logs.join("\n"));
   seen.push(readFileSync(join(h.dataFolder, "logs", "engine.log"), "utf8"));
-  for (const text of seen) {
-    expect(text).not.toContain(first);
-    expect(text).not.toContain(second);
-  }
+  for (const text of seen) expect(text).not.toContain(token);
+});
+
+test("an install over an installed engine is refused, and the engine, its token and its container stay as they are", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const token = tokenOf(h);
+  const row = h.engineStore.local()?.id;
+
+  const response = await send(h, "POST", "/api/local-engine/install");
+  expect(response.status).toBe(409);
+  expect(await errorOf(response)).toEqual({ code: "install.already_installed", data: {} });
+
+  expect(podman(h).pulls).toHaveLength(1);
+  expect(podman(h).starts).toHaveLength(1);
+  expect(podman(h).removals).toEqual([]);
+  expect(tokenOf(h)).toBe(token);
+  expect(h.engineStore.local()?.id).toBe(row);
+  expect((await localView(h)).state).toBe("ready");
+});
+
+test("an engine that was stopped is still installed, so an install is refused then too", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  await h.localEngine.stop();
+  const response = await send(h, "POST", "/api/local-engine/install");
+  expect(response.status).toBe(409);
+  expect((await errorOf(response)).code).toBe("install.already_installed");
 });
 
 // Failures.
@@ -634,4 +684,163 @@ test("closing the manager leaves the container running", async () => {
   expect(podman(h).stops).toEqual([]);
   expect(podman(h).removals).toEqual([]);
   expect(await podman(h).status(CONTAINER_NAME)).toMatchObject({ ok: true, value: { state: "running" } });
+});
+
+// The disk check looks at where the runtime keeps its images.
+
+test("the free space is asked for where the runtime keeps its images, and for the data folder when it does not say", async () => {
+  const stored = ["/var/lib/containers/storage", null] as const;
+  for (const storagePath of stored) {
+    const asked: string[] = [];
+    const h = start({
+      runtimes: { podman: new FakeRuntime({ detection: { storagePath } }) },
+      freeBytes: (path) => {
+        asked.push(path);
+        return 1024 * GiB;
+      },
+    });
+    await installAndWaitReady(h);
+    // The preflight in the install route and the one right before the pull.
+    expect(asked).toEqual(Array(2).fill(storagePath ?? h.dataFolder));
+  }
+});
+
+test("too little room where the runtime keeps its images refuses the install, whatever the data folder has", async () => {
+  const h = start({
+    runtimes: { podman: new FakeRuntime({ detection: { storagePath: "/var/lib/containers/storage" } }) },
+    freeBytes: (path) => (path === "/var/lib/containers/storage" ? 700_000_000 : 1024 * GiB),
+  });
+  const response = await send(h, "POST", "/api/local-engine/install");
+  expect(response.status).toBe(409);
+  expect((await errorOf(response)).code).toBe("install.not_enough_space");
+  expect(podman(h).pulls).toEqual([]);
+});
+
+// The folder that goes into the mount.
+
+test("an engine data folder that is not a full path, or has a colon in it, stops the start with a log line", async () => {
+  const colon = join(os.tmpdir(), "aidm-ui:colon-test");
+  cleanups.push(() => rmSync(colon, { recursive: true, force: true }));
+  for (const folder of ["engine-data-relative-test", colon]) {
+    const h = start();
+    h.settings.set("engine.dataFolder", folder);
+    expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+    await eventually(async () => (await localView(h)).state === "failed");
+    expect((await localView(h)).problem).toMatchObject({ code: "install.start_failed" });
+    expect(podman(h).starts).toEqual([]);
+    expect(h.logs.some((line) => line.includes("engine data folder"))).toBe(true);
+    expect(existsSync(folder)).toBe(false);
+  }
+});
+
+// A start that fails after the container is running.
+
+test("when the engine cannot be recorded after its container started, the container is stopped and removed and the start fails", async () => {
+  const h = start();
+  const update = h.engineStore.update.bind(h.engineStore);
+  h.engineStore.update = (id, patch) => {
+    if (patch.address) throw new Error("database is locked");
+    return update(id, patch);
+  };
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).state === "failed");
+
+  expect(podman(h).starts).toHaveLength(1);
+  expect(podman(h).stops).toEqual([CONTAINER_NAME]);
+  expect(podman(h).removals).toEqual([CONTAINER_NAME]);
+  expect(await podman(h).status(CONTAINER_NAME)).toEqual({
+    ok: true,
+    value: { state: "missing", exitCode: null, oomKilled: null },
+  });
+  const view = await localView(h);
+  expect(view.problem).toEqual({
+    code: "install.start_failed",
+    data: { cause: { code: "server.internal_error", data: {} } },
+  });
+  expect(view.caps.applied).toBeNull();
+  expect(h.logs.some((line) => line.includes("database is locked"))).toBe(true);
+  // The image stays, so starting again needs no download.
+  expect(podman(h).removedImages).toEqual([]);
+});
+
+// A poll that began before a stop and start.
+
+test("an answer to a poll that began before a stop and start is not taken for the engine started after it, on the same port", async () => {
+  const port = await freePort();
+  const gate = Promise.withResolvers<void>();
+  let phase: "open" | "armed" | "held" | "after" = "open";
+  const h = start({
+    freePort: async () => port,
+    startingGraceMs: 60_000,
+    clientFor: (endpoint, options) =>
+      new TaskClient(endpoint, {
+        ...options,
+        fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          if (phase === "open") return fetch(input, init);
+          if (phase === "armed") {
+            // The old engine answers, and the answer is slow to arrive.
+            phase = "held";
+            const answer = await fetch(input, init);
+            await gate.promise;
+            return answer;
+          }
+          // The new engine has not answered anything yet.
+          throw new Error("connection refused");
+        }) as unknown as typeof fetch,
+      }),
+  });
+  try {
+    await installAndWaitReady(h);
+    const oldAddress = (await engineList(h))[0]?.address;
+    phase = "armed";
+    await eventually(async () => phase === "held");
+
+    expect((await h.localEngine.stop()).ok).toBe(true);
+    phase = "after";
+    const restarted = h.localEngine.start();
+    await eventually(async () => podman(h).starts.length === 2);
+    gate.resolve();
+    expect((await restarted).ok).toBe(true);
+
+    // The same port, so the address did not change.
+    expect((await engineList(h))[0]?.address).toBe(oldAddress);
+    expect(new URL(oldAddress ?? "").port).toBe(String(port));
+    await Bun.sleep(150);
+    expect((await engineList(h))[0]).toMatchObject({ state: "starting", info: null });
+    expect((await localView(h)).state).toBe("starting");
+  } finally {
+    // A failed check must not leave the poll held, or the harness could not stop.
+    gate.resolve();
+  }
+});
+
+// The log reaches the page in batches.
+
+test("a burst of log lines reaches the page in one event and not one event for each line", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const stream = listen(h, "/api/local-engine/logs");
+  await eventually(async () => stream.events.length > 0);
+  const before = stream.events.length;
+
+  const lines = Array.from({ length: 200 }, (_, index) => `line ${index}`);
+  for (const line of lines) podman(h).emitLog(CONTAINER_NAME, line);
+  const batched = () => stream.events.slice(before).flatMap((event) => (event.data as { lines: string[] }).lines);
+  await eventually(async () => batched().length === lines.length);
+
+  expect(batched()).toEqual(lines);
+  expect(stream.events.length - before).toBeLessThanOrEqual(2);
+});
+
+test("lines that come in separate moments are still delivered, in order", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const stream = listen(h, "/api/local-engine/logs");
+  await eventually(async () => stream.events.length > 0);
+  const before = stream.events.length;
+  podman(h).emitLog(CONTAINER_NAME, "first");
+  await Bun.sleep(250);
+  podman(h).emitLog(CONTAINER_NAME, "second");
+  await eventually(async () => stream.events.length - before === 2);
+  expect(stream.events.slice(before).map((event) => (event.data as { lines: string[] }).lines)).toEqual([["first"], ["second"]]);
 });

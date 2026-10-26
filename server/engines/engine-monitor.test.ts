@@ -94,6 +94,50 @@ function monitorForName(resolve: () => Promise<string[]>): EngineMonitor {
   });
 }
 
+test("an answer to a poll that began before the local engine was stopped and started again is dropped, even at the same address", async () => {
+  await monitor.stop();
+  const gate = Promise.withResolvers<void>();
+  let calls = 0;
+  monitor = new EngineMonitor({
+    store,
+    intervalMs: 30,
+    log: (line) => logs.push(line),
+    startingGraceMs: 60_000,
+    clientFor: (endpoint, options) =>
+      new TaskClient(endpoint, {
+        ...options,
+        fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          calls += 1;
+          if (calls > 1) throw new Error("connection refused");
+          // The first poll gets a good answer from the engine that is about to be stopped, and it arrives late.
+          const answer = await fetch(input, init);
+          await gate.promise;
+          return answer;
+        }) as unknown as typeof fetch,
+      }),
+  });
+  try {
+    const { id } = store.addLocal({ name: "This computer", token: fake.token, packageKind: "container", installedVersion: "2.5.0" });
+    store.update(id, { address: fake.address });
+    monitor.setLocalState(id, "starting");
+    monitor.start();
+    await eventually(async () => calls === 1);
+
+    // Stopped and started again with the address and the token unchanged.
+    store.update(id, { enabled: false });
+    monitor.setLocalState(id, "stopped");
+    store.update(id, { enabled: true });
+    monitor.setLocalState(id, "starting");
+    gate.resolve();
+    await Bun.sleep(150);
+
+    expect(monitor.views()[0]).toMatchObject({ state: "starting", info: null });
+    expect(monitor.isUsable(id)).toBe(false);
+  } finally {
+    gate.resolve();
+  }
+});
+
 test("a plain http name is checked again before every call, and a name that left the network is not called", async () => {
   let resolved = ["10.0.0.5"];
   await monitor.stop();

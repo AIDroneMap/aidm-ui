@@ -66,6 +66,8 @@ export class FakeRuntime implements ContainerRuntime {
       available: true,
       version: VERSIONS[this.id],
       memoryCapEnforced: true,
+      cpuCapEnforced: true,
+      storagePath: null,
       problem: null,
       ...options.detection,
     };

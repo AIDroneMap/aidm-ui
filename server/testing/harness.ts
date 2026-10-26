@@ -86,6 +86,8 @@ export function openHarness(
     runtimes?: Partial<Record<RuntimeId, FakeRuntime>>;
     /** The computer the local engine is sized for; default: Linux on x64 with 32 GiB and 8 cores. */
     localMachine?: LocalEngineDeps["machine"];
+    /** The port the local engine is published on; a test passes one that repeats to reuse a port. */
+    freePort?: LocalEngineDeps["freePort"];
     /** Passed to the log of the local engine, to make it rotate or retry sooner. */
     localLog?: LocalEngineDeps["logOptions"];
     /** How long a freshly started local engine may stay silent and still be starting. */
@@ -166,6 +168,7 @@ export function openHarness(
     freeBytes: options.freeBytes ?? (() => 1024 * GiB),
     log,
     sleep: async () => {},
+    freePort: options.freePort,
     logOptions: options.localLog,
   });
 

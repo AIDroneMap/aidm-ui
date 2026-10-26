@@ -39,6 +39,10 @@ a Fedora container). The recordings are from 26 October 2026.
 | `docker/logs.*` | `docker logs --tail 50 NAME` after one request | Container output is on stderr (busybox `httpd -v`), so it is in the `.json`. Client address changed to `192.0.2.1`. |
 | `docker/logs-missing.*`, `docker/stop.txt`, `docker/stop-missing.*`, `docker/rm.txt`, `docker/rm-missing.txt`, `docker/rmi.txt`, `docker/rmi-missing.*` | `logs`, `stop -t 5`, `rm -f`, `rmi` on the container and image above, and again once gone | Name changed to `aidm-engine`. `rm -f` of a missing container prints nothing and exits 0. |
 
+The adapter now asks for a container with `docker inspect --type container NAME`
+and `podman container inspect NAME`, which print the same JSON as the commands
+the inspect recordings were made with, so those recordings still stand.
+
 The Docker cases were recorded with Docker 29.9.2 on the same Linux machine,
 with the public image `docker.io/library/busybox@sha256:bdf57e52...` (busybox
 1.37). The container name was `aidm-ui-rec-9a`, shown here as `aidm-engine`, and
@@ -55,6 +59,8 @@ Marked edited because no machine produced them as they stand.
 | `podman/info-rootful.txt` | `podman/info-rootless.txt` | `security.rootless` set to `false`. |
 | `podman/info-rootless-no-memory.txt` | `podman/info-rootless.txt` | `memory` removed from `cgroupControllers`. |
 | `podman/info-rootful-no-memory.txt` | `podman/info-rootful.txt` | `memory` removed from `cgroupControllers`. |
+| `podman/info-rootless-no-cpu.txt` | `podman/info-rootless.txt` | `cpu` removed from `cgroupControllers`. |
+| `docker/info-no-cpu-quota.txt` | `docker/info.txt` | `CpuCfsQuota` set to `false`. |
 | `cpuinfo/x86-64-no-avx2.txt` | `cpuinfo/x86-64-avx2.txt` | `avx2` and `fma` removed from the `flags` line. |
 | `cpuinfo/arm64-v8-0.txt` | `cpuinfo/arm64-v8-2.txt` | `atomics` and `asimdrdm` removed from the `Features` line. |
 
@@ -73,6 +79,7 @@ No Mac was available. These are rebuilt from the output formats in the Apple
 `docs/command-reference.md` for the version JSON) and from the sample lines in
 the runtime research notes. They have not been checked against a real run.
 
+- `docker/run-image-not-found.*` (exit 125, `No such image`, which is what `docker run --pull=never` says for an image that is not stored; from the Docker CLI and daemon sources)
 - `apple-container/system-version.txt`, `system-version-not-started.txt`
 - `apple-container/system-status-running.txt`, `system-status-not-running.*`,
   `system-status-unregistered.*` (exit 1, as the source does)
@@ -90,6 +97,7 @@ differently. The adapter matches on short phrases for that reason.
 - `podman/logs.*`, `logs-missing.*`, `stop.txt`, `stop-missing.*`, `rm.txt`, `rm-missing.txt`
 - `podman/rmi.txt`, `rmi-missing.*` (exit 1, `image not known`), `rmi-in-use.*` (exit 2)
 - `podman/pull-not-found.*` (exit 125, `manifest unknown`)
+- `podman/run-image-not-found.*` (exit 125, `image not known`, which is what `podman run --pull=never` says for an image that is not stored)
 - `podman/pull-three-layers.*`: the recorded `podman/pull` with two more `Copying blob` lines, to test the layer count.
 
 ## What was scrubbed from the recordings

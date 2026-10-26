@@ -44,6 +44,8 @@ test("by default it is an available Podman 5.8.9 that enforces the memory cap", 
     available: true,
     version: "5.8.9",
     memoryCapEnforced: true,
+    cpuCapEnforced: true,
+    storagePath: null,
     problem: null,
   });
 });
@@ -121,7 +123,7 @@ test("the start command it recorded is the real Podman command line, or Docker's
   const podman = fake();
   await started(podman, { publish: { hostAddress: "127.0.0.1", hostPort: 0, containerPort: 3000 } });
   const argv = podman.starts[0]!.argv;
-  expect(argv.slice(0, 5)).toEqual(["podman", "run", "-d", "--name", NAME]);
+  expect(argv.slice(0, 6)).toEqual(["podman", "run", "-d", "--pull=never", "--name", NAME]);
   expect(argv).toContain("-p");
   expect(argv).toContain("/home/operator/engine-data:/var/www/data:Z");
   expect(argv.slice(-4)).toEqual(["--token", "run-token", "--port", "3000"]);
@@ -137,6 +139,7 @@ test("the recorded start command leaves the caps out when the detection says the
   const runtime = fake({ detection: { memoryCapEnforced: false } });
   await started(runtime);
   expect(runtime.starts[0]!.argv).not.toContain("--memory");
+  expect(runtime.starts[0]!.argv).toContain("--cpus");
 });
 
 test("a kill stops the task API and leaves the container stopped with exit code 137", async () => {

@@ -23,8 +23,12 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
   };
 }
 
-function detection(id: "podman" | "docker", memoryCapEnforced: boolean | null = true): RuntimeDetection {
-  return { id, available: true, version: "1", memoryCapEnforced, problem: null };
+function detection(
+  id: "podman" | "docker",
+  memoryCapEnforced: boolean | null = true,
+  cpuCapEnforced: boolean | null = true,
+): RuntimeDetection {
+  return { id, available: true, version: "1", memoryCapEnforced, cpuCapEnforced, storagePath: null, problem: null };
 }
 
 const tools = [
@@ -33,6 +37,7 @@ const tools = [
     make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => podmanRuntime(runner, log),
     runArgv: podmanRunArgv,
     mountSuffix: ":Z",
+    inspect: (name: string) => ["podman", "container", "inspect", name],
     detectRules: [
       { argv: ["podman", "version", "--format", "json"], result: recorded("podman", "version") },
       { argv: ["podman", "info", "--format", "json"], result: recorded("podman", "info-rootless") },
@@ -45,6 +50,7 @@ const tools = [
     make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => dockerRuntime(runner, log),
     runArgv: dockerRunArgv,
     mountSuffix: "",
+    inspect: (name: string) => ["docker", "inspect", "--type", "container", name],
     detectRules: [
       { argv: ["docker", "version", "--format", "json"], result: recorded("docker", "version") },
       { argv: ["docker", "info", "--format", "json"], result: recorded("docker", "info") },
@@ -57,7 +63,7 @@ const tools = [
 describe("the command line that starts the container", () => {
   test("Podman publishes on loopback, labels the mount, caps memory and CPUs, and puts the arguments after the image", () => {
     expect(podmanRunArgv(spec({ platform: "linux/amd64" }), detection("podman"))).toEqual([
-      "podman", "run", "-d", "--name", NAME,
+      "podman", "run", "-d", "--pull=never", "--name", NAME,
       "-p", "127.0.0.1:41823:3000",
       "-v", "/home/operator/engine-data:/var/www/data:Z",
       "--memory", "8589934592b", "--cpus", "4",
@@ -68,7 +74,7 @@ describe("the command line that starts the container", () => {
 
   test("Docker is the same without the mount label", () => {
     expect(dockerRunArgv(spec(), detection("docker"))).toEqual([
-      "docker", "run", "-d", "--name", NAME,
+      "docker", "run", "-d", "--pull=never", "--name", NAME,
       "-p", "127.0.0.1:41823:3000",
       "-v", "/home/operator/engine-data:/var/www/data",
       "--memory", "8589934592b", "--cpus", "4",
@@ -77,11 +83,28 @@ describe("the command line that starts the container", () => {
   });
 
   for (const tool of tools) {
-    test(`${tool.id} leaves the caps out when the memory cap would not be enforced`, () => {
-      const argv = tool.runArgv(spec(), detection(tool.id, false));
+    test(`${tool.id} never pulls when it starts, so a missing image is an error and not a download`, () => {
+      expect(tool.runArgv(spec(), detection(tool.id))).toContain("--pull=never");
+    });
+
+    test(`${tool.id} leaves out the memory cap alone when only that one would not be enforced`, () => {
+      const argv = tool.runArgv(spec(), detection(tool.id, false, true));
       expect(argv).not.toContain("--memory");
+      expect(argv).toContain("--cpus");
+      expect(argv).toContain(IMAGE);
+    });
+
+    test(`${tool.id} leaves out the CPU cap alone when only that one would not be enforced`, () => {
+      const argv = tool.runArgv(spec(), detection(tool.id, true, false));
+      expect(argv).toContain("--memory");
       expect(argv).not.toContain("--cpus");
       expect(argv).toContain(IMAGE);
+    });
+
+    test(`${tool.id} leaves both caps out when neither would be enforced`, () => {
+      const argv = tool.runArgv(spec(), detection(tool.id, false, false));
+      expect(argv).not.toContain("--memory");
+      expect(argv).not.toContain("--cpus");
     });
 
     test(`${tool.id} keeps the caps when it cannot tell whether they are enforced`, () => {
@@ -121,7 +144,7 @@ for (const tool of tools) {
     const argv = {
       run: tool.runArgv(spec(), detection(tool.id)),
       rm: [binary, "rm", "-f", NAME],
-      inspect: [binary, "inspect", "--format", "json", NAME],
+      inspect: tool.inspect(NAME),
     };
 
     async function started(runCase: string, extra: ScriptedRule[] = []) {
@@ -160,6 +183,13 @@ for (const tool of tools) {
       expect(runner.calls).toContainEqual(argv.rm);
     });
 
+    test("a start against an image that is not stored fails at once with runtime.image_not_found, and never pulls", async () => {
+      const { result, runner } = await started("run-image-not-found", [{ argv: argv.rm, result: cases("rm") }]);
+      expect(result).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
+      expect(runner.calls.some((call) => call[1] === "pull")).toBe(false);
+      expect(runner.calls).toContainEqual(argv.run);
+    });
+
     test("a program missing inside the image is a failed start, not a missing image", async () => {
       const runner = new ScriptedRunner([
         ...tool.detectRules,
@@ -172,12 +202,17 @@ for (const tool of tools) {
       expect(result).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { exitCode: 127 } } });
     });
 
-    test("a start that prints no container ID is a failed start", async () => {
-      const runner = new ScriptedRunner([...tool.detectRules, { argv: argv.run, result: { exitCode: 0, stdout: "", stderr: "" } }]);
+    test("a start that prints no container ID is a failed start, and clears the container it may have made", async () => {
+      const runner = new ScriptedRunner([
+        ...tool.detectRules,
+        { argv: argv.run, result: { exitCode: 0, stdout: "", stderr: "" } },
+        { argv: argv.rm, result: cases("rm") },
+      ]);
       expect(await tool.make(runner).start(spec())).toEqual({
         ok: false,
         error: { code: "runtime.start_failed", data: { exitCode: 0 } },
       });
+      expect(runner.calls).toContainEqual(argv.rm);
     });
 
     test("a pull passes the image, and the platform when there is one", async () => {
@@ -194,6 +229,22 @@ for (const tool of tools) {
       expect(result).toEqual({ ok: true, value: undefined });
       expect(seen.length).toBeGreaterThan(0);
       expect(seen.at(-1)?.phase).toBe("writing");
+    });
+
+    test("a pull keeps only the last 1000 lines of the tool's output to judge a failure by", async () => {
+      const noise = Array.from({ length: 2000 }, (_, index) => `layer ${index}`);
+      const early = new ScriptedRunner([
+        { argv: [binary, "pull", IMAGE], result: { exitCode: 1, stdout: ["manifest unknown", ...noise].join("\n"), stderr: "" } },
+      ]);
+      // The line that says the image is missing came 2000 lines ago and is forgotten.
+      expect(await tool.make(early).pull(IMAGE)).toEqual({
+        ok: false,
+        error: { code: "runtime.pull_failed", data: { exitCode: 1 } },
+      });
+      const late = new ScriptedRunner([
+        { argv: [binary, "pull", IMAGE], result: { exitCode: 1, stdout: [...noise, "manifest unknown"].join("\n"), stderr: "" } },
+      ]);
+      expect(await tool.make(late).pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
     });
 
     test("an image the registry does not have gives runtime.image_not_found", async () => {
@@ -366,15 +417,35 @@ test("Podman's other pull lines say nothing about progress", () => {
   expect(parse("Getting image source signatures")).toBeNull();
 });
 
-test("Podman without the memory controller starts the container without the caps", async () => {
-  const noCaps = podmanRunArgv(spec(), detection("podman", false));
+for (const [missing, info, memory, cpus] of [
+  ["memory", "info-rootless-no-memory", false, true],
+  ["CPU", "info-rootless-no-cpu", true, false],
+] as const) {
+  test(`Podman without the ${missing} controller starts the container without that cap and with the other`, async () => {
+    const expected = podmanRunArgv(spec(), detection("podman", memory, cpus));
+    expect(expected.includes("--memory")).toBe(memory);
+    expect(expected.includes("--cpus")).toBe(cpus);
+    const runner = new ScriptedRunner([
+      { argv: ["podman", "version", "--format", "json"], result: recorded("podman", "version") },
+      { argv: ["podman", "info", "--format", "json"], result: recorded("podman", info) },
+      { argv: expected, result: recorded("podman", "run") },
+    ]);
+    expect((await podmanRuntime(runner).start(spec())).ok).toBe(true);
+    expect(runner.calls.at(-1)).toEqual(expected);
+  });
+}
+
+test("Docker whose daemon cannot apply a CPU quota starts the container without the CPU cap and with the memory cap", async () => {
+  const expected = dockerRunArgv(spec(), detection("docker", true, false));
   const runner = new ScriptedRunner([
-    { argv: ["podman", "version", "--format", "json"], result: recorded("podman", "version") },
-    { argv: ["podman", "info", "--format", "json"], result: recorded("podman", "info-rootless-no-memory") },
-    { argv: noCaps, result: recorded("podman", "run") },
+    { argv: ["docker", "version", "--format", "json"], result: recorded("docker", "version") },
+    { argv: ["docker", "info", "--format", "json"], result: recorded("docker", "info-no-cpu-quota") },
+    { argv: expected, result: recorded("docker", "run") },
   ]);
-  expect((await podmanRuntime(runner).start(spec())).ok).toBe(true);
-  expect(runner.calls.at(-1)).toEqual(noCaps);
+  expect((await dockerRuntime(runner).start(spec())).ok).toBe(true);
+  expect(runner.calls.at(-1)).toEqual(expected);
+  expect(expected).toContain("--memory");
+  expect(expected).not.toContain("--cpus");
 });
 
 test("Podman's recorded pull of one layer gives one layer and then writing", async () => {

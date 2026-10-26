@@ -7,6 +7,7 @@ import {
   EXIT_CANNOT_RUN,
   EXIT_NOT_FOUND,
   EXIT_TIMED_OUT,
+  MAX_LINE_LENGTH,
   OUTPUT_CAP_BYTES,
   systemRunner,
 } from "./command-runner.ts";
@@ -106,6 +107,26 @@ test("a streamed line break of Windows kind is cut off", async () => {
   const lines: string[] = [];
   await systemRunner().stream(["printf", "a\\r\\nb\\r\\n"], { onLine: (line) => lines.push(line) });
   expect(lines).toEqual(["a", "b"]);
+});
+
+test("a streamed line longer than 64 KiB is handed over in pieces of 64 KiB, and the lines after it are whole", async () => {
+  const lines: string[] = [];
+  // 200000 letters without a line break, then two ordinary lines.
+  await systemRunner().stream(["sh", "-c", "head -c 200000 /dev/zero | tr '\\0' a; echo; echo next; echo last"], {
+    onLine: (line) => lines.push(line),
+  });
+  expect(MAX_LINE_LENGTH).toBe(65536);
+  expect(lines.map((line) => line.length)).toEqual([65536, 65536, 65536, 200000 - 3 * 65536, 4, 4]);
+  expect(lines.slice(0, 4).every((line) => /^a+$/.test(line))).toBe(true);
+  expect(lines.slice(4)).toEqual(["next", "last"]);
+});
+
+test("a streamed line of exactly 64 KiB is one line", async () => {
+  const lines: string[] = [];
+  await systemRunner().stream(["sh", "-c", "head -c 65536 /dev/zero | tr '\\0' b; echo; echo next"], {
+    onLine: (line) => lines.push(line),
+  });
+  expect(lines.map((line) => line.length)).toEqual([65536, 4]);
 });
 
 test("a streamed program that is not installed gives 127", async () => {
