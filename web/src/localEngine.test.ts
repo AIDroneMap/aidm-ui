@@ -177,6 +177,13 @@ test("a Mac that sets up Apple's container tool reports the step, its size and t
   expect(installStatus(view)).toEqual({ kind: "preparing", step: "installer", size: 155_965_213, received: 1000 });
   const approve: LocalEngineView = { ...fresh, state: "installing", install: macInstall("approve") };
   expect(installStatus(approve)).toEqual({ kind: "preparing", step: "approve", size: null, received: null });
+  // The kernel and the startup files are downloads of known size, and the service start is not a download.
+  const kernel: LocalEngineView = { ...fresh, state: "installing", install: macInstall("kernel", { stepReceived: 5000 }) };
+  expect(installStatus(kernel)).toEqual({ kind: "preparing", step: "kernel", size: 696_573_576, received: 5000 });
+  const init: LocalEngineView = { ...fresh, state: "installing", install: macInstall("init") };
+  expect(installStatus(init)).toEqual({ kind: "preparing", step: "init", size: 69_425_005, received: null });
+  const service: LocalEngineView = { ...fresh, state: "installing", install: macInstall("service") };
+  expect(installStatus(service)).toEqual({ kind: "preparing", step: "service", size: null, received: null });
 });
 
 test("the steps come from the plan before the click and from the install after it, with where each stands", () => {
@@ -186,16 +193,18 @@ test("the steps come from the plan before the click and from the install after i
   expect(installSteps({ ...fresh, plan: macPlan }).map((step) => [step.id, step.state])).toEqual([
     ["installer", "pending"],
     ["approve", "pending"],
+    ["service", "pending"],
     ["kernel", "pending"],
     ["init", "pending"],
     ["engine", "pending"],
   ]);
   const at = (step: Parameters<typeof macInstall>[0], phase: "preparing" | "pulling" | "failed" | "done" = "preparing") =>
     installSteps({ ...fresh, plan: macPlan, install: macInstall(step, { phase }) }).map((item) => item.state);
-  expect(at("kernel")).toEqual(["done", "done", "current", "pending", "pending"]);
-  expect(at("approve", "failed")).toEqual(["done", "failed", "pending", "pending", "pending"]);
-  expect(at("engine", "pulling")).toEqual(["done", "done", "done", "done", "current"]);
-  expect(at("engine", "done")).toEqual(["done", "done", "done", "done", "done"]);
+  expect(at("service")).toEqual(["done", "done", "current", "pending", "pending", "pending"]);
+  expect(at("kernel")).toEqual(["done", "done", "done", "current", "pending", "pending"]);
+  expect(at("approve", "failed")).toEqual(["done", "failed", "pending", "pending", "pending", "pending"]);
+  expect(at("engine", "pulling")).toEqual(["done", "done", "done", "done", "done", "current"]);
+  expect(at("engine", "done")).toEqual(["done", "done", "done", "done", "done", "done"]);
 });
 
 const applying = engineInstall({ phase: "starting", size: 1 });

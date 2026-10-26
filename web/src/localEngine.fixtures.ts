@@ -52,15 +52,19 @@ export function engineInstall(overrides: Partial<InstallProgressView> = {}): Ins
 export const macPlan: InstallProgressView["steps"] = [
   { id: "installer", size: 155_965_213 },
   { id: "approve", size: null },
+  { id: "service", size: null },
   { id: "kernel", size: 696_573_576 },
-  { id: "init", size: null },
+  { id: "init", size: 69_425_005 },
   { id: "engine", size: 622_710_197 },
 ];
 
-/** Test data: the steps on a Mac whose tool is there but never ran. The kernel's size is measured for one release, so it is not sent. */
+/**
+ * Test data: the steps on a Mac whose tool is there but is another release than the one aidm-ui has
+ * a kernel for, and has no kernel. The tool fetches its own, so the kernel's size is not sent.
+ */
 export const macStoppedPlan: InstallProgressView["steps"] = [
+  { id: "service", size: null },
   { id: "kernel", size: null },
-  { id: "init", size: null },
   { id: "engine", size: 622_710_197 },
 ];
 

@@ -11,6 +11,12 @@ export interface PinnedImage {
   repository: string;
   /** The digest of the image manifest, "sha256:<hex>". */
   digest: string;
+  /**
+   * The name the loaded image gets, when it must be one a runtime looks for
+   * (Apple's startup files). Default: localName, the repository with the
+   * digest as its tag.
+   */
+  name?: string;
 }
 
 /** One blob of an image: its digest and size, from the manifest. */
@@ -253,7 +259,7 @@ export async function downloadImage(
     report(doneBytes);
   }
 
-  const name = localName(pinned);
+  const name = pinned.name ?? localName(pinned);
   writeLayout(folder, { digest: pinned.digest, size: got.bytes.length, mediaType: manifest.mediaType }, name);
   return {
     ok: true,

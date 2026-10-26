@@ -319,7 +319,7 @@ export type RuntimeId = (typeof RUNTIME_IDS)[number];
 // The local engine (ticket #9).
 
 /** The steps of an install. Only a Mac without Apple's container tool has more than "engine". */
-export const INSTALL_STEPS = ["installer", "approve", "kernel", "init", "engine"] as const;
+export const INSTALL_STEPS = ["installer", "approve", "service", "kernel", "init", "engine"] as const;
 export type InstallStepId = (typeof INSTALL_STEPS)[number];
 
 export interface InstallStepView {

@@ -1,6 +1,7 @@
 import os from "node:os";
 import { describeCommand, EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
 import { imageArchive } from "../images/image-archive.ts";
+import { parseAppleProgress } from "./apple-progress.ts";
 import { defaultCaps, type Caps } from "../local-engine/caps.ts";
 import { DEFAULT_STOP_TIMEOUT_SECONDS } from "./cli-runtime.ts";
 import {
@@ -169,12 +170,14 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       const argv = [APPLE_TOOL, "image", "load"];
       log(describeCommand(argv));
       const kept: string[] = [];
+      let said: number | null = null;
       const result = await runner.stream(argv, {
         signal: loadOptions.signal,
         stdin: imageArchive(image, "oci"),
         onLine: (line) => {
           kept.push(line);
           if (kept.length > LOAD_OUTPUT_LINES) kept.shift();
+          said = parseAppleProgress(line)?.percent ?? said;
         },
       });
       // Only the exit status counts. The tool can print 100% in the same
@@ -182,7 +185,8 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       if (result.exitCode === 0) return ok(undefined);
       if (loadOptions.signal?.aborted) return fail("download.cancelled");
       if (SERVICE_DOWN.test(kept.join("\n"))) return fail("runtime.apple_not_started");
-      log(`The load ended with exit code ${result.exitCode}: ${kept.slice(-5).join(" / ")}`);
+      const percent = said === null ? "" : `, after the tool said ${said}%`;
+      log(`The load ended with exit code ${result.exitCode}${percent}: ${kept.slice(-5).join(" / ")}`);
       return fail("runtime.load_failed", { exitCode: result.exitCode });
     },
 

@@ -16,7 +16,7 @@ function InstallSteps({ view }: { view: LocalEngineView | null }) {
         <li key={step.id} aria-current={step.state === "current" ? "step" : undefined} className={`install-step-${step.state}`}>
           <span>
             {step.size !== null
-              ? t(`local.install.item.${step.id}`, { size: formatBytes(step.size, step.id === "kernel" ? "up" : "nearest") })
+              ? t(`local.install.item.${step.id}`, { size: formatBytes(step.size) })
               : step.id === "kernel"
                 ? t("local.install.item.kernel_unknown")
                 : t(`local.install.item.${step.id}`)}
@@ -95,7 +95,7 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
       <div role="status">
         {status.kind === "preparing" ? (
           <p>
-            {status.step === "approve" || status.step === "init" ? (
+            {status.step === "approve" || status.step === "service" ? (
               t(`local.install.step.${status.step}`)
             ) : status.step === "kernel" && status.size === null ? (
               // A kernel whose size is not known: the step says so and the bar has no value.
@@ -103,7 +103,7 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
             ) : (
               <label htmlFor={progressId}>
                 {t(`local.install.step.${status.step}`, {
-                  size: formatBytes(status.size ?? 0, status.step === "kernel" ? "up" : "nearest"),
+                  size: formatBytes(status.size ?? 0),
                 })}
               </label>
             )}
@@ -134,10 +134,10 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
         ) : null}
       </div>
       <InstallSteps view={view} />
-      {status.kind === "preparing" && (status.step === "installer" || status.step === "kernel") && (
-        // The kernel download shows no progress of its own, so its bar has no value.
-        status.step === "installer" && status.received !== null && status.size !== null ? (
-          <progress id={progressId} max={status.size} value={status.received}></progress>
+      {status.kind === "preparing" && (status.step === "installer" || status.step === "kernel" || status.step === "init") && (
+        // Every download of the Mac steps reports its bytes; a kernel the tool downloads itself may not say its size.
+        status.received !== null && status.size !== null ? (
+          <progress id={progressId} max={status.size} value={Math.min(status.received, status.size)}></progress>
         ) : (
           <progress id={progressId}></progress>
         )
