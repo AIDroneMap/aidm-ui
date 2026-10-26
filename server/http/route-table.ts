@@ -7,6 +7,7 @@ import type { EngineStore } from "../engines/engine-store.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
 import type { SampleJob } from "../sample/sample-job.ts";
 import type { MachineFacts } from "../machine/facts.ts";
+import type { ManifestService } from "../manifest/manifest-service.ts";
 import type { Settings } from "../settings/settings.ts";
 import type { EventStreams } from "./event-streams.ts";
 import type { AssetMap } from "./static-assets.ts";
@@ -34,6 +35,8 @@ export interface RouteContext {
   streams: EventStreams;
   tracker: RunTracker;
   sample: SampleJob;
+  /** The held manifest and the engine package it offers. */
+  manifests: ManifestService;
   /** Reads the computer the machine check decides by. */
   machine: { gather(): Promise<MachineFacts> };
   /** A function because the hook changes when the LAN switch moves. */

@@ -2,6 +2,7 @@ import { errorResponse } from "../../shared/api-error.ts";
 import { authRoutes } from "../auth/routes.ts";
 import { engineRoutes } from "../engines/routes.ts";
 import { machineRoutes } from "../machine/routes.ts";
+import { manifestRoutes } from "../manifest/routes.ts";
 import { runRoutes } from "../runs/routes.ts";
 import { sampleRoutes } from "../sample/routes.ts";
 import { settingsRoutes } from "../settings/routes.ts";
@@ -31,6 +32,7 @@ export function apiRoutes(ctx: RouteContext): RouteTable {
     ...authRoutes(ctx),
     ...engineRoutes(ctx),
     ...machineRoutes(ctx),
+    ...manifestRoutes(ctx),
     ...sampleRoutes(ctx),
     ...runRoutes(ctx),
   };

@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure } from "../api.ts";
-import type { SettingsView as SettingsData } from "../../../shared/api-types.ts";
+import type { PackagesView, SettingsView as SettingsData } from "../../../shared/api-types.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
 import { SettingsForm, type SettingsFormProps } from "./SettingsPage.tsx";
 
 const lanOff: SettingsData = { port: null, listeningPort: 8823, lan: { enabled: false, addresses: [] } };
+
+const packages: PackagesView = { offer: null, reason: null, updateCheck: "daily", lastCheck: null };
 
 function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsData | null = lanOff): string {
   const props: SettingsFormProps = {
@@ -23,6 +25,13 @@ function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsDa
     onSaveLan: () => {},
     onTurnLanOff: () => {},
     onRunWizard: () => {},
+    packages,
+    updateSaving: false,
+    updateSaved: false,
+    onUpdateCheckChange: () => {},
+    refreshing: false,
+    refreshResult: null,
+    onRefresh: () => {},
     ...overrides,
   };
   return renderToStaticMarkup(<SettingsForm {...props} />);
@@ -90,15 +99,15 @@ test("a failed load shows the error", () => {
 
 test("each section has a status area that is in the page even when empty, and a save fills it", () => {
   const empty = render();
-  expect(empty.match(/<p role="status"><\/p>/g)?.length).toBe(2);
+  expect(empty.match(/<p role="status"><\/p>/g)?.length).toBe(3);
 
   const portSaved = render({ saved: "port" });
   expect(portSaved).toContain('<p role="status">Port saved.');
-  expect(portSaved.match(/role="status"/g)?.length).toBe(2);
+  expect(portSaved.match(/role="status"/g)?.length).toBe(3);
 
   const lanSaved = render({ saved: "lan-off" });
   expect(lanSaved).toContain('<p role="status">AIDM UI is now closed to your local network.</p>');
-  expect(lanSaved.match(/role="status"/g)?.length).toBe(2);
+  expect(lanSaved.match(/role="status"/g)?.length).toBe(3);
 });
 
 test("a bad port marks the field invalid and points it at the hint and the error", () => {
@@ -130,4 +139,71 @@ test("a failure to reopen the wizard shows in its own section", () => {
   const html = render({ failure: { section: "wizard", error: failure } });
   expect(html).toContain('role="alert"');
   expect(html.indexOf("Setup wizard")).toBeLessThan(html.indexOf('role="alert"'));
+});
+
+test("the engine updates section binds the two radios to the setting and has the refresh button", () => {
+  const daily = render();
+  expect(daily).toContain("Engine updates");
+  expect(daily).toContain("Check for engine updates once a day?");
+  expect(daily).toMatch(/<input[^>]*id="settings-update-daily"[^>]*checked=""/);
+  expect(daily).not.toMatch(/<input[^>]*id="settings-update-never"[^>]*checked=""/);
+  expect(daily).toContain(">Yes, once a day (recommended)</label>");
+  expect(daily).toContain(">No, only when I ask</label>");
+  expect(daily).toContain("Once a day AIDM UI asks GitHub Releases whether a newer engine exists.");
+  expect(daily).toContain("GitHub sees your internet address, as with any web page.");
+  expect(daily).toContain(">Look for a newer engine now</button>");
+  expect(unlabelledInputs(daily)).toEqual([]);
+  expect(untranslatedText(daily, ["8823"])).toEqual([]);
+
+  const never = render({ packages: { ...packages, updateCheck: "never" } });
+  expect(never).toMatch(/<input[^>]*id="settings-update-never"[^>]*checked=""/);
+  expect(never).not.toMatch(/<input[^>]*id="settings-update-daily"[^>]*checked=""/);
+
+  const unanswered = render({ packages: { ...packages, updateCheck: null } });
+  expect(unanswered).not.toContain("checked");
+});
+
+test("while the packages load, the radios are disabled", () => {
+  const html = render({ packages: null });
+  expect(html.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(2);
+  expect(unlabelledInputs(html)).toEqual([]);
+});
+
+test("a busy refresh keeps the button in the tab order and marks it unavailable", () => {
+  const html = render({ refreshing: true });
+  expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Looking for a newer engine\.\.\.<\/button>/);
+  expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Looking/);
+});
+
+test("the refresh result is said in the status area", () => {
+  const found = render({ refreshResult: { ok: true, tag: "v2.6.0", replaced: true } });
+  expect(found).toContain('<p role="status">Found engine release v2.6.0</p>');
+  expect(untranslatedText(found, ["8823", "v2.6.0"])).toEqual([]);
+
+  const none = render({ refreshResult: { ok: true, tag: "v2.5.0", replaced: false } });
+  expect(none).toContain('<p role="status">No newer engine release</p>');
+});
+
+test("a refresh that failed shows the sentence for its code", () => {
+  const html = render({ refreshResult: { ok: false, error: { code: "manifest.signature_invalid", data: {} } } });
+  expect(html).toContain("The list of engine releases did not pass the signature check, so AIDM UI did not use it.");
+  expect(html).toContain('role="alert"');
+});
+
+test("a failed look for releases does not blame the network connection", () => {
+  const html = render({ refreshResult: { ok: false, error: { code: "manifest.fetch_failed", data: { step: "discover" } } } });
+  expect(html).toContain("AIDM UI could not get the list of engine releases. Try again later.");
+  expect(html).not.toContain("connection");
+});
+
+test("a failure to save the answer shows in the updates section", () => {
+  const failure = new ApiFailure(500, "server.internal_error");
+  const html = render({ failure: { section: "updates", error: failure } });
+  expect(html).toContain('role="alert"');
+  expect(html.indexOf("Engine updates")).toBeLessThan(html.indexOf('role="alert"'));
+});
+
+test("a saved answer is said in the status area", () => {
+  const html = render({ updateSaved: true });
+  expect(html).toContain('<p role="status">Your answer is saved.</p>');
 });

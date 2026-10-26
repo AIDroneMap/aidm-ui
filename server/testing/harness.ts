@@ -10,6 +10,8 @@ import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor
 import { EngineStore } from "../engines/engine-store.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import type { FreeBytes } from "../machine/disk.ts";
+import { ManifestService, type ManifestServiceDeps } from "../manifest/manifest-service.ts";
+import { UpdateCheckScheduler } from "../manifest/update-check.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { RunTracker } from "../runs/run-tracker.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
@@ -35,6 +37,8 @@ export interface Harness {
   runs: RunStore;
   tracker: RunTracker;
   sample: SampleJob;
+  manifests: ManifestService;
+  updateChecks: UpdateCheckScheduler;
   /** Where downloads and run logs go. */
   dataFolder: string;
   /** Milliseconds the throttle sees as now; move it to move time. */
@@ -69,6 +73,13 @@ export function openHarness(
     /** The sample dataset entry; tests point it at a fake file server. */
     sampleDataset?: SampleDatasetEntry;
     freeBytes?: FreeBytes;
+    /**
+     * Where the manifest comes from. Without a fetch of its own the service
+     * has no network at all, so a test can only reach a fake release server on purpose.
+     */
+    manifest?: Partial<Pick<ManifestServiceDeps, "releasesUrl" | "fetch" | "keys" | "uiVersion">>;
+    /** How often the scheduler looks at whether a check is due; short, so tests do not wait. */
+    updateCheckMs?: number;
     /** The computer the machine check reads; default: a Linux computer with 32 GiB and no container runtime. */
     machine?: RouteContext["machine"];
     /** process.arch of the computer, for the reference time. */
@@ -123,6 +134,27 @@ export function openHarness(
     clientFor: options.runClientFor,
   });
 
+  const manifests = new ManifestService({
+    settings,
+    releasesUrl: options.manifest?.releasesUrl,
+    fetch:
+      options.manifest?.fetch ??
+      (async () => {
+        throw new Error("The test harness has no network.");
+      }),
+    keys: options.manifest?.keys,
+    uiVersion: options.manifest?.uiVersion ?? TEST_IDENTITY.version,
+    now: () => clock.now,
+    log,
+  });
+  const updateChecks = new UpdateCheckScheduler({
+    settings,
+    manifests,
+    now: () => clock.now,
+    intervalMs: options.updateCheckMs ?? 50,
+    log,
+  });
+
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     assets: options.assets ?? new Map(),
@@ -133,6 +165,7 @@ export function openHarness(
     streams: new EventStreams(sessions),
     tracker,
     sample,
+    manifests,
     machine: options.machine ?? recordedMachine(),
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
@@ -151,6 +184,7 @@ export function openHarness(
   });
   engines.start();
   tracker.start();
+  updateChecks.start();
 
   return {
     base: `http://${LOOPBACK}:${listener.port}`,
@@ -163,12 +197,15 @@ export function openHarness(
     runs,
     tracker,
     sample,
+    manifests,
+    updateChecks,
     dataFolder,
     clock,
     logs,
     rebinds,
     async stop() {
       await listener?.stop();
+      await updateChecks.stop();
       await sample.stop();
       await tracker.stop();
       await engines.stop();

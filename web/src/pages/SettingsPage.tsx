@@ -1,20 +1,27 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { t } from "../i18n/translate.ts";
+import { messageParams } from "../machine.ts";
 import {
   DEFAULT_PORT,
   PASSPHRASE_MIN_LENGTH,
   PORT_MAX,
   PORT_MIN,
   type LanSettingRequest,
+  type PackagesView,
   type PortSettingRequest,
+  type RefreshResult,
+  type RefreshView,
   type SettingsView as SettingsData,
+  type UpdateCheck,
+  type UpdateCheckRequest,
   type WizardUpdateRequest,
   type WizardView,
 } from "../../../shared/api-types.ts";
 
-export type Section = "load" | "port" | "lan" | "wizard";
+export type Section = "load" | "port" | "lan" | "wizard" | "updates";
 
 export interface SettingsFormProps {
   /** Null while the settings are loading. */
@@ -37,10 +44,29 @@ export interface SettingsFormProps {
   onTurnLanOff: () => void;
   /** Opens the setup wizard again, from its first screen. */
   onRunWizard: () => void;
+  /** Null while the packages are loading. */
+  packages: PackagesView | null;
+  updateSaving: boolean;
+  /** True just after the answer to the update question was saved. */
+  updateSaved: boolean;
+  onUpdateCheckChange: (value: UpdateCheck) => void;
+  /** True while the operator's look for a newer engine is under way. */
+  refreshing: boolean;
+  refreshResult: RefreshResult | null;
+  onRefresh: () => void;
 }
 
 function Failure({ props, section, id }: { props: SettingsFormProps; section: Section; id?: string }) {
   return props.failure?.section === section ? <ErrorMessage failure={props.failure.error} id={id} /> : null;
+}
+
+function updatesStatus(props: SettingsFormProps): string {
+  const result = props.refreshResult;
+  if (props.refreshing) return t("settings.updates.refreshing");
+  if (props.updateSaving) return t("updates.saving");
+  if (props.updateSaved) return t("updates.saved");
+  if (result?.ok) return result.replaced ? t("settings.updates.found", { tag: result.tag }) : t("settings.updates.none");
+  return "";
 }
 
 export function SettingsForm(props: SettingsFormProps) {
@@ -168,6 +194,35 @@ export function SettingsForm(props: SettingsFormProps) {
         </p>
       </section>
 
+      <section aria-labelledby="settings-updates-title">
+        <h2 id="settings-updates-title">{t("settings.updates.title")}</h2>
+        <UpdateCheckQuestion
+          idPrefix="settings"
+          value={props.packages?.updateCheck ?? null}
+          saving={props.updateSaving}
+          loading={props.packages === null}
+          onChange={props.onUpdateCheckChange}
+        />
+        <Failure props={props} section="updates" />
+        {props.refreshResult && !props.refreshResult.ok && (
+          <p role="alert" className="error">
+            {t(props.refreshResult.error.code, messageParams(props.refreshResult.error))}
+          </p>
+        )}
+        <div className="actions">
+          <button
+            type="button"
+            aria-disabled={props.refreshing ? "true" : undefined}
+            onClick={() => {
+              if (!props.refreshing) props.onRefresh();
+            }}
+          >
+            {props.refreshing ? t("settings.updates.refreshing") : t("settings.updates.refresh")}
+          </button>
+        </div>
+        <p role="status">{updatesStatus(props)}</p>
+      </section>
+
       <section aria-labelledby="settings-wizard-title">
         <h2 id="settings-wizard-title">{t("settings.wizard.title")}</h2>
         <p>{t("settings.wizard.explain")}</p>
@@ -198,6 +253,11 @@ export function SettingsPage({
   const [portDraft, setPortDraft] = useState("");
   const [lanWantsOn, setLanWantsOn] = useState(false);
   const [passphrase, setPassphrase] = useState("");
+  const [packages, setPackages] = useState<PackagesView | null>(null);
+  const [updateSaving, setUpdateSaving] = useState(false);
+  const [updateSaved, setUpdateSaved] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
 
   const fail = (section: Section, error: unknown) => {
     const failure = asApiFailure(error);
@@ -218,6 +278,14 @@ export function SettingsPage({
       },
       (error: unknown) => {
         if (current) fail("load", error);
+      },
+    );
+    api<PackagesView>("GET", "/api/packages").then(
+      (loaded) => {
+        if (current) setPackages(loaded);
+      },
+      (error: unknown) => {
+        if (current) fail("updates", error);
       },
     );
     return () => {
@@ -253,6 +321,39 @@ export function SettingsPage({
     const text = portDraft.trim();
     const port = text === "" ? null : Number(text);
     void save("port", "/api/settings/port", { port }, "port");
+  };
+
+  const saveUpdateCheck = async (value: UpdateCheck) => {
+    setUpdateSaving(true);
+    setUpdateSaved(false);
+    setRefreshResult(null);
+    setFailure(null);
+    try {
+      const body: UpdateCheckRequest = { value };
+      await api<unknown>("PUT", "/api/settings/update-check", body);
+      setPackages((current) => (current ? { ...current, updateCheck: value } : current));
+      setUpdateSaved(true);
+    } catch (error) {
+      fail("updates", error);
+    } finally {
+      setUpdateSaving(false);
+    }
+  };
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setUpdateSaved(false);
+    setRefreshResult(null);
+    setFailure(null);
+    try {
+      const answer = await api<RefreshView>("POST", "/api/packages/refresh");
+      setPackages(answer.view);
+      setRefreshResult(answer.result);
+    } catch (error) {
+      fail("updates", error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const runWizard = async () => {
@@ -291,6 +392,13 @@ export function SettingsPage({
       onSaveLan={() => void save("lan", "/api/settings/lan", { enabled: true, passphrase }, "lan-on")}
       onTurnLanOff={() => void save("lan", "/api/settings/lan", { enabled: false }, "lan-off")}
       onRunWizard={() => void runWizard()}
+      packages={packages}
+      updateSaving={updateSaving}
+      updateSaved={updateSaved}
+      onUpdateCheckChange={(value) => void saveUpdateCheck(value)}
+      refreshing={refreshing}
+      refreshResult={refreshResult}
+      onRefresh={() => void refresh()}
     />
   );
 }

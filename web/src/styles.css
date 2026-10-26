@@ -118,6 +118,13 @@ button[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
+button[aria-disabled="true"] {
+  color: #1a1a1a;
+  background: #e0e0e0;
+  border-color: #5f6368;
+  cursor: not-allowed;
+}
+
 button.secondary {
   color: #0b4bb3;
   background: #ffffff;
@@ -396,4 +403,16 @@ a.button {
   .check-lines li {
     grid-template-columns: 1fr;
   }
+}
+
+fieldset {
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  border: 2px solid #5f6368;
+  border-radius: 0.375rem;
+}
+
+legend {
+  padding: 0 0.5rem;
+  font-weight: 600;
 }

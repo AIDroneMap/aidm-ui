@@ -68,6 +68,12 @@ export const MESSAGE_CODES = [
   "runtime.docker_permission_denied",
   "runtime.apple_not_started",
   "runtime.unusable",
+  "manifest.signature_invalid",
+  "manifest.malformed",
+  "manifest.older_sequence",
+  "manifest.update_interface",
+  "manifest.no_variant",
+  "manifest.fetch_failed",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

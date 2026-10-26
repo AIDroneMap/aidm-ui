@@ -1,11 +1,22 @@
 // Builds the interface with Vite, embeds its files in the server and compiles
 // one executable per platform into dist/.
 //
-//   bun scripts/build.ts                  all four targets
+// A build is a release build unless it says otherwise: it refuses to build
+// while a test key is accepted.
+//
+//   bun scripts/build.ts                  all four targets, as a release
 //   bun scripts/build.ts linux-x64        only the named targets
+//   bun scripts/build.ts --development    skips the key check, for builds that are never published
+//   bun scripts/build.ts --check-keys-only
+//                                         only the key check, exit 1 when it fails
+//   bun scripts/build.ts --development --check-keys-only
+//                                         exits 0 without checking
 import { $ } from "bun";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { verifyBuiltinManifest } from "../server/manifest/builtin.ts";
+import { ACCEPTED_KEYS } from "../server/manifest/keys.ts";
+import { releaseKeyProblems } from "../server/manifest/verify.ts";
 
 const root = join(import.meta.dir, "..");
 const webDist = join(root, "web", "dist");
@@ -67,7 +78,30 @@ async function writeEntry(): Promise<void> {
   await writeFile(join(buildDir, "entry.ts"), source);
 }
 
-const wanted = process.argv.slice(2);
+const args = process.argv.slice(2);
+const development = args.includes("--development");
+const checkKeysOnly = args.includes("--check-keys-only");
+const wanted = args.filter((arg) => !arg.startsWith("--"));
+const unknownFlags = args.filter((arg) => arg.startsWith("--") && arg !== "--development" && arg !== "--check-keys-only");
+if (unknownFlags.length > 0) {
+  console.error(`Unknown flag: ${unknownFlags.join(", ")}. Known: --development, --check-keys-only`);
+  process.exit(2);
+}
+
+// A release build must not carry the development test key. This runs before anything is built.
+if (!development) {
+  const builtin = await verifyBuiltinManifest();
+  const problems = releaseKeyProblems(ACCEPTED_KEYS, builtin.ok ? builtin.keyId : null);
+  if (problems.length > 0) {
+    console.error("A release build cannot go ahead:");
+    for (const problem of problems) console.error(`- ${problem}`);
+    console.error("Pass --development for a build that is never published.");
+    process.exit(1);
+  }
+  console.log("Release key check passed.");
+}
+if (checkKeysOnly) process.exit(0);
+
 const unknown = wanted.filter((name) => !targets.some((target) => target.name === name));
 if (unknown.length > 0) {
   console.error(`Unknown target: ${unknown.join(", ")}. Known: ${targets.map((t) => t.name).join(", ")}`);

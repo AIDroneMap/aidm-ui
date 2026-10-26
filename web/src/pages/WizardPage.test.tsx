@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure, setApiBase } from "../api.ts";
-import type { CheckLine, MachineCheckView as MachineCheckData } from "../../../shared/api-types.ts";
+import type { CheckLine, MachineCheckView as MachineCheckData, PackagesView } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
-import { textNodes, untranslatedText } from "../test-helpers.ts";
+import { textNodes, unlabelledInputs, untranslatedText } from "../test-helpers.ts";
 import {
   EngineChoiceScreen,
   InstallScreen,
@@ -206,16 +206,51 @@ test("the first and last steps are numbered correctly", () => {
   expect(textNodes(renderToStaticMarkup(<StepIndicator step="sample" />))).toContain("Step 5 of 5");
 });
 
+const builtIn: PackagesView = {
+  offer: {
+    packageVersion: "2.5.0",
+    engineVersion: "2.5.0",
+    variant: "linux-amd64-cpu",
+    kind: "container",
+    size: 682533845,
+    source: "builtin",
+    tag: null,
+  },
+  reason: null,
+  updateCheck: "daily",
+  lastCheck: null,
+};
+
+function renderInstall(
+  packages: PackagesView | null,
+  overrides: Partial<Parameters<typeof InstallScreen>[0]> = {},
+): string {
+  return renderToStaticMarkup(
+    <InstallScreen
+      packages={packages}
+      failure={null}
+      saving={false}
+      answeredHere={false}
+      announcement=""
+      onUpdateCheckChange={() => {}}
+      onBack={() => {}}
+      onNext={() => {}}
+      {...overrides}
+    />,
+  );
+}
+
 test("the welcome, install and sample screens are translated and their controls are labelled", () => {
   const welcome = renderToStaticMarkup(<WelcomeScreen onNext={() => {}} />);
-  const install = renderToStaticMarkup(<InstallScreen onBack={() => {}} onNext={() => {}} />);
+  const install = renderInstall(builtIn);
   const sample = renderToStaticMarkup(
     <SampleScreen busy={false} failure={null} onAuthRequired={() => {}} onBack={() => {}} onFinish={() => {}} />,
   );
-  for (const html of [welcome, install, sample]) {
+  for (const html of [welcome, sample]) {
     expect(untranslatedText(html)).toEqual([]);
     expect(html).not.toContain("<input");
   }
+  expect(untranslatedText(install, ["2.5.0", "651 MiB"])).toEqual([]);
   expect(welcome).toContain(">Next</button>");
   expect(install).toContain(en["wizard.install.body"]);
   expect(install).toContain(">Back</button>");
@@ -304,4 +339,100 @@ test("finishing without an engine goes home, and a failed save moves nowhere", a
   refuseSave = false;
   expect(completed).toBe(0);
   expect(moves).toEqual(["#/"]);
+});
+
+test("the install screen shows the built-in package for this computer in plain words", () => {
+  const html = renderInstall(builtIn);
+  expect(html).toContain("AIDM engine 2.5.0 for this computer");
+  expect(html).toContain("Linux, 64-bit Intel or AMD processor");
+  expect(html).toContain("Download size: 651 MiB");
+  expect(html).toContain("This information is built into AIDM UI.");
+  expect(html).toContain(en["wizard.install.body"]);
+});
+
+test("a downloaded package names the release it came from", () => {
+  const html = renderInstall({
+    ...builtIn,
+    offer: { ...builtIn.offer!, packageVersion: "2.6.0", source: "downloaded", tag: "v2.6.0" },
+  });
+  expect(html).toContain("AIDM engine 2.6.0 for this computer");
+  expect(html).toContain("This information is from release v2.6.0.");
+  expect(untranslatedText(html, ["2.6.0", "651 MiB", "v2.6.0"])).toEqual([]);
+});
+
+test("an interface that is too old shows both versions and no offer", () => {
+  const html = renderInstall({
+    ...builtIn,
+    offer: null,
+    reason: { code: "manifest.update_interface", data: { minimum: "0.4.0", running: "0.3.0" } },
+  });
+  expect(html).toContain("This engine release needs a newer AIDM UI (0.4.0). You have 0.3.0. Update AIDM UI to install it.");
+  expect(html).not.toContain("for this computer");
+  expect(html).not.toContain("Download size");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("a newer release that needs a newer interface keeps the offer and says why the newer one waits", () => {
+  const html = renderInstall({
+    ...builtIn,
+    reason: { code: "manifest.update_interface", data: { minimum: "0.4.0", running: "0.3.0" } },
+  });
+  expect(html).toContain("AIDM engine 2.5.0 for this computer");
+  expect(html).toContain("Download size: 651 MiB");
+  expect(html).toContain("This engine release needs a newer AIDM UI (0.4.0). You have 0.3.0. Update AIDM UI to install it.");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB", "0.4.0", "0.3.0"])).toEqual([]);
+});
+
+test("another reason for no offer shows its sentence, and no reason says there is no package", () => {
+  const noVariant = renderInstall({ ...builtIn, offer: null, reason: { code: "manifest.no_variant", data: {} } });
+  expect(noVariant).toContain("This engine release has no package for this computer.");
+  const none = renderInstall({ ...builtIn, offer: null });
+  expect(none).toContain("No engine package is available for this computer.");
+});
+
+test("before the packages load the screen says so, and a failure shows as an alert", () => {
+  expect(renderInstall(null)).toContain("Looking for an engine package for this computer...");
+  const html = renderInstall(null, { failure: new ApiFailure(0, "network.unreachable") });
+  expect(html).toContain('role="alert"');
+});
+
+test("the update question shows only while the answer is null", () => {
+  const asked = renderInstall({ ...builtIn, updateCheck: null });
+  expect(asked).toContain("<legend>Check for engine updates once a day?</legend>");
+  expect(asked.match(/type="radio"/g)?.length).toBe(2);
+  expect(asked).toContain(">Yes, once a day (recommended)</label>");
+  expect(asked).toContain(">No, only when I ask</label>");
+  expect(asked).toContain(
+    "Once a day AIDM UI asks GitHub Releases whether a newer engine exists. That takes a few web requests. They carry no information about you or your projects; GitHub sees your internet address, as with any web page.",
+  );
+  expect(asked).not.toContain("checked");
+  expect(unlabelledInputs(asked)).toEqual([]);
+  expect(untranslatedText(asked, ["2.5.0", "651 MiB"])).toEqual([]);
+
+  expect(renderInstall(builtIn)).not.toContain("<fieldset");
+  expect(renderInstall(builtIn)).not.toContain("GitHub Releases");
+  expect(renderInstall(null)).not.toContain("<fieldset");
+});
+
+test("the install screen keeps Back, Next and a status area, and Next needs no answer", () => {
+  const html = renderInstall({ ...builtIn, updateCheck: null });
+  expect(html).toContain(">Back</button>");
+  expect(html).toMatch(/<button type="button">Next<\/button>/);
+  expect(html).toContain('<p role="status" class="visually-hidden"></p>');
+  expect(renderInstall(builtIn, { announcement: "Your answer is saved." })).toContain(
+    '<p role="status" class="visually-hidden">Your answer is saved.</p>',
+  );
+});
+
+test("while the answer is saving, the radios are marked unavailable but stay in the page", () => {
+  const html = renderInstall({ ...builtIn, updateCheck: null }, { saving: true });
+  expect(html.match(/aria-disabled="true"/g)?.length).toBe(2);
+  expect(html).not.toContain('disabled=""');
+});
+
+test("once answered on this screen, the question stays with the saved answer checked", () => {
+  const html = renderInstall({ ...builtIn, updateCheck: "never" }, { answeredHere: true });
+  expect(html).toContain("<fieldset");
+  expect(html).toMatch(/<input[^>]*id="wizard-update-never"[^>]*checked=""/);
+  expect(html).not.toMatch(/<input[^>]*id="wizard-update-daily"[^>]*checked=""/);
 });
