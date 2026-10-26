@@ -44,3 +44,15 @@ export function parseEngineList(data: string): EngineView[] | null {
   if (!Array.isArray(parsed) || !parsed.every(isEngineView)) return null;
   return parsed;
 }
+
+/** The engines whose state is not what it was, for the ones in both lists. A new or removed engine is not a change. */
+export function stateChanges(before: EngineView[], after: EngineView[]): EngineView[] {
+  const earlier = new Map(before.map((engine) => [engine.id, engine.state]));
+  return after.filter((engine) => earlier.has(engine.id) && earlier.get(engine.id) !== engine.state);
+}
+
+/** Addresses the server would treat as the same: the trailing slash does not count. */
+export function sameAddress(a: string, b: string): boolean {
+  const clean = (address: string) => address.trim().replace(/\/+$/, "");
+  return clean(a) === clean(b);
+}

@@ -34,6 +34,7 @@
   "api.not_found": "AIDM UI could not find what you asked for.",
   "api.method_not_allowed": "AIDM UI does not accept that action.",
   "api.invalid_body": "AIDM UI could not read what was sent. Check the values and try again.",
+  "api.too_many_streams": "Too many open windows are following AIDM UI. Close some and reload this page.",
   "server.internal_error": "Something went wrong in AIDM UI. Try again. If it keeps happening, restart AIDM UI.",
   "interface.not_found": "This page does not exist in AIDM UI.",
   "interface.not_built": "The screens of AIDM UI are missing from this copy. Install AIDM UI again.",
@@ -70,6 +71,8 @@
   "engines.remove_keep": "Keep",
   "engines.remove_keep_named": "Keep {name}",
   "engines.state": "State: {state}",
+  "engines.state_last_known": "Last known state: {state}",
+  "engines.state_changed": "{name}: {state}",
   "engine.state.not_installed": "Not installed",
   "engine.state.installing": "Installing",
   "engine.state.starting": "Connecting",
@@ -77,7 +80,7 @@
   "engine.state.busy": "Busy",
   "engine.state.unreachable": "Not answering",
   "engine.state.stopped": "Stopped",
-  "engine.state.failed": "Refused the connection",
+  "engine.state.failed": "Not working",
   "engine.info.api_version": "API version {version}",
   "engine.info.engine_version": "Engine version {version}",
   "engine.info.cores": "CPU cores: {count}",
@@ -106,5 +109,6 @@
   "engine.bad_response": "Something answered at this address, but it does not look like an AIDM engine.",
   "engine.unsupported_version": "This engine uses API version {version}. AIDM UI needs {minimum} or newer.",
   "engine.not_found": "AIDM UI could not find that engine. It may have been removed.",
-  "engine.name_required": "Give the engine a name."
+  "engine.name_required": "Give the engine a name.",
+  "engine.token_required": "Type the token again when you change the address."
 }

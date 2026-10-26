@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
-import { formatCount, formatMemory, parseEngineList } from "../engines.ts";
+import { formatCount, formatMemory, parseEngineList, sameAddress, stateChanges } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
 import {
   MIN_TASK_API_VERSION,
@@ -24,7 +24,7 @@ function params(data: Record<string, unknown>): Record<string, string | number> 
 }
 
 /** What the engine itself said, when it answered with an error. */
-function EngineSaid({ error }: { error: ApiError }) {
+function EngineSaid({ error }: { error: { code: string; data: Record<string, unknown> } }) {
   const message = error.data["message"];
   if (error.code !== "engine.error" || typeof message !== "string") return null;
   return <p className="engine-said">{t("engine.error_detail", { message })}</p>;
@@ -60,6 +60,38 @@ function EngineInfo({ info, supported }: { info: EngineInfoView; supported: bool
   );
 }
 
+/** The question before a removal. Focus goes to its first button, because the button that opened it is gone. */
+function RemoveAsk(props: {
+  engine: EngineView;
+  onConfirm: (engine: EngineView) => void;
+  onKeep: (engine: EngineView) => void;
+}) {
+  const { engine } = props;
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => first.current?.focus(), []);
+  return (
+    <div role="group" aria-label={t("engines.remove_ask", { name: engine.name })} className="actions">
+      <p>{t("engines.remove_ask", { name: engine.name })}</p>
+      <button
+        ref={first}
+        type="button"
+        aria-label={t("engines.remove_confirm_named", { name: engine.name })}
+        onClick={() => props.onConfirm(engine)}
+      >
+        {t("engines.remove_confirm")}
+      </button>
+      <button
+        type="button"
+        className="secondary"
+        aria-label={t("engines.remove_keep_named", { name: engine.name })}
+        onClick={() => props.onKeep(engine)}
+      >
+        {t("engines.remove_keep")}
+      </button>
+    </div>
+  );
+}
+
 export interface EngineListProps {
   engines: EngineView[];
   /** The engine waiting for the operator to confirm its removal, or null. */
@@ -83,31 +115,16 @@ export function EngineList(props: EngineListProps) {
             {engine.kind === "local" && <span className="badge">{t("engines.local")}</span>}
           </p>
           <p>
-            <span className="state">{t("engines.state", { state: t(`engine.state.${engine.state}`) })}</span>
+            <span className="state">
+              {t(engine.enabled ? "engines.state" : "engines.state_last_known", { state: t(`engine.state.${engine.state}`) })}
+            </span>
             {!engine.enabled && <span className="badge">{t("engines.disabled")}</span>}
           </p>
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
           {engine.problem && <EngineNote error={engine.problem} kind="problem" />}
           {engine.warning && <EngineNote error={engine.warning} kind="warning" />}
           {props.askingToRemove === engine.id ? (
-            <div role="group" aria-label={t("engines.remove_ask", { name: engine.name })} className="actions">
-              <p>{t("engines.remove_ask", { name: engine.name })}</p>
-              <button
-                type="button"
-                aria-label={t("engines.remove_confirm_named", { name: engine.name })}
-                onClick={() => props.onConfirmRemove(engine)}
-              >
-                {t("engines.remove_confirm")}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                aria-label={t("engines.remove_keep_named", { name: engine.name })}
-                onClick={() => props.onKeep(engine)}
-              >
-                {t("engines.remove_keep")}
-              </button>
-            </div>
+            <RemoveAsk engine={engine} onConfirm={props.onConfirmRemove} onKeep={props.onKeep} />
           ) : (
             <div className="actions">
               <button
@@ -147,6 +164,8 @@ export interface EngineFormProps {
   name: string;
   address: string;
   token: string;
+  /** The address the engine has now, in edit mode. A different address needs the token typed again. */
+  savedAddress?: string;
   onNameChange: (value: string) => void;
   onAddressChange: (value: string) => void;
   onTokenChange: (value: string) => void;
@@ -167,6 +186,8 @@ export function EngineForm(props: EngineFormProps) {
   const busy = props.testing || props.saving;
   // In edit mode the stored token is not known here, so a test needs the token typed again.
   const cannotTest = props.mode === "edit" && props.token === "";
+  const tokenRequired =
+    props.mode === "edit" && props.savedAddress !== undefined && !sameAddress(props.address, props.savedAddress);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     props.onSave();
@@ -209,18 +230,21 @@ export function EngineForm(props: EngineFormProps) {
           type="password"
           autoComplete="off"
           aria-describedby="engine-token-hint"
+          required={tokenRequired}
           value={props.token}
           onChange={(event) => props.onTokenChange(event.target.value)}
         />
         <p id="engine-token-hint" className="hint">
-          {t(props.mode === "add" ? "engine.form.token_hint_add" : "engine.form.token_hint_edit")}
+          {tokenRequired
+            ? t("engine.token_required")
+            : t(props.mode === "add" ? "engine.form.token_hint_add" : "engine.form.token_hint_edit")}
         </p>
       </div>
 
       {props.failure && (
         <>
           <ErrorMessage failure={props.failure} id="engine-form-error" />
-          <EngineSaid error={{ code: props.failure.code as ApiError["code"], data: props.failure.data }} />
+          <EngineSaid error={props.failure} />
         </>
       )}
 
@@ -254,6 +278,8 @@ interface FormState {
   id: number | null;
   name: string;
   address: string;
+  /** The address the engine had when the form opened. */
+  savedAddress: string;
   token: string;
   test: EngineTestView | null;
   failure: ApiFailure | null;
@@ -265,6 +291,7 @@ const EMPTY_FORM: FormState = {
   id: null,
   name: "",
   address: "",
+  savedAddress: "",
   token: "",
   test: null,
   failure: null,
@@ -282,6 +309,9 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [askingToRemove, setAskingToRemove] = useState<number | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const heading = useRef<HTMLHeadingElement>(null);
+  const previous = useRef<EngineView[] | null>(null);
   // The latest callback, so the long-lived effects below never call a stale one.
   const authRequired = useRef(onAuthRequired);
   authRequired.current = onAuthRequired;
@@ -319,6 +349,22 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     };
   }, []);
 
+  // Screen reader users do not see a state move, so say it. The first list is not news.
+  useEffect(() => {
+    if (engines === null) return;
+    if (previous.current) {
+      const changes = stateChanges(previous.current, engines);
+      if (changes.length > 0) {
+        setAnnouncement(
+          changes
+            .map((engine) => t("engines.state_changed", { name: engine.name, state: t(`engine.state.${engine.state}`) }))
+            .join(". "),
+        );
+      }
+    }
+    previous.current = engines;
+  }, [engines]);
+
   const change = (patch: Partial<FormState>) =>
     setForm((existing) => (existing ? { ...existing, ...patch } : existing));
   // Changing a field makes the last test and failure out of date.
@@ -353,6 +399,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
         replace(await api<EngineView>("PUT", `/api/engines/${form.id}`, request));
       }
       setForm(null);
+      heading.current?.focus();
     } catch (error) {
       change({ failure: fail(error), saving: false });
     }
@@ -374,6 +421,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
       await api<void>("DELETE", `/api/engines/${engine.id}`);
       setEngines((existing) => (existing ?? []).filter((other) => other.id !== engine.id));
       if (form?.id === engine.id) setForm(null);
+      heading.current?.focus();
     } catch (error) {
       setFailure(fail(error));
     }
@@ -381,7 +429,12 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
 
   return (
     <>
-      <h1>{t("engines.title")}</h1>
+      <h1 ref={heading} tabIndex={-1}>
+        {t("engines.title")}
+      </h1>
+      <p role="status" className="visually-hidden">
+        {announcement}
+      </p>
       {!live && <p role="status" className="hint">{t("engines.live_paused")}</p>}
       {failure && <ErrorMessage failure={failure} />}
       {engines === null ? (
@@ -392,7 +445,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
           askingToRemove={askingToRemove}
           onEdit={(engine) => {
             setAskingToRemove(null);
-            setForm({ ...EMPTY_FORM, id: engine.id, name: engine.name, address: engine.address });
+            setForm({ ...EMPTY_FORM, id: engine.id, name: engine.name, address: engine.address, savedAddress: engine.address });
           }}
           onSetEnabled={(engine, enabled) => void setEnabled(engine, enabled)}
           onAskRemove={(engine) => setAskingToRemove(engine.id)}
@@ -407,6 +460,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
             name={form.name}
             address={form.address}
             token={form.token}
+            savedAddress={form.id === null ? undefined : form.savedAddress}
             onNameChange={(name) => edit({ name })}
             onAddressChange={(address) => edit({ address })}
             onTokenChange={(token) => edit({ token })}

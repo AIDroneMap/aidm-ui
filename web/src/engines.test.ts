@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { formatCount, formatMemory, parseEngineList } from "./engines.ts";
+import type { EngineView } from "../../shared/api-types.ts";
+import { formatCount, formatMemory, parseEngineList, sameAddress, stateChanges } from "./engines.ts";
 
 const good = {
   id: 1,
@@ -34,4 +35,21 @@ test("memory is the engine's bytes in GiB with one decimal", () => {
 
 test("counts use thousands separators", () => {
   expect(formatCount(1234)).toBe("1,234");
+});
+
+const barn = good as EngineView;
+
+test("a change of state is named, and a new or removed engine is not a change", () => {
+  const busy = { ...barn, state: "busy" } as EngineView;
+  const other = { ...barn, id: 2 } as EngineView;
+  expect(stateChanges([barn], [busy])).toEqual([busy]);
+  expect(stateChanges([barn], [barn])).toEqual([]);
+  expect(stateChanges([barn], [barn, other])).toEqual([]);
+  expect(stateChanges([barn, other], [barn])).toEqual([]);
+  expect(stateChanges([], [barn])).toEqual([]);
+});
+
+test("a trailing slash or a space does not make an address different", () => {
+  expect(sameAddress("http://192.168.1.20:3000/", " http://192.168.1.20:3000")).toBe(true);
+  expect(sameAddress("http://192.168.1.20:3000", "http://192.168.1.21:3000")).toBe(false);
 });

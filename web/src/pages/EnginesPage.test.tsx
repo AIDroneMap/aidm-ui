@@ -4,7 +4,7 @@ import { ApiFailure } from "../api.ts";
 import en from "../i18n/en.json";
 import { ENGINE_STATES, type EngineInfoView, type EngineTestView, type EngineView } from "../../../shared/api-types.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
-import { EngineForm, EngineList, type EngineFormProps, type EngineListProps } from "./EnginesPage.tsx";
+import { EngineForm, EngineList, EnginesPage, type EngineFormProps, type EngineListProps } from "./EnginesPage.tsx";
 
 const info: EngineInfoView = {
   version: "2.6.0",
@@ -219,4 +219,39 @@ test("while testing and saving, the buttons say so and are off", () => {
   const html = renderForm({ testing: true });
   expect(html).toContain("Testing...");
   expect(renderForm({ saving: true })).toContain("Saving...");
+});
+
+test("a disabled engine shows the last state it had, not a current one", () => {
+  const html = renderList([{ ...engine, enabled: false, state: "busy" }]);
+  expect(html).toContain("Last known state: Busy");
+  expect(html).not.toContain("State: Busy");
+  expect(renderList([{ ...engine, state: "busy" }])).toContain("State: Busy");
+  expect(untranslatedText(html, data)).toEqual([]);
+});
+
+test("a failed engine is not working, and the problem line says why", () => {
+  const html = renderList([
+    { ...engine, state: "failed", problem: { code: "engine.error", data: { message: "Invalid authentication token" } } },
+  ]);
+  expect(html).toContain("State: Not working");
+  expect(html).toContain("Invalid authentication token");
+});
+
+test("a new address in edit mode makes the token required and says so", () => {
+  const changed = renderForm({ mode: "edit", savedAddress: "http://192.168.1.20:3000", address: "http://192.168.1.21:3000" });
+  expect(changed).toMatch(/<input id="engine-token"[^>]*required=""/);
+  expect(changed).toContain("Type the token again when you change the address.");
+  expect(changed).not.toContain("Leave it empty");
+
+  const same = renderForm({ mode: "edit", savedAddress: "http://192.168.1.20:3000/", address: "http://192.168.1.20:3000" });
+  expect(same).not.toMatch(/<input id="engine-token"[^>]*required/);
+  expect(same).toContain("Leave it empty to keep the saved token.");
+
+  expect(renderForm({ address: "http://192.168.1.21:3000" })).not.toMatch(/<input id="engine-token"[^>]*required/);
+});
+
+test("the page has a quiet status area for state changes and a heading that can take focus", () => {
+  const html = renderToStaticMarkup(<EnginesPage onAuthRequired={() => {}} />);
+  expect(html).toContain('<h1 tabindex="-1">Engines</h1>');
+  expect(html).toMatch(/<p role="status" class="visually-hidden"><\/p>/);
 });
