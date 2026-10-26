@@ -1,0 +1,4 @@
+{
+  "exitCode": 0,
+  "stderr": "Trying to pull docker.io/library/alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1...\nGetting image source signatures\nCopying blob sha256:9824c27679d3b27c5e1cb00a73adb6f4f8d556994111c12db3c5d61a0c843df8\nCopying config sha256:9234e8fb04c47cfe0f49931e4ac7eb76fa904e33b7f8576aec0501c085f02516\nWriting manifest to image destination\n"
+}

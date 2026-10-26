@@ -206,3 +206,35 @@ export interface RunLogView {
   /** The line number to ask for next. */
   next: number;
 }
+
+// Machine check and wizard (ticket #7).
+
+export type CheckResult = "pass" | "warn" | "fail";
+
+export interface CheckLine {
+  id: "platform" | "cpu" | "ram" | "disk" | "gpu" | "runtime";
+  result: CheckResult;
+  /** One sentence for the operator, as a code with its data. */
+  message: ApiError;
+}
+
+export interface MachineCheckView {
+  lines: CheckLine[];
+  localEngine: {
+    /** True when "Install on this computer" may be offered. */
+    offered: boolean;
+    /** Why not, when it is not offered. */
+    reason: ApiError | null;
+  };
+  /** When the check ran, ISO 8601. */
+  checkedAt: string;
+}
+
+export interface WizardView {
+  completed: boolean;
+}
+
+/** PUT /api/wizard */
+export interface WizardUpdateRequest {
+  completed: boolean;
+}
