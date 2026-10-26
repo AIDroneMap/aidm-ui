@@ -235,6 +235,12 @@ function Offer({ packages }: { packages: PackagesView }) {
             : t("wizard.install.source.downloaded", { tag: offer.tag ?? "" })}
         </li>
       </ul>
+      {/* A newer release may be waiting for a newer AIDM UI while this one can still be installed. */}
+      {packages.reason && (
+        <p>
+          <Sentence error={packages.reason} />
+        </p>
+      )}
     </div>
   );
 }

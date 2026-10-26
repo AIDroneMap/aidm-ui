@@ -55,7 +55,7 @@ describe("verifyManifest", () => {
   test("a signed, valid manifest is returned with the key that signed it", async () => {
     const signer = await generateSigner("k");
     const { bytes, signature } = await signedRelease(signer, sampleManifest());
-    expect(await verifyManifest(bytes, signature, [signer.key])).toEqual({ ok: true, manifest: sampleManifest(), keyId: "k" });
+    expect(await verifyManifest(bytes, signature, [signer.key])).toEqual({ ok: true, manifest: sampleManifest(), keyId: "k", skippedVariants: [] });
   });
 
   test("the signature is checked before the content", async () => {

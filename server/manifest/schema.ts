@@ -36,7 +36,14 @@ export interface Manifest {
   variants: Partial<Record<VariantId, ManifestVariant>>;
 }
 
-export type ParsedManifest = { ok: true; manifest: Manifest } | { ok: false; error: ApiError };
+export type ParsedManifest =
+  | {
+      ok: true;
+      manifest: Manifest;
+      /** Variant ids this version does not know. They are left out so that an older interface can still read a newer manifest. */
+      skippedVariants: string[];
+    }
+  | { ok: false; error: ApiError };
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -117,9 +124,10 @@ function isHttps(text: string): boolean {
 
 /**
  * Reads the exact bytes of a manifest. It is strict: an unknown schema
- * version, a missing field, a wrong type, an unknown variant, a bad digest or
- * an archive address that is not https is manifest.malformed. Fields it does
- * not know are ignored; the schema version is what marks an incompatible change.
+ * version, a missing field, a wrong type, a bad digest or an archive address
+ * that is not https is manifest.malformed. Fields it does not know are
+ * ignored, and so are variants it does not know (they are listed in
+ * skippedVariants); the schema version is what marks an incompatible change.
  */
 export function parseManifest(bytes: Uint8Array): ParsedManifest {
   try {
@@ -133,9 +141,12 @@ export function parseManifest(bytes: Uint8Array): ParsedManifest {
     if (root.schemaVersion !== 1) throw new Malformed("schemaVersion");
     const variantsIn = asObject(root.variants, "variants");
     const variants: Manifest["variants"] = {};
+    const skippedVariants: string[] = [];
     for (const [id, entry] of Object.entries(variantsIn)) {
-      // The unknown name is not echoed back.
-      if (!isVariantId(id)) throw new Malformed("variants");
+      if (!isVariantId(id)) {
+        skippedVariants.push(id);
+        continue;
+      }
       variants[id] = parseVariant(entry, id);
     }
     return {
@@ -148,6 +159,7 @@ export function parseManifest(bytes: Uint8Array): ParsedManifest {
         minimumUiVersion: asVersion(root.minimumUiVersion, "minimumUiVersion"),
         variants,
       },
+      skippedVariants,
     };
   } catch (error) {
     return malformed(error);

@@ -1,5 +1,6 @@
 // Test keys and signed manifests. Every key pair is made in memory for the
 // test that uses it, and nothing here is ever a production key.
+import { bytesToBase64 } from "../shared/base64.ts";
 import type { Manifest } from "../server/manifest/schema.ts";
 import type { AcceptedKey } from "../server/manifest/keys.ts";
 
@@ -9,15 +10,11 @@ export interface TestSigner {
   sign(bytes: Uint8Array): Promise<Uint8Array>;
 }
 
-function toBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
-}
-
 export async function generateSigner(id = "test-key"): Promise<TestSigner> {
   const pair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   return {
-    key: { id, publicKey: toBase64(raw), test: true },
+    key: { id, publicKey: bytesToBase64(raw), test: true },
     sign: async (bytes) => new Uint8Array(await crypto.subtle.sign("Ed25519", pair.privateKey, bytes as Uint8Array<ArrayBuffer>)),
   };
 }

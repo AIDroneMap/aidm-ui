@@ -270,6 +270,15 @@ export interface PackagesView {
   lastCheck: { at: string; problem: ApiError | null } | null;
 }
 
+/** What POST /api/packages/refresh found: the release it read, or why it could not use one. */
+export type RefreshResult = { ok: true; tag: string; replaced: boolean } | { ok: false; error: ApiError };
+
+/** POST /api/packages/refresh */
+export interface RefreshView {
+  result: RefreshResult;
+  view: PackagesView;
+}
+
 /** PUT /api/settings/update-check */
 export interface UpdateCheckRequest {
   value: UpdateCheck;

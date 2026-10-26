@@ -20,7 +20,7 @@ describe("parseManifest", () => {
   test("a complete manifest is read as it is", () => {
     const manifest = sampleManifest();
     const result = parseManifest(manifestBytes(manifest));
-    expect(result).toEqual({ ok: true, manifest });
+    expect(result).toEqual({ ok: true, manifest, skippedVariants: [] });
   });
 
   test("a manifest with no variants is valid and offers nothing", () => {
@@ -29,7 +29,7 @@ describe("parseManifest", () => {
 
   test("fields it does not know are ignored", () => {
     const result = parseManifest(manifestBytes({ ...sampleManifest(), note: "hello" }));
-    expect(result).toEqual({ ok: true, manifest: sampleManifest() });
+    expect(result).toEqual({ ok: true, manifest: sampleManifest(), skippedVariants: [] });
   });
 
   test("text that is not JSON, or not an object, is malformed", () => {
@@ -62,8 +62,17 @@ describe("parseManifest", () => {
     expect(malformedField({ ...sampleManifest(), variants: [] })).toBe("variants");
   });
 
-  test("an unknown variant id is malformed and the name is not echoed", () => {
-    expect(malformedField({ ...sampleManifest(), variants: { "linux-riscv": container } })).toBe("variants");
+  test("an unknown variant id is skipped and reported, and the known variants are kept", () => {
+    const result = parseManifest(
+      manifestBytes({ ...sampleManifest(), variants: { "linux-riscv": container, "linux-amd64-cpu": container } }),
+    );
+    expect(result).toMatchObject({ ok: true, skippedVariants: ["linux-riscv"] });
+    if (result.ok) expect(Object.keys(result.manifest.variants)).toEqual(["linux-amd64-cpu"]);
+  });
+
+  test("an unknown variant is skipped whatever it holds, but a known one is still checked", () => {
+    expect(parseManifest(manifestBytes({ ...sampleManifest(), variants: { "linux-riscv": "anything" } })).ok).toBe(true);
+    expect(malformedField(withVariant({ ...container, digest: "sha256:abc" }))).toBe("variants.linux-amd64-cpu.digest");
   });
 
   test("a container variant needs an image without a tag and a sha256 digest", () => {

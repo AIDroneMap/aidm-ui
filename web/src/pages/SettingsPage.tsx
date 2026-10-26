@@ -4,7 +4,6 @@ import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
-import type { ApiError } from "../../../shared/api-error.ts";
 import {
   DEFAULT_PORT,
   PASSPHRASE_MIN_LENGTH,
@@ -13,6 +12,8 @@ import {
   type LanSettingRequest,
   type PackagesView,
   type PortSettingRequest,
+  type RefreshResult,
+  type RefreshView,
   type SettingsView as SettingsData,
   type UpdateCheck,
   type UpdateCheckRequest,
@@ -21,9 +22,6 @@ import {
 } from "../../../shared/api-types.ts";
 
 export type Section = "load" | "port" | "lan" | "wizard" | "updates";
-
-/** What POST /api/packages/refresh found. */
-export type RefreshResult = { ok: true; tag: string; replaced: boolean } | { ok: false; error: ApiError };
 
 export interface SettingsFormProps {
   /** Null while the settings are loading. */
@@ -348,7 +346,7 @@ export function SettingsPage({
     setRefreshResult(null);
     setFailure(null);
     try {
-      const answer = await api<{ result: RefreshResult; view: PackagesView }>("POST", "/api/packages/refresh");
+      const answer = await api<RefreshView>("POST", "/api/packages/refresh");
       setPackages(answer.view);
       setRefreshResult(answer.result);
     } catch (error) {

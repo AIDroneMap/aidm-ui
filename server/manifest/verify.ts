@@ -1,12 +1,9 @@
 import type { ApiError } from "../../shared/api-error.ts";
+import { base64ToBytes } from "../../shared/base64.ts";
 import { ACCEPTED_KEYS, type AcceptedKey } from "./keys.ts";
 import { parseManifest, type Manifest } from "./schema.ts";
 
 const SIGNATURE_BYTES = 64;
-
-function fromBase64(text: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
-}
 
 /** True when one of the keys made this raw Ed25519 signature over exactly these bytes. */
 export async function verifySignature(
@@ -17,7 +14,7 @@ export async function verifySignature(
   if (signature.length !== SIGNATURE_BYTES) return { ok: false };
   for (const key of keys) {
     try {
-      const publicKey = await crypto.subtle.importKey("raw", fromBase64(key.publicKey), { name: "Ed25519" }, false, [
+      const publicKey = await crypto.subtle.importKey("raw", base64ToBytes(key.publicKey), { name: "Ed25519" }, false, [
         "verify",
       ]);
       if (await crypto.subtle.verify("Ed25519", publicKey, signature as Uint8Array<ArrayBuffer>, bytes as Uint8Array<ArrayBuffer>)) {
@@ -31,7 +28,7 @@ export async function verifySignature(
 }
 
 export type VerifiedManifest =
-  | { ok: true; manifest: Manifest; keyId: string }
+  | { ok: true; manifest: Manifest; keyId: string; skippedVariants: string[] }
   | { ok: false; error: ApiError };
 
 /** The signature is checked first, so that nothing unsigned is ever read as a manifest. */
@@ -44,7 +41,7 @@ export async function verifyManifest(
   if (!signed.ok) return { ok: false, error: { code: "manifest.signature_invalid", data: {} } };
   const parsed = parseManifest(bytes);
   if (!parsed.ok) return parsed;
-  return { ok: true, manifest: parsed.manifest, keyId: signed.keyId };
+  return { ok: true, manifest: parsed.manifest, keyId: signed.keyId, skippedVariants: parsed.skippedVariants };
 }
 
 /**

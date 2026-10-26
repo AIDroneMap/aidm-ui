@@ -149,7 +149,8 @@ test("the engine updates section binds the two radios to the setting and has the
   expect(daily).not.toMatch(/<input[^>]*id="settings-update-never"[^>]*checked=""/);
   expect(daily).toContain(">Yes, once a day (recommended)</label>");
   expect(daily).toContain(">No, only when I ask</label>");
-  expect(daily).toContain("AIDM UI sends one request to GitHub Releases a day");
+  expect(daily).toContain("Once a day AIDM UI asks GitHub Releases whether a newer engine exists.");
+  expect(daily).toContain("GitHub sees your internet address, as with any web page.");
   expect(daily).toContain(">Look for a newer engine now</button>");
   expect(unlabelledInputs(daily)).toEqual([]);
   expect(untranslatedText(daily, ["8823"])).toEqual([]);
@@ -187,6 +188,12 @@ test("a refresh that failed shows the sentence for its code", () => {
   const html = render({ refreshResult: { ok: false, error: { code: "manifest.signature_invalid", data: {} } } });
   expect(html).toContain("The list of engine releases did not pass the signature check, so AIDM UI did not use it.");
   expect(html).toContain('role="alert"');
+});
+
+test("a failed look for releases does not blame the network connection", () => {
+  const html = render({ refreshResult: { ok: false, error: { code: "manifest.fetch_failed", data: { step: "discover" } } } });
+  expect(html).toContain("AIDM UI could not get the list of engine releases. Try again later.");
+  expect(html).not.toContain("connection");
 });
 
 test("a failure to save the answer shows in the updates section", () => {

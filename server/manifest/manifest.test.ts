@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import type { PackagesView } from "../../shared/api-types.ts";
+import type { PackagesView, RefreshResult } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { linuxInputs, recordedMachine } from "../../test-support/recorded-machine.ts";
 import {
@@ -14,9 +14,9 @@ import {
 } from "../../test-support/signed-manifest.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import { ACCEPTED_KEYS } from "./keys.ts";
-import type { RefreshResult } from "./manifest-service.ts";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 const LATEST = "/releases/latest/download/manifest.json";
 
 let fake: FakeFileServer;
@@ -137,11 +137,11 @@ test("a Mac with Apple silicon is offered the native package once a manifest has
   expect((await packages(h)).offer).toMatchObject({ variant: "darwin-arm64", kind: "native", size: 9 });
 });
 
-test("a Windows computer gets no offer from the built-in entry, with the reason", async () => {
+test("a Windows computer is offered nothing yet, with the reason, and nothing is requested", async () => {
   const h = open({ machine: recordedMachine(linuxInputs({ platform: "win32", arch: "x64" })) });
   const view = await packages(h);
   expect(view.offer).toBeNull();
-  expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "win32", arch: "x64" } });
+  expect(view.reason).toEqual({ code: "machine.windows_not_yet", data: {} });
   expect(fake.requests).toEqual([]);
 });
 
@@ -151,11 +151,13 @@ test("a computer of another kind gets no offer", async () => {
   expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "freebsd", arch: "x64" } });
 });
 
-test("a Windows computer is offered the native package once a manifest has one", async () => {
+test("a Windows computer is still offered nothing when a manifest has a Windows package", async () => {
   await publish("v2.6.0", sampleManifest());
   const h = open({ machine: recordedMachine(linuxInputs({ platform: "win32", arch: "x64" })) });
   await refresh(h);
-  expect((await packages(h)).offer).toMatchObject({ variant: "windows-x64", kind: "native", size: 333 });
+  const view = await packages(h);
+  expect(view.offer).toBeNull();
+  expect(view.reason?.code).toBe("machine.windows_not_yet");
 });
 
 test("the GPU image is never the offer", async () => {
@@ -277,15 +279,99 @@ test("a stored manifest whose key left the list is ignored and logged", async ()
   expect(second.logs.some((line) => line.includes("stored manifest was ignored"))).toBe(true);
 });
 
+test("a manifest below the highest sequence ever accepted is refused, even after the stored one was dropped", async () => {
+  folder = mkdtempSync(join(os.tmpdir(), "aidm-ui-manifest-"));
+  const second = await generateSigner("second-key");
+  await publish("v2.6.0", sampleManifest({ sequence: 5 }));
+  const first = open({ dataFolder: folder });
+  await refresh(first);
+  await first.stop();
+  harness = undefined;
+
+  // The key that signed the stored manifest leaves the list, so the stored manifest is dropped.
+  await publish("v2.5.9", sampleManifest({ sequence: 3, packageVersion: "2.5.9" }), second);
+  const next = open({ dataFolder: folder, manifest: { keys: keys(second) } });
+  expect((await packages(next)).offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin" });
+  expect((await refresh(next)).result).toEqual({
+    ok: false,
+    error: { code: "manifest.older_sequence", data: { held: 5, offered: 3 } },
+  });
+  expect((await packages(next)).offer?.source).toBe("builtin");
+
+  // The same sequence as the floor is accepted again, because nothing newer is held.
+  await publish("v2.6.0-resigned", sampleManifest({ sequence: 5 }), second);
+  expect((await refresh(next)).result).toEqual({ ok: true, tag: "v2.6.0-resigned", replaced: true });
+});
+
+test("variants this version does not know are skipped and logged once, and the rest is used", async () => {
+  const manifest = {
+    ...sampleManifest(),
+    futureField: { anything: true },
+    variants: {
+      ...sampleManifest().variants,
+      "linux-riscv-cpu": { kind: "container", image: "ghcr.io/aidronemap/aidm-api", digest: `sha256:${"ab".repeat(32)}`, size: 1, gpu: false },
+    },
+  };
+  await publish("v2.6.0", manifest);
+  const h = open();
+  expect((await refresh(h)).result).toEqual({ ok: true, tag: "v2.6.0", replaced: true });
+  expect((await packages(h)).offer).toMatchObject({ packageVersion: "2.6.0", variant: "linux-amd64-cpu", size: 111 });
+  await packages(h);
+  expect(h.logs.filter((line) => line.includes("linux-riscv-cpu"))).toHaveLength(1);
+});
+
+test("a stored manifest that was altered after it was signed is ignored and logged once, and the built-in offer stands", async () => {
+  await publish("v2.6.0", sampleManifest({ sequence: 4 }));
+  const h = open();
+  await refresh(h);
+  expect((await packages(h)).offer?.source).toBe("downloaded");
+
+  const held = h.settings.get("manifest.held") as { bytes: string; signature: string; tag: string };
+  const text = atob(held.bytes).replace('"packageVersion": "2.6.0"', '"packageVersion": "9.9.9"');
+  h.settings.set("manifest.held", { ...held, bytes: btoa(text) });
+
+  expect((await packages(h)).offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin" });
+  await packages(h);
+  await packages(h);
+  expect(h.logs.filter((line) => line.includes("stored manifest was ignored"))).toHaveLength(1);
+});
+
 // A manifest whose minimum aidm-ui version is too high is not offered and the "update the interface" message code is shown.
 
-test("a manifest that needs a newer interface is not offered", async () => {
+test("a newer manifest that needs a newer interface is kept, the built-in package is still offered, and the reason says why", async () => {
   await publish("v3.0.0", sampleManifest({ sequence: 9, minimumUiVersion: "10.0.0" }));
   const h = open();
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v3.0.0", replaced: true });
   const view = await packages(h);
-  expect(view.offer).toBeNull();
+  expect(view.offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin", tag: null });
   expect(view.reason).toEqual({ code: "manifest.update_interface", data: { minimum: "10.0.0", running: "9.9.9" } });
+});
+
+test("a stored manifest the interface can run is offered over the built-in entry, with no reason", async () => {
+  await publish("v2.6.0", sampleManifest({ sequence: 9, minimumUiVersion: "9.0.0" }));
+  const h = open();
+  await refresh(h);
+  const view = await packages(h);
+  expect(view.offer).toMatchObject({ packageVersion: "2.6.0", source: "downloaded" });
+  expect(view.reason).toBeNull();
+});
+
+test("when no manifest is one the interface can run, nothing is offered and the newest one's minimum is named", async () => {
+  await publish("v3.0.0", sampleManifest({ sequence: 9, minimumUiVersion: "10.0.0" }));
+  const h = open({ manifest: { uiVersion: "0.0.1" } });
+  await refresh(h);
+  const view = await packages(h);
+  expect(view.offer).toBeNull();
+  expect(view.reason).toEqual({ code: "manifest.update_interface", data: { minimum: "10.0.0", running: "0.0.1" } });
+});
+
+test("a running version that cannot be read offers no manifest at all", async () => {
+  await publish("v2.6.0", sampleManifest({ sequence: 9 }));
+  const h = open({ manifest: { uiVersion: "development" } });
+  await refresh(h);
+  const view = await packages(h);
+  expect(view.offer).toBeNull();
+  expect(view.reason).toEqual({ code: "manifest.update_interface", data: { minimum: "0.1.0", running: "development" } });
 });
 
 test("a manifest for exactly the running interface is offered", async () => {
@@ -382,13 +468,79 @@ test("with daily checks and no check yet, the first one is made at once", async 
   await eventually(async () => latestRequests() === 1);
 });
 
-test("a failed daily check is kept and shown, and is not repeated before the next day", async () => {
+test("a failed daily check is kept and shown, and is tried again after an hour", async () => {
   const h = open({ updateCheckMs: 15 });
   h.settings.set("updates.check", "daily");
   await eventually(async () => latestRequests() === 1);
   await Bun.sleep(150);
   expect(latestRequests()).toBe(1);
   expect((await packages(h)).lastCheck?.problem?.code).toBe("manifest.fetch_failed");
+
+  h.clock.now += HOUR_MS - 60_000;
+  await Bun.sleep(150);
+  expect(latestRequests()).toBe(1);
+
+  h.clock.now += 120_000;
+  await eventually(async () => latestRequests() === 2);
+  await Bun.sleep(150);
+  expect(latestRequests()).toBe(2);
+});
+
+test("after a successful check the next one waits a day, even when an hour has passed", async () => {
+  await publish("v2.6.0", sampleManifest());
+  const h = open({ updateCheckMs: 15 });
+  h.settings.set("updates.check", "daily");
+  await eventually(async () => latestRequests() === 1);
+  await Bun.sleep(100);
+  expect(h.settings.get("updates.lastSuccess")).toBe(new Date(h.clock.now).toISOString());
+
+  h.clock.now += 2 * HOUR_MS;
+  await Bun.sleep(150);
+  expect(latestRequests()).toBe(1);
+  h.clock.now += DAY_MS;
+  await eventually(async () => latestRequests() === 2);
+});
+
+test("a day after an earlier success, a failure is retried after an hour and the success time is kept", async () => {
+  const h = open({ updateCheckMs: 15 });
+  const success = new Date(h.clock.now - DAY_MS - 1000).toISOString();
+  h.settings.set("updates.lastSuccess", success);
+  h.settings.set("updates.check", "daily");
+  await eventually(async () => latestRequests() === 1);
+  await Bun.sleep(100);
+  expect(h.settings.get("updates.lastSuccess")).toBe(success);
+});
+
+test("a last check that lies in the future, because the clock moved back, counts as due", async () => {
+  await publish("v2.6.0", sampleManifest());
+  const h = open({ updateCheckMs: 15 });
+  const future = new Date(h.clock.now + 3 * DAY_MS).toISOString();
+  h.settings.set("updates.lastCheck", { at: future, problem: null });
+  h.settings.set("updates.lastSuccess", future);
+  h.settings.set("updates.check", "daily");
+  await eventually(async () => latestRequests() === 1);
+});
+
+test("stopping the checks cancels a look that is in flight at once", async () => {
+  let signal: AbortSignal | undefined;
+  const h = open({
+    updateCheckMs: 15,
+    manifest: {
+      fetch: (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal = init?.signal ?? undefined;
+          signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    },
+  });
+  h.settings.set("updates.check", "daily");
+  await eventually(async () => signal !== undefined);
+  const started = Date.now();
+  await h.updateChecks.stop();
+  expect(Date.now() - started).toBeLessThan(2000);
+  expect(signal?.aborted).toBe(true);
+  // A look that was cancelled is not a failed look: nothing is recorded, so it runs again at the next start.
+  expect(h.settings.get("updates.lastCheck")).toBeNull();
 });
 
 test("the update check answer must be daily or never", async () => {

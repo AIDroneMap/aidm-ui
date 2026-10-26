@@ -1,4 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
+import type { RefreshView } from "../../shared/api-types.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
 
 export function manifestRoutes(ctx: RouteContext): RouteTable {
@@ -16,7 +17,8 @@ export function manifestRoutes(ctx: RouteContext): RouteTable {
     "/api/packages/refresh": {
       POST: async () => {
         const result = await ctx.manifests.refresh();
-        return Response.json({ result, view: await view() });
+        const body: RefreshView = { result, view: await view() };
+        return Response.json(body);
       },
     },
 

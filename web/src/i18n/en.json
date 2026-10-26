@@ -270,7 +270,7 @@
   "updates.question": "Check for engine updates once a day?",
   "updates.option.daily": "Yes, once a day (recommended)",
   "updates.option.never": "No, only when I ask",
-  "updates.sent": "AIDM UI sends one request to GitHub Releases a day, with no information about you or your computer.",
+  "updates.sent": "Once a day AIDM UI asks GitHub Releases whether a newer engine exists. That takes a few web requests. They carry no information about you or your projects; GitHub sees your internet address, as with any web page.",
   "updates.saving": "Saving...",
   "updates.saved": "Your answer is saved.",
   "settings.updates.title": "Engine updates",
@@ -283,5 +283,5 @@
   "manifest.older_sequence": "The list of engine releases is older than the one AIDM UI already has, so AIDM UI did not use it.",
   "manifest.update_interface": "This engine release needs a newer AIDM UI ({minimum}). You have {running}. Update AIDM UI to install it.",
   "manifest.no_variant": "This engine release has no package for this computer.",
-  "manifest.fetch_failed": "AIDM UI could not get the list of engine releases. Check the network connection, then try again."
+  "manifest.fetch_failed": "AIDM UI could not get the list of engine releases. Try again later."
 }

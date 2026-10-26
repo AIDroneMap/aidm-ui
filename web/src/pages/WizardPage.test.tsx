@@ -372,6 +372,17 @@ test("an interface that is too old shows both versions and no offer", () => {
   expect(untranslatedText(html)).toEqual([]);
 });
 
+test("a newer release that needs a newer interface keeps the offer and says why the newer one waits", () => {
+  const html = renderInstall({
+    ...builtIn,
+    reason: { code: "manifest.update_interface", data: { minimum: "0.4.0", running: "0.3.0" } },
+  });
+  expect(html).toContain("AIDM engine 2.5.0 for this computer");
+  expect(html).toContain("Download size: 651 MiB");
+  expect(html).toContain("This engine release needs a newer AIDM UI (0.4.0). You have 0.3.0. Update AIDM UI to install it.");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB", "0.4.0", "0.3.0"])).toEqual([]);
+});
+
 test("another reason for no offer shows its sentence, and no reason says there is no package", () => {
   const noVariant = renderInstall({ ...builtIn, offer: null, reason: { code: "manifest.no_variant", data: {} } });
   expect(noVariant).toContain("This engine release has no package for this computer.");
@@ -392,7 +403,7 @@ test("the update question shows only while the answer is null", () => {
   expect(asked).toContain(">Yes, once a day (recommended)</label>");
   expect(asked).toContain(">No, only when I ask</label>");
   expect(asked).toContain(
-    "AIDM UI sends one request to GitHub Releases a day, with no information about you or your computer.",
+    "Once a day AIDM UI asks GitHub Releases whether a newer engine exists. That takes a few web requests. They carry no information about you or your projects; GitHub sees your internet address, as with any web page.",
   );
   expect(asked).not.toContain("checked");
   expect(unlabelledInputs(asked)).toEqual([]);
