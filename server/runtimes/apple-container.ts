@@ -67,7 +67,10 @@ const PORT_IN_USE = /address already in use|port .* (is )?(already )?(in use|all
  * `defaults`, the same numbers the engine manager would give. The tool has no
  * restart policy, so there is no restart flag. The tool's list of flags for
  * `run` has no platform flag, so none is sent: `spec.platform` is not used,
- * and the image is the arm64 copy that the pull stored.
+ * and the image is the arm64 copy that the pull stored. A read-only mount
+ * ends in ":ro", the one mount option the tool reads (1.6.1: the volume
+ * parser keeps the third part as options, and the folder is shared into the
+ * VM read-only when they hold "ro").
  */
 export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
@@ -84,7 +87,7 @@ export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): s
     String(spec.cpus ?? defaults.cpus),
     "-p",
     `${hostAddress}:${hostPort}:${containerPort}`,
-    ...spec.mounts.flatMap((mount) => ["-v", `${mount.hostPath}:${mount.containerPath}`]),
+    ...spec.mounts.flatMap((mount) => ["-v", `${mount.hostPath}:${mount.containerPath}${mount.readOnly ? ":ro" : ""}`]),
     spec.image,
     ...spec.args,
   ];

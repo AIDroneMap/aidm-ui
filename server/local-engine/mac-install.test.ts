@@ -9,7 +9,7 @@ import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { macInputs, recordedMachine, type MachineInputs } from "../../test-support/recorded-machine.ts";
 import { ScriptedRunner, recorded, type ScriptedRule } from "../../test-support/scripted-runner.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
-import { CONTAINER_NAME } from "../packages/container-package.ts";
+import { CONTAINER_NAME, containerConfigFolder } from "../packages/container-package.ts";
 import type { InstallerPin } from "../runtimes/apple-container-installer.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
@@ -475,9 +475,9 @@ test("a failure while working out the install steps is logged as that, and not a
   expect(h.logs.some((line) => line.startsWith("Looking for container runtimes failed"))).toBe(false);
 });
 
-// Criterion: the recorded start command always carries the memory and CPU flags and the rest.
+// Criterion: the recorded start command always carries the memory and CPU flags and the rest, and never the token.
 
-test("the container starts with the caps, the loopback publish, the bind mount and the fixed name, and no restart flag and no platform flag", async () => {
+test("the container starts with the caps, the loopback publish, the bind mounts and the fixed name, and no token, no restart flag and no platform flag", async () => {
   const { h, apple } = mac("missing");
   await send(h, "POST", "/api/local-engine/install");
   await eventually(async () => (await localView(h)).state === "ready");
@@ -491,6 +491,11 @@ test("the container starts with the caps, the loopback publish, the bind mount a
   expect(argv).toContain("--cpus");
   expect(argv[argv.indexOf("-p") + 1]).toMatch(/^127\.0\.0\.1:\d+:3000$/);
   expect(argv[argv.indexOf("-v") + 1]).toBe(`${join(h.dataFolder, "engine-data")}:/var/www/data`);
+  expect(argv).toContain(`${containerConfigFolder(h.dataFolder)}:/etc/aidm-ui:ro`);
+  expect(argv.slice(-2)).toEqual(["--config", "/etc/aidm-ui/task-api.json"]);
+  const token = h.engineStore.local()?.token ?? "";
+  expect(token).not.toBe("");
+  expect(argv.join(" ")).not.toContain(token);
   expect(argv.some((part) => part.startsWith("--restart"))).toBe(false);
 });
 

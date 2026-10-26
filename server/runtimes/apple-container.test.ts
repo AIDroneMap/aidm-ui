@@ -19,11 +19,14 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
     image: IMAGE,
     platform: null,
     publish: { hostAddress: "127.0.0.1", hostPort: 41823, containerPort: 3000 },
-    mounts: [{ hostPath: "/Users/operator/engine-data", containerPath: "/var/www/data" }],
+    mounts: [
+      { hostPath: "/Users/operator/engine-data", containerPath: "/var/www/data", readOnly: false },
+      { hostPath: "/Users/operator/aidm-ui/engine-config/container", containerPath: "/etc/aidm-ui", readOnly: true },
+    ],
     memoryBytes: 8 * GIB,
     cpus: 4,
     gpu: false,
-    args: ["--port", "3000", "--token", "s3cret-token", "--parallel_queue_processing", "1"],
+    args: ["--config", "/etc/aidm-ui/task-api.json"],
     ...patch,
   };
 }
@@ -48,13 +51,14 @@ function make(rules: ScriptedRule[]) {
 }
 
 describe("the command line that starts the container", () => {
-  test("it carries the tool's path, the fixed name, the memory and CPU caps, the loopback publish, the bind mount and the arguments after the image", () => {
+  test("it carries the tool's path, the fixed name, the memory and CPU caps, the loopback publish, the bind mounts and the arguments after the image", () => {
     expect(runArgv(spec(), DEFAULTS)).toEqual([
       TOOL, "run", "-d", "--name", NAME,
       "--memory", "8192M", "--cpus", "4",
       "-p", "127.0.0.1:41823:3000",
       "-v", "/Users/operator/engine-data:/var/www/data",
-      IMAGE, "--port", "3000", "--token", "s3cret-token", "--parallel_queue_processing", "1",
+      "-v", "/Users/operator/aidm-ui/engine-config/container:/etc/aidm-ui:ro",
+      IMAGE, "--config", "/etc/aidm-ui/task-api.json",
     ]);
   });
 
@@ -76,10 +80,19 @@ describe("the command line that starts the container", () => {
     expect(line[line.indexOf("-p") + 1]?.startsWith("127.0.0.1:")).toBe(true);
   });
 
-  test("every mount is a -v", () => {
-    const line = runArgv(spec({ mounts: [{ hostPath: "/a", containerPath: "/x" }, { hostPath: "/b", containerPath: "/y" }] }), DEFAULTS);
+  test("every mount is a -v, and a read-only one ends in :ro", () => {
+    const line = runArgv(
+      spec({
+        mounts: [
+          { hostPath: "/a", containerPath: "/x", readOnly: false },
+          { hostPath: "/b", containerPath: "/y", readOnly: true },
+        ],
+      }),
+      DEFAULTS,
+    );
+    expect(line.filter((part) => part === "-v")).toHaveLength(2);
     expect(line).toContain("/a:/x");
-    expect(line).toContain("/b:/y");
+    expect(line).toContain("/b:/y:ro");
   });
 
   // The flags the tool lists for run name no platform: the image is pulled for linux/arm64, and run uses that copy.
