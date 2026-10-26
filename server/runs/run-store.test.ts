@@ -61,6 +61,17 @@ test("update changes the fields given and keeps the rest", () => {
   expect(store.update(999, { state: "failed" })).toBeNull();
 });
 
+test("a finished run keeps what is stored, whatever update is asked", () => {
+  for (const finished of ["completed", "failed", "cancelled"] as const) {
+    const run = newRun();
+    store.update(run.id, { taskUuid: "t", state: finished, progress: 100 });
+    const stored = store.get(run.id);
+    const returned = store.update(run.id, { state: "queued", progress: 5, problem: { code: "run.engine_lost", data: {} } });
+    expect(returned).toEqual(stored);
+    expect(store.get(run.id)).toEqual(stored);
+  }
+});
+
 test("the latest run of a project is the one made last", () => {
   const projectId = store.builtinProjectId("sample") as number;
   expect(store.latestForProject(projectId)).toBeNull();

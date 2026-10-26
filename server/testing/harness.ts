@@ -13,7 +13,7 @@ import type { FreeBytes } from "../machine/disk.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { RunTracker } from "../runs/run-tracker.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
-import { SampleJob } from "../sample/sample-job.ts";
+import { SampleJob, type SampleJobDeps } from "../sample/sample-job.ts";
 import { listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
@@ -63,6 +63,8 @@ export function openHarness(
     clientFor?: EngineMonitorDeps["clientFor"];
     /** How often the runs are polled. */
     runPollMs?: number;
+    /** Swaps the way the sample job and the run tracker reach an engine, for tests that make a call fail. */
+    runClientFor?: SampleJobDeps["clientFor"];
     /** The sample dataset entry; tests point it at a fake file server. */
     sampleDataset?: SampleDatasetEntry;
     freeBytes?: FreeBytes;
@@ -103,6 +105,7 @@ export function openHarness(
     dataFolder,
     intervalMs: options.runPollMs ?? 50,
     log,
+    clientFor: options.runClientFor,
   });
   const sample = new SampleJob({
     dataset: options.sampleDataset ?? SAMPLE_DATASET,
@@ -114,6 +117,7 @@ export function openHarness(
     architecture: options.architecture ?? process.arch,
     log,
     freeBytes: options.freeBytes,
+    clientFor: options.runClientFor,
   });
 
   const ctx: RouteContext = {
@@ -160,10 +164,10 @@ export function openHarness(
     logs,
     rebinds,
     async stop() {
+      await listener?.stop();
       await sample.stop();
       await tracker.stop();
       await engines.stop();
-      await listener?.stop();
       db.close();
       if (ownFolder !== undefined) rmSync(ownFolder, { recursive: true, force: true });
     },

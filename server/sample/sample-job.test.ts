@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { EngineView, RunLogView, RunView, SampleView } from "../../shared/api-types.ts";
@@ -7,6 +7,7 @@ import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
 import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
+import { TaskClient, type EngineEndpoint } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "./sample-dataset.ts";
 
@@ -608,7 +609,7 @@ test("a run that was still being prepared when aidm-ui stopped is failed on the 
     harness = second;
     const failed = await getJson<RunView>(`/api/runs/${run.id}`, second);
     expect(failed.state).toBe("failed");
-    expect(failed.problem).toEqual({ code: "run.upload_failed", data: { interrupted: true } });
+    expect(failed.problem).toEqual({ code: "run.interrupted", data: {} });
     // It does not block a new start.
     expect((await send("POST", "/api/sample/start", { engineId: engine.id }, second)).status).toBe(202);
   } finally {
@@ -627,4 +628,251 @@ test("every run route answers 404 with a code for a run that does not exist", as
     expect(response.status, path).toBe(404);
     expect(await response.json(), path).toEqual({ error: { code: "run.not_found", data: {} } });
   }
+});
+
+// A finished run never changes again.
+
+test("an engine that finishes while a cancel is on its way keeps its result", async () => {
+  const { run, uuid } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 20, processingTime: 3000, progress: 20 });
+  await waitRun(run.id, (candidate) => candidate.state === "processing");
+  fake.cancelDelayMs = 500;
+  const cancelling = send("POST", `/api/runs/${run.id}/cancel`);
+  await eventually(async () => fake.requests.some((request) => request.path === "/task/cancel"));
+
+  fake.setTask(uuid, { statusCode: 40, progress: 100, results: new Uint8Array([1, 2, 3]) });
+  await waitRun(run.id, (candidate) => candidate.state === "completed");
+  const answer = await cancelling;
+  expect(answer.status).toBe(409);
+  expect(await answer.json()).toEqual({ error: { code: "run.not_cancellable", data: {} } });
+
+  await Bun.sleep(100);
+  const final = await getJson<RunView>(`/api/runs/${run.id}`);
+  expect(final).toMatchObject({ state: "completed", resultsAvailable: true, problem: null });
+});
+
+// A run on an engine that is gone.
+
+test("a run whose engine was removed can still be cancelled", async () => {
+  const { run, uuid, engine } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 20, processingTime: 2000 });
+  await waitRun(run.id, (candidate) => candidate.state === "processing");
+  expect((await send("DELETE", `/api/engines/${engine.id}`)).status).toBe(204);
+
+  const response = await send("POST", `/api/runs/${run.id}/cancel`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    state: "cancelled",
+    problem: { code: "run.cancelled_without_engine", data: {} },
+  });
+  expect(fake.requests.some((request) => request.path === "/task/cancel")).toBe(false);
+});
+
+test("a run whose engine does not answer to the cancel ends cancelled and is no longer followed", async () => {
+  const { run, uuid } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 20, processingTime: 2000 });
+  await waitRun(run.id, (candidate) => candidate.state === "processing");
+  await fake.stop();
+
+  const response = await send("POST", `/api/runs/${run.id}/cancel`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    state: "cancelled",
+    problem: { code: "run.cancelled_without_engine", data: {} },
+  });
+
+  // The engine comes back and finishes the work, but this run has ended.
+  await fake.restart();
+  fake.setTask(uuid, { statusCode: 40, results: new Uint8Array([1]) });
+  await Bun.sleep(200);
+  expect(await getJson<RunView>(`/api/runs/${run.id}`)).toMatchObject({
+    state: "cancelled",
+    problem: { code: "run.cancelled_without_engine" },
+    resultsAvailable: false,
+  });
+});
+
+test("a task the engine no longer knows, three polls in a row, ends the run failed", async () => {
+  const { run, uuid } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 20, processingTime: 2000 });
+  await waitRun(run.id, (candidate) => candidate.state === "processing");
+  fake.tasks.delete(uuid);
+  const lost = await waitRun(run.id, (candidate) => candidate.state === "failed");
+  expect(lost.problem).toEqual({ code: "run.engine_lost", data: {} });
+  expect(lost.resultsAvailable).toBe(false);
+});
+
+// No task is left behind on the engine.
+
+function failingClient(change: (client: TaskClient) => void): (endpoint: EngineEndpoint) => TaskClient {
+  return (endpoint) => {
+    const client = new TaskClient(endpoint);
+    change(client);
+    return client;
+  };
+}
+
+test("anything that throws after the task was created removes the task and fails the run", async () => {
+  await harness.stop();
+  harness = openHarness({
+    enginePollMs: 50,
+    runPollMs: 30,
+    sampleDataset: dataset,
+    runClientFor: failingClient((client) => {
+      client.uploadImage = async () => {
+        throw new Error("The disk went away.");
+      };
+    }),
+  });
+  const engine = await addEngine();
+  const run = await startedRun(engine.id);
+  const failed = await waitRun(run.id, (candidate) => candidate.state === "failed");
+  expect(failed.problem).toEqual({ code: "server.internal_error", data: {} });
+  expect(fake.requests.some((request) => request.method === "POST" && request.path === "/task/remove")).toBe(true);
+  expect(fake.tasks.size).toBe(0);
+});
+
+test("a task that cannot be removed is logged with the run's number and without the token", async () => {
+  await harness.stop();
+  harness = openHarness({
+    enginePollMs: 50,
+    runPollMs: 30,
+    sampleDataset: dataset,
+    runClientFor: failingClient((client) => {
+      client.uploadImage = async () => {
+        throw new Error("The disk went away.");
+      };
+      client.removeTask = async () => ({ ok: false, failure: { kind: "unreachable", detail: "cut" } });
+    }),
+  });
+  const engine = await addEngine();
+  const run = await startedRun(engine.id);
+  await waitRun(run.id, (candidate) => candidate.state === "failed");
+  expect(harness.logs).toContain(`Run ${run.id}: the engine task could not be removed.`);
+  expect(harness.logs.join("\n")).not.toContain(fake.token);
+});
+
+test("a cancel that the engine does not take after the commit keeps the run followed and says why", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await harness.stop();
+  harness = openHarness({
+    enginePollMs: 50,
+    runPollMs: 30,
+    sampleDataset: dataset,
+    runClientFor: failingClient((client) => {
+      const commit = client.commitTask.bind(client);
+      client.commitTask = async (uuid, signal) => {
+        const result = await commit(uuid, signal);
+        await gate;
+        return result;
+      };
+      client.cancelTask = async () => ({ ok: false, failure: { kind: "unreachable", detail: "cut" } });
+    }),
+  });
+  const engine = await addEngine();
+  const run = await startedRun(engine.id);
+  await eventually(async () => [...fake.tasks.values()].some((task) => task.committed));
+
+  const cancelling = send("POST", `/api/runs/${run.id}/cancel`);
+  await Bun.sleep(100);
+  release();
+  const answer = await cancelling;
+  expect(answer.status).toBe(502);
+  expect(await answer.json()).toEqual({ error: { code: "engine.unreachable", data: {} } });
+
+  // The run is not cancelled: it goes on being followed and ends with the engine's answer.
+  const queued = await waitRun(run.id, (candidate) => candidate.state === "queued");
+  expect(queued.problem).toBeNull();
+  fake.setTask(theTask(), { statusCode: 40, progress: 100, results: new Uint8Array([1]) });
+  await waitRun(run.id, (candidate) => candidate.state === "completed");
+});
+
+// Cancel acts at once.
+
+test("cancelling during the download ends the run at once and keeps the part", async () => {
+  files.stallNextResponseAfter(100);
+  const engine = await addEngine();
+  const run = await startedRun(engine.id);
+  const part = join(harness.dataFolder, "downloads", "test-dataset.zip.part");
+  await eventually(async () => existsSync(part) && statSync(part).size >= 100);
+
+  const began = Date.now();
+  const response = await send("POST", `/api/runs/${run.id}/cancel`);
+  expect(response.status).toBe(200);
+  expect(((await response.json()) as RunView).state).toBe("cancelled");
+  expect(Date.now() - began).toBeLessThan(1000);
+  expect(statSync(part).size).toBe(100);
+  expect(fake.tasks.size).toBe(0);
+});
+
+// The log is bounded.
+
+test("the log route gives at most 1000 lines from where it is asked, and the events stream replays the last 500", async () => {
+  const { run, uuid } = await startAndQueue();
+  const lines = Array.from({ length: 2300 }, (_, index) => `line ${index}`);
+  fake.setTask(uuid, { statusCode: 20, processingTime: 1000, output: lines });
+  await eventually(async () => (await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2299`)).lines.length === 1);
+
+  const first = await getJson<RunLogView>(`/api/runs/${run.id}/log`);
+  expect(first.lines).toEqual(lines.slice(0, 1000));
+  expect(first.next).toBe(1000);
+  const second = await getJson<RunLogView>(`/api/runs/${run.id}/log?from=${first.next}`);
+  expect(second.lines).toEqual(lines.slice(1000, 2000));
+  expect(second.next).toBe(2000);
+  const third = await getJson<RunLogView>(`/api/runs/${run.id}/log?from=${second.next}`);
+  expect(third).toEqual({ lines: lines.slice(2000), next: 2300 });
+  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=2300`)).toEqual({ lines: [], next: 2300 });
+  expect(await getJson<RunLogView>(`/api/runs/${run.id}/log?from=99999`)).toEqual({ lines: [], next: 2300 });
+
+  const events = eventReader(await send("GET", `/api/runs/${run.id}/events`));
+  try {
+    const replay = await events.next((event) => event === "log");
+    expect(replay.data).toEqual({ lines: lines.slice(1800), from: 1800 });
+  } finally {
+    await events.close();
+  }
+});
+
+// The token stays out of every log.
+
+test("the engine's token is in no log, stream or line of the server's own log during a sample job", async () => {
+  const token = "SECRET-RUN-TOKEN";
+  fake.token = token;
+  const { run, uuid } = await startAndQueue();
+
+  // A stretch without the engine puts failure lines into the server's log, with the engine's address in them.
+  await fake.stop();
+  await waitRun(run.id, (candidate) => candidate.state === "engine_unreachable");
+  await fake.restart();
+  fake.setTask(uuid, {
+    statusCode: 20,
+    processingTime: 1000,
+    output: [`calling /info?token=${token}`, `token ${encodeURIComponent(token)} again`],
+  });
+  await eventually(async () => (await getJson<RunLogView>(`/api/runs/${run.id}/log`)).lines.length === 2);
+
+  const seen: string[] = [];
+  const events = eventReader(await send("GET", `/api/runs/${run.id}/events`));
+  try {
+    seen.push(JSON.stringify((await events.next((event) => event === "run")).data));
+    seen.push(JSON.stringify((await events.next((event) => event === "log")).data));
+  } finally {
+    await events.close();
+  }
+  fake.setTask(uuid, { statusCode: 40, progress: 100, results: new Uint8Array([1]) });
+  await waitRun(run.id, (candidate) => candidate.state === "completed");
+
+  seen.push(readFileSync(join(harness.dataFolder, "runs", String(run.id), "log.txt"), "utf8"));
+  seen.push(JSON.stringify(await getJson<RunLogView>(`/api/runs/${run.id}/log`)));
+  seen.push(JSON.stringify(await getJson<RunView>(`/api/runs/${run.id}`)));
+  seen.push(harness.logs.join("\n"));
+  expect(harness.logs.length).toBeGreaterThan(0);
+  for (const text of seen) {
+    expect(text).not.toContain(token);
+    expect(text).not.toContain(encodeURIComponent(token));
+  }
+  expect(seen[2]).toContain("calling /info?token=***");
 });

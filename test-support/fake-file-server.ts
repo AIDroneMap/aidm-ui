@@ -16,6 +16,7 @@ export class FakeFileServer {
   private server: Bun.Server<undefined> | undefined;
   private port = 0;
   private cutAfter: number | undefined;
+  private stallAfter: number | undefined;
 
   constructor(files: Record<string, Uint8Array> = {}) {
     this.files = new Map(Object.entries(files));
@@ -51,6 +52,11 @@ export class FakeFileServer {
   /** The next GET of a file sends only this many bytes of the body and then breaks the connection. */
   cutNextResponseAfter(bytes: number): void {
     this.cutAfter = bytes;
+  }
+
+  /** The next GET of a file sends only this many bytes of the body and then goes quiet, with the connection open. */
+  stallNextResponseAfter(bytes: number): void {
+    this.stallAfter = bytes;
   }
 
   private answer(request: Request): Response {
@@ -107,6 +113,18 @@ export class FakeFileServer {
           await Bun.sleep(30);
           controller.error(new Error("The fake file server cut the response."));
         },
+      });
+      return new Response(stream, { status, headers });
+    }
+    if (this.stallAfter !== undefined) {
+      const first = body.subarray(0, Math.min(this.stallAfter, body.length));
+      this.stallAfter = undefined;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(first);
+        },
+        // Never answers, so the body neither ends nor breaks until the client gives up.
+        pull: () => new Promise<void>(() => {}),
       });
       return new Response(stream, { status, headers });
     }

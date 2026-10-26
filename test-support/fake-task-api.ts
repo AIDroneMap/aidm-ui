@@ -69,6 +69,8 @@ export class FakeTaskApi {
   onCommit?: (task: FakeTask) => void;
   /** Milliseconds every upload call waits before it answers, to make uploads slow. */
   uploadDelayMs = 0;
+  /** Milliseconds a cancel call waits before the engine acts on it, to make a cancel slow. */
+  cancelDelayMs = 0;
   private nextUuid = 1;
 
   private server: Bun.Server<undefined> | undefined;
@@ -282,6 +284,7 @@ export class FakeTaskApi {
       return Response.json({ error: "JSON Parse error: Unexpected EOF" });
     }
     if (typeof uuid !== "string" || uuid === "") return Response.json({ error: "uuid param missing." });
+    if (what === "cancel" && this.cancelDelayMs > 0) await Bun.sleep(this.cancelDelayMs);
     const task = this.tasks.get(uuid);
     if (!task) return Response.json({ success: false, error: `${uuid} not found` });
     if (what === "cancel") {

@@ -18,6 +18,16 @@ export type TaskApiFailure =
 
 export type TaskApiResult<T> = { ok: true; value: T } | { ok: false; failure: TaskApiFailure };
 
+/**
+ * True when the engine says it has no task with that id. The API answers
+ * `{"error": "<uuid> not found"}` (aidm-api index.js, getTaskFromUuid:
+ * `${uuid} not found`). The upload and commit routes say "Invalid uuid (not
+ * found)" instead, which is a different answer and does not match.
+ */
+export function isTaskNotFound(failure: TaskApiFailure): boolean {
+  return failure.kind === "engine_error" && /^\S+ not found$/.test(failure.message);
+}
+
 export type EngineInfo = EngineInfoView;
 
 export interface TaskOption {
@@ -53,8 +63,10 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 /** How long the engine may take to start answering a results download. The body then streams without a limit. */
 const DOWNLOAD_HEADER_TIMEOUT_MS = 5 * 60_000;
-/** Every answer this client reads is small JSON. */
+/** Every answer this client reads is small JSON, except a task's output. */
 const MAX_BODY_BYTES = 1024 * 1024;
+/** A task's output lines can add up to a few megabytes between two polls. */
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_LOGGED_VALUE_CHARS = 200;
 
 /**
@@ -99,11 +111,11 @@ export class TaskClient {
     };
   }
 
-  async createTask(name: string, options: TaskOption[]): Promise<TaskApiResult<{ uuid: string }>> {
+  async createTask(name: string, options: TaskOption[], signal?: AbortSignal): Promise<TaskApiResult<{ uuid: string }>> {
     const form = new FormData();
     form.append("name", name);
     form.append("options", JSON.stringify(options));
-    const body = await this.requestObject("POST", "/task/new/init", { body: form });
+    const body = await this.requestObject("POST", "/task/new/init", { body: form, signal });
     if (!body.ok) return body;
     const uuid = body.value.uuid;
     if (typeof uuid !== "string" || uuid === "") {
@@ -124,8 +136,8 @@ export class TaskClient {
     return body.ok ? this.expectSuccess(body.value, `/task/new/upload`) : body;
   }
 
-  async commitTask(uuid: string): Promise<TaskApiResult<void>> {
-    const body = await this.requestObject("POST", `/task/new/commit/${encodeURIComponent(uuid)}`, {});
+  async commitTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const body = await this.requestObject("POST", `/task/new/commit/${encodeURIComponent(uuid)}`, { signal });
     return body.ok ? { ok: true, value: undefined } : body;
   }
 
@@ -153,7 +165,10 @@ export class TaskClient {
 
   /** The console lines from line number fromLine on. */
   async taskOutput(uuid: string, fromLine: number): Promise<TaskApiResult<string[]>> {
-    const body = await this.request("GET", `/task/${encodeURIComponent(uuid)}/output`, { query: { line: String(fromLine) } });
+    const body = await this.request("GET", `/task/${encodeURIComponent(uuid)}/output`, {
+      query: { line: String(fromLine) },
+      maxBodyBytes: MAX_OUTPUT_BYTES,
+    });
     if (!body.ok) return body;
     if (!Array.isArray(body.value) || !body.value.every((line) => typeof line === "string")) {
       return this.badResponse(`${this.endpoint.address}/task/output`, "The output is not a list of lines.");
@@ -161,12 +176,12 @@ export class TaskClient {
     return { ok: true, value: body.value.map((line: string) => this.scrub(line)) };
   }
 
-  async cancelTask(uuid: string): Promise<TaskApiResult<void>> {
-    return this.command("/task/cancel", uuid);
+  async cancelTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    return this.command("/task/cancel", uuid, signal);
   }
 
-  async removeTask(uuid: string): Promise<TaskApiResult<void>> {
-    return this.command("/task/remove", uuid);
+  async removeTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    return this.command("/task/remove", uuid, signal);
   }
 
   /**
@@ -196,7 +211,7 @@ export class TaskClient {
     const type = response.headers.get("content-type") ?? "";
     if (type.includes("json")) {
       try {
-        const text = await readCapped(response);
+        const text = await readCapped(response, MAX_BODY_BYTES);
         const parsed = this.parse(where, response, text);
         if (!parsed.ok) return parsed;
         return this.badResponse(where, "The answer is JSON where an archive was expected.");
@@ -212,8 +227,8 @@ export class TaskClient {
     return { ok: true, value: response };
   }
 
-  private async command(path: string, uuid: string): Promise<TaskApiResult<void>> {
-    const body = await this.requestObject("POST", path, { body: new URLSearchParams({ uuid }) });
+  private async command(path: string, uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const body = await this.requestObject("POST", path, { body: new URLSearchParams({ uuid }), signal });
     if (!body.ok) return body;
     return this.expectSuccess(body.value, path);
   }
@@ -263,7 +278,7 @@ export class TaskClient {
         redirect: "manual",
         signal: options.signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), options.signal]) : AbortSignal.timeout(timeoutMs),
       });
-      text = await readCapped(response);
+      text = await readCapped(response, options.maxBodyBytes ?? MAX_BODY_BYTES);
     } catch (error) {
       const detail = this.scrub(describeFailure(error, timeoutMs));
       this.log(`Could not reach ${where}: ${detail}`);
@@ -342,6 +357,8 @@ interface RequestOptions {
   timeoutMs?: number;
   /** Lets the caller stop the call, for example when the operator cancels an upload. */
   signal?: AbortSignal;
+  /** The largest answer read, in bytes. */
+  maxBodyBytes?: number;
 }
 
 function describeFailure(error: unknown, timeoutMs: number): string {
@@ -352,7 +369,7 @@ function describeFailure(error: unknown, timeoutMs: number): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function readCapped(response: Response): Promise<string> {
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -361,7 +378,7 @@ async function readCapped(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       await reader.cancel();
       throw new Error("The answer is larger than expected.");
     }

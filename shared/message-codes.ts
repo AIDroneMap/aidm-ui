@@ -42,6 +42,9 @@ export const MESSAGE_CODES = [
   "run.results_not_ready",
   "run.upload_failed",
   "run.engine_refused",
+  "run.cancelled_without_engine",
+  "run.engine_lost",
+  "run.interrupted",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

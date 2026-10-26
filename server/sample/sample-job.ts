@@ -9,7 +9,7 @@ import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { isFinished } from "../runs/run-state.ts";
 import type { RunStore } from "../runs/run-store.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
-import { TaskClient, type EngineEndpoint, type TaskApiFailure } from "../task-api/task-client.ts";
+import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure } from "../task-api/task-client.ts";
 import type { SampleDatasetEntry } from "./sample-dataset.ts";
 import { readStoredZip, type ZipEntry } from "./stored-zip.ts";
 
@@ -49,6 +49,8 @@ export function engineMemoryCap(engine: EngineView): number | null {
 interface Preparing {
   abort: AbortController;
   done: Promise<void>;
+  /** Set when a cancel came after the engine had the task and the engine would not stop it. The cancel route answers with it. */
+  cancelFailure: ApiError | null;
 }
 
 function referenceFor(dataset: SampleDatasetEntry, architecture: string): ReferenceTimeView | null {
@@ -62,10 +64,17 @@ function referenceFor(dataset: SampleDatasetEntry, architecture: string): Refere
   };
 }
 
+/** Why a create, upload or commit call failed, for the run. */
 function problemForFailure(failure: TaskApiFailure): ApiError {
   return failure.kind === "engine_error"
     ? { code: "run.engine_refused", data: { message: failure.message } }
     : { code: "run.upload_failed", data: {} };
+}
+
+/** Why a cancel call failed, for the answer to the operator. */
+function cancelFailureError(failure: TaskApiFailure): ApiError {
+  if (failure.kind === "engine_error") return { code: "engine.error", data: { message: failure.message } };
+  return { code: failure.kind === "unreachable" ? "engine.unreachable" : "engine.bad_response", data: {} };
 }
 
 /** The sample job: download the pinned dataset, send its images to an engine, and hand the run to the tracker. */
@@ -113,48 +122,46 @@ export class SampleJob {
     }
 
     const run = this.deps.runs.create({ projectId, engineId, options: this.deps.dataset.options });
-    const abort = new AbortController();
+    const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.deps.tracker.update(run.id, {
       step: "download",
       download: { received: 0, total: this.deps.dataset.size },
     });
-    const done = this.prepare(run.id, engineId, abort.signal).catch((error: unknown) => {
+    preparing.done = this.prepare(run.id, engineId, preparing).catch((error: unknown) => {
       this.deps.log(`Run ${run.id} failed: ${error instanceof Error ? error.message : String(error)}`);
-      this.finish(run.id, { state: "failed", problem: { code: "run.upload_failed", data: {} } });
+      this.finish(run.id, { state: "failed", problem: { code: "server.internal_error", data: {} } });
     });
-    this.preparing.set(run.id, { abort, done });
-    void done.finally(() => this.preparing.delete(run.id));
+    this.preparing.set(run.id, preparing);
+    void preparing.done.finally(() => this.preparing.delete(run.id));
     return { ok: true, run: this.deps.tracker.view(run.id) as RunView };
   }
 
   async cancel(runId: number): Promise<SampleOutcome> {
     const run = this.deps.runs.get(runId);
     if (run === null) return { ok: false, status: 404, error: { code: "run.not_found", data: {} } };
-    if (isFinished(run.state)) return { ok: false, status: 409, error: { code: "run.not_cancellable", data: {} } };
+    if (isFinished(run.state)) return notCancellable();
 
     const preparing = this.preparing.get(runId);
     if (preparing !== undefined) {
       // The work stops at its next step and ends the run itself, so only one place decides how it ends.
       preparing.abort.abort();
       await preparing.done;
+      if (preparing.cancelFailure !== null) return { ok: false, status: 502, error: preparing.cancelFailure };
       return { ok: true, run: this.deps.tracker.view(runId) as RunView };
     }
 
-    const engine = run.engineId === null ? null : this.deps.engineStore.get(run.engineId);
-    if (run.taskUuid !== null && engine !== null) {
+    if (run.taskUuid !== null) {
+      const engine = run.engineId === null ? null : this.deps.engineStore.get(run.engineId);
+      // An engine that was removed cannot be asked, and nothing will ever tell this run more.
+      if (engine === null) return this.endWithoutEngine(runId);
       const result = await this.clientFor({ address: engine.address, token: engine.token }).cancelTask(run.taskUuid);
+      // The engine may have finished the run while the cancel was on its way, and a finished run never changes.
+      const now = this.deps.runs.get(runId);
+      if (now === null || isFinished(now.state)) return notCancellable();
       // An engine that no longer knows the task has nothing to stop.
-      const gone = !result.ok && result.failure.kind === "engine_error" && result.failure.message.endsWith("not found");
-      if (!result.ok && !gone) {
-        const failure = result.failure;
-        return {
-          ok: false,
-          status: 502,
-          error:
-            failure.kind === "engine_error"
-              ? { code: "engine.error", data: { message: failure.message } }
-              : { code: failure.kind === "unreachable" ? "engine.unreachable" : "engine.bad_response", data: {} },
-        };
+      if (!result.ok && !isTaskNotFound(result.failure)) {
+        if (result.failure.kind === "unreachable") return this.endWithoutEngine(runId);
+        return { ok: false, status: 502, error: cancelFailureError(result.failure) };
       }
     }
     this.finish(runId, { state: "cancelled", problem: null });
@@ -189,13 +196,34 @@ export class SampleJob {
     return { ...base, offered: true, reason: null };
   }
 
+  /** The engine cannot be reached, so the run ends here. The engine may still do the work. */
+  private endWithoutEngine(runId: number): SampleOutcome {
+    this.finish(runId, { state: "cancelled", problem: { code: "run.cancelled_without_engine", data: {} } });
+    return { ok: true, run: this.deps.tracker.view(runId) as RunView };
+  }
+
+  /** Ends a run, unless it has already ended: a finished run never changes. */
   private finish(runId: number, end: { state: "failed" | "cancelled"; problem: ApiError | null }): void {
+    const run = this.deps.runs.get(runId);
+    if (run === null || isFinished(run.state)) return;
     this.deps.tracker.update(runId, end);
   }
 
+  /** Best effort: the engine task of a run that did not get through is removed so it does not stay behind. */
+  private async removeTask(client: TaskClient, runId: number, uuid: string): Promise<void> {
+    const failed = () => this.deps.log(`Run ${runId}: the engine task could not be removed.`);
+    try {
+      const removed = await client.removeTask(uuid);
+      if (!removed.ok) failed();
+    } catch {
+      failed();
+    }
+  }
+
   /** Download, check, upload and commit. Ends by handing the run to the tracker or by finishing it. */
-  private async prepare(runId: number, engineId: number, signal: AbortSignal): Promise<void> {
+  private async prepare(runId: number, engineId: number, preparing: Preparing): Promise<void> {
     const { dataset, tracker } = this.deps;
+    const { signal } = preparing.abort;
     const zipPath = join(this.deps.dataFolder, "downloads", dataset.fileName);
 
     let lastShown = 0;
@@ -240,20 +268,42 @@ export class SampleJob {
     if (engine === null) return this.finish(runId, { state: "failed", problem: { code: "run.upload_failed", data: {} } });
     const client = this.clientFor({ address: engine.address, token: engine.token });
 
-    const created = await client.createTask("Sample job", dataset.options);
-    if (!created.ok) return this.finish(runId, { state: "failed", problem: problemForFailure(created.failure) });
+    const created = await client.createTask("Sample job", dataset.options, signal);
+    if (!created.ok) {
+      if (signal.aborted) return this.finish(runId, { state: "cancelled", problem: null });
+      return this.finish(runId, { state: "failed", problem: problemForFailure(created.failure) });
+    }
     const { uuid } = created.value;
-    tracker.update(runId, {
-      taskUuid: uuid,
-      state: "uploading",
-      step: "upload",
-      download: null,
-      upload: { done: 0, total: images.length },
-    });
+    try {
+      tracker.update(runId, {
+        taskUuid: uuid,
+        state: "uploading",
+        step: "upload",
+        download: null,
+        upload: { done: 0, total: images.length },
+      });
+      await this.sendImages(runId, client, uuid, images, zipPath, preparing);
+    } catch (error) {
+      // Whatever went wrong, the engine must not keep a task that no run will ever follow.
+      await this.removeTask(client, runId, uuid);
+      throw error;
+    }
+  }
+
+  /** Upload every image, commit, and hand the run to the tracker. The task exists on the engine already. */
+  private async sendImages(
+    runId: number,
+    client: TaskClient,
+    uuid: string,
+    images: ZipEntry[],
+    zipPath: string,
+    preparing: Preparing,
+  ): Promise<void> {
+    const { tracker } = this.deps;
+    const { signal } = preparing.abort;
 
     const stopTask = async (end: { state: "failed" | "cancelled"; problem: ApiError | null }) => {
-      const removed = await client.removeTask(uuid);
-      if (!removed.ok) this.deps.log(`Run ${runId}: the engine task could not be removed after the upload stopped.`);
+      await this.removeTask(client, runId, uuid);
       this.finish(runId, end);
     };
 
@@ -271,16 +321,28 @@ export class SampleJob {
       }
     }
 
-    const committed = await client.commitTask(uuid);
-    if (!committed.ok) return stopTask({ state: "failed", problem: problemForFailure(committed.failure) });
+    const committed = await client.commitTask(uuid, signal);
+    if (!committed.ok) {
+      // A commit cut short by a cancel may have reached the engine, and removing the task is right either way.
+      if (signal.aborted) return stopTask({ state: "cancelled", problem: null });
+      return stopTask({ state: "failed", problem: problemForFailure(committed.failure) });
+    }
     if (signal.aborted) {
-      // The engine has the task now, so it is cancelled rather than removed.
-      await client.cancelTask(uuid);
-      return this.finish(runId, { state: "cancelled", problem: null });
+      // The engine has the task now, so it is cancelled rather than removed. No signal here: it is already aborted.
+      const cancelled = await client.cancelTask(uuid);
+      if (cancelled.ok || isTaskNotFound(cancelled.failure)) {
+        return this.finish(runId, { state: "cancelled", problem: null });
+      }
+      // The engine did not stop the task, so it may still run. The run goes on being followed and the cancel route says why.
+      preparing.cancelFailure = cancelFailureError(cancelled.failure);
     }
     // No await between the commit and the hand-over, so a cancel arriving now finds a run the tracker follows.
     this.preparing.delete(runId);
     tracker.update(runId, { state: "queued", step: null, upload: null });
     tracker.follow(runId);
   }
+}
+
+function notCancellable(): SampleOutcome {
+  return { ok: false, status: 409, error: { code: "run.not_cancellable", data: {} } };
 }

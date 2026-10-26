@@ -1,4 +1,4 @@
-import type { RunState } from "../../shared/api-types.ts";
+import { FINISHED_RUN_STATES, type RunState } from "../../shared/api-types.ts";
 
 /** The task API's status codes (aidm-api, libs/statusCodes.js). */
 export const TASK_STATUS = { QUEUED: 10, RUNNING: 20, FAILED: 30, COMPLETED: 40, CANCELED: 50 } as const;
@@ -26,5 +26,5 @@ export function runStateFromTask(statusCode: unknown, processingTime: number | n
 }
 
 export function isFinished(state: RunState): boolean {
-  return state === "completed" || state === "failed" || state === "cancelled";
+  return FINISHED_RUN_STATES.includes(state);
 }

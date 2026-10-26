@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ApiError } from "../../shared/api-error.ts";
-import { RUN_STATES, type RunState } from "../../shared/api-types.ts";
+import { FINISHED_RUN_STATES, RUN_STATES, type RunState } from "../../shared/api-types.ts";
 import type { TaskOption } from "../task-api/task-client.ts";
 
 /** One row of the runs table. */
@@ -68,7 +68,7 @@ function toRecord(row: RunRow): RunRecord {
   };
 }
 
-const FINISHED_STATES = "('completed', 'failed', 'cancelled')";
+const FINISHED_STATES = `(${FINISHED_RUN_STATES.map((state) => `'${state}'`).join(", ")})`;
 
 export class RunStore {
   constructor(private readonly db: Database) {}
@@ -102,10 +102,14 @@ export class RunStore {
     return row === null ? null : toRecord(row);
   }
 
-  /** Changes the fields given and leaves the others. Null when there is no such run. */
+  /**
+   * Changes the fields given and leaves the others. Null when there is no such
+   * run. A finished run never changes again: it is returned as it is stored.
+   */
   update(id: number, patch: RunPatch): RunRecord | null {
     const current = this.get(id);
     if (current === null) return null;
+    if (FINISHED_RUN_STATES.includes(current.state)) return current;
     const next = {
       taskUuid: patch.taskUuid === undefined ? current.taskUuid : patch.taskUuid,
       state: patch.state ?? current.state,

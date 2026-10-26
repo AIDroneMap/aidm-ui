@@ -164,10 +164,11 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         port,
         dataFolder,
         async stop() {
+          // No request can arrive once the listener is down, and nothing may use the database after it closes.
+          await running.stop();
           await sample.stop();
           await tracker.stop();
           await engines.stop();
-          await running.stop();
           db.close();
           removeLock(dataFolder, process.pid);
         },

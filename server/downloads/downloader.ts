@@ -53,9 +53,13 @@ function remove(path: string): void {
   }
 }
 
-async function sha256Of(path: string): Promise<string> {
+/** The checksum of a file, or null when the operator cancelled before it was done. A big file takes seconds to read. */
+async function sha256Of(path: string, signal: AbortSignal | undefined): Promise<string | null> {
   const hasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
+  for await (const chunk of Bun.file(path).stream()) {
+    if (signal?.aborted) return null;
+    hasher.update(chunk);
+  }
   return hasher.digest("hex");
 }
 
@@ -73,7 +77,12 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 }
 
 /** What one attempt came to. */
-type Attempt = "complete" | "retry" | "cancelled" | "too_long";
+type Attempt = "complete" | "retry" | "restart" | "cancelled" | "too_long" | "refused";
+
+/** A 4xx answer will not change by asking again, except when the host asks us to wait or says we were slow. */
+function isFinalRefusal(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
 
 export async function downloadVerified(
   target: DownloadTarget,
@@ -89,13 +98,18 @@ export async function downloadVerified(
   mkdirSync(dirname(target.path), { recursive: true });
 
   if (existsSync(target.path)) {
-    if ((await sha256Of(target.path)) === target.sha256) return { ok: true, path: target.path };
+    const existing = await sha256Of(target.path, signal);
+    if (existing === null) return fail("download.cancelled");
+    if (existing === target.sha256) return { ok: true, path: target.path };
     remove(target.path);
   }
 
   const needed = Math.max(0, target.size - sizeOf(part)) + DOWNLOAD_FREE_DISK_MARGIN * target.size;
   const free = freeBytes(dirname(target.path));
   if (free < needed) return fail("download.not_enough_space", { needed, free });
+
+  // A host that cannot serve the range we ask for gets one fresh start from byte 0.
+  let startedOver = false;
 
   async function attempt(): Promise<Attempt> {
     let have = sizeOf(part);
@@ -119,12 +133,15 @@ export async function downloadVerified(
       } else if (response.status === 200) {
         append = false;
         have = 0;
-      } else if (response.status === 416 && have > 0) {
+      } else if (response.status === 416 && have > 0 && !startedOver) {
+        // The part is not a prefix of the file the host has now, so it cannot be completed.
         await response.body?.cancel().catch(() => {});
-        return "complete";
+        startedOver = true;
+        remove(part);
+        return "restart";
       } else {
         await response.body?.cancel().catch(() => {});
-        return "retry";
+        return isFinalRefusal(response.status) ? "refused" : "retry";
       }
 
       if (!response.body) return "retry";
@@ -156,6 +173,11 @@ export async function downloadVerified(
     const before = sizeOf(part);
     const result = await attempt();
     if (result === "cancelled") return fail("download.cancelled");
+    if (result === "refused") return fail("download.failed");
+    if (result === "restart") {
+      tries--;
+      continue;
+    }
     if (result === "too_long") {
       remove(part);
       return fail("download.checksum_mismatch");
@@ -167,7 +189,9 @@ export async function downloadVerified(
     await sleep(backoff(tries + 1), signal);
   }
 
-  if ((await sha256Of(part)) !== target.sha256) {
+  const checksum = await sha256Of(part, signal);
+  if (checksum === null) return fail("download.cancelled");
+  if (checksum !== target.sha256) {
     remove(part);
     return fail("download.checksum_mismatch");
   }

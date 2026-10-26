@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { FakeTaskApi, WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
-import { TaskClient } from "./task-client.ts";
+import { isTaskNotFound, TaskClient } from "./task-client.ts";
 
 let fake: FakeTaskApi | undefined;
 
@@ -339,4 +339,57 @@ test("a task call does not follow a redirect", async () => {
     await redirecting.stop(true);
     await target.stop(true);
   }
+});
+
+test("an answer for a task the engine does not know is recognised, and no other engine error is", async () => {
+  const api = await startFake();
+  const client = clientFor(api);
+  const uuid = "00000000-0000-4000-8000-0000000000aa";
+  const info = await client.taskInfo(uuid);
+  expect(info).toEqual({ ok: false, failure: { kind: "engine_error", message: `${uuid} not found` } });
+  if (!info.ok) expect(isTaskNotFound(info.failure)).toBe(true);
+  const cancelled = await client.cancelTask(uuid);
+  expect(cancelled.ok === false && isTaskNotFound(cancelled.failure)).toBe(true);
+
+  // The upload route's own wording is a different answer.
+  expect(isTaskNotFound({ kind: "engine_error", message: "Invalid uuid (not found)" })).toBe(false);
+  expect(isTaskNotFound({ kind: "engine_error", message: WRONG_TOKEN_MESSAGE })).toBe(false);
+  expect(isTaskNotFound({ kind: "unreachable", detail: "x not found" })).toBe(false);
+});
+
+test("create, commit, cancel and remove stop when the caller's signal is aborted", async () => {
+  const api = await startFake();
+  const client = clientFor(api);
+  const created = await client.createTask("Job", []);
+  if (!created.ok) throw new Error("The fake refused a new task.");
+  const { uuid } = created.value;
+  const requestsBefore = api.requests.length;
+
+  const aborted = AbortSignal.abort();
+  const results = [
+    await client.createTask("Another", [], aborted),
+    await client.commitTask(uuid, aborted),
+    await client.cancelTask(uuid, aborted),
+    await client.removeTask(uuid, aborted),
+  ];
+  for (const result of results) expect(result.ok === false && result.failure.kind === "unreachable").toBe(true);
+  expect(api.requests.length).toBe(requestsBefore);
+  expect(api.tasks.size).toBe(1);
+  expect(api.tasks.get(uuid)?.committed).toBe(false);
+});
+
+test("a task's output may be several megabytes, while other answers stay capped at one", async () => {
+  const api = await startFake();
+  const client = clientFor(api);
+  const created = await client.createTask("Job", []);
+  if (!created.ok) throw new Error("The fake refused a new task.");
+  const line = "x".repeat(1000);
+  const lines = Array.from({ length: 4000 }, () => line);
+  api.setTask(created.value.uuid, { output: lines });
+  const output = await client.taskOutput(created.value.uuid, 0);
+  expect(output.ok && output.value.length).toBe(4000);
+
+  api.info.engineVersion = "y".repeat(2 * 1024 * 1024);
+  const info = await client.info();
+  expect(info.ok).toBe(false);
 });

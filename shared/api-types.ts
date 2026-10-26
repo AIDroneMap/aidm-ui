@@ -130,6 +130,9 @@ export const RUN_STATES = [
 ] as const;
 export type RunState = (typeof RUN_STATES)[number];
 
+/** The states after which a run never changes again. The server and the interface both read this list. */
+export const FINISHED_RUN_STATES: readonly RunState[] = ["completed", "failed", "cancelled"];
+
 export interface RunView {
   id: number;
   projectId: number;

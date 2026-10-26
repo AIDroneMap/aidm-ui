@@ -2,13 +2,19 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
-import { TaskClient, type EngineEndpoint, type TaskApiResult } from "../task-api/task-client.ts";
+import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure, type TaskApiResult } from "../task-api/task-client.ts";
 import { isFinished, runStateFromTask } from "./run-state.ts";
 import type { RunPatch, RunRecord, RunStore } from "./run-store.ts";
 
 export const DEFAULT_RUN_POLL_INTERVAL_MS = 2000;
 /** After this many polls in a row without an answer the run shows the engine as unreachable. */
 const FAILED_POLLS_BEFORE_UNREACHABLE = 3;
+/** After this many polls in a row to which the engine says it has no such task, the run is lost. */
+const NOT_FOUND_POLLS_BEFORE_LOST = 3;
+/** The most lines one answer of the log route holds. */
+export const LOG_PAGE_LINES = 1000;
+/** The lines a new listener of the events stream gets first. */
+export const LOG_REPLAY_LINES = 500;
 
 export type RunEvent = { type: "run"; run: RunView } | { type: "log"; lines: string[]; from: number };
 
@@ -37,8 +43,7 @@ interface Live {
 /** What the tracker remembers about one run it follows. */
 interface Following {
   failedPolls: number;
-  /** Lines of the engine's output already saved, which is also the line to ask for next. */
-  lines: number;
+  notFoundPolls: number;
   unknownCodes: Set<string>;
   busy: boolean;
 }
@@ -53,6 +58,8 @@ export class RunTracker {
   private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
   private readonly following = new Map<number, Following>();
   private readonly live = new Map<number, Live>();
+  /** Lines saved per run, counted once from the file. It is also the next line to ask the engine for. */
+  private readonly lineCounts = new Map<number, number>();
   private readonly listeners = new Map<number, Set<(event: RunEvent) => void>>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private started = false;
@@ -100,7 +107,7 @@ export class RunTracker {
     if (run === null || run.taskUuid === null || isFinished(run.state)) return;
     this.following.set(runId, {
       failedPolls: 0,
-      lines: this.savedLines(runId).length,
+      notFoundPolls: 0,
       unknownCodes: new Set(),
       busy: false,
     });
@@ -112,11 +119,17 @@ export class RunTracker {
     return run === null ? null : this.viewOf(run);
   }
 
-  /** The saved console lines from line number `from` on. */
+  /** The saved console lines from line number `from` on, at most one page. `next` is where the next page starts. */
   log(runId: number, from: number): RunLogView {
-    const lines = this.savedLines(runId);
-    const start = Math.max(0, Math.min(from, lines.length));
-    return { lines: lines.slice(start), next: lines.length };
+    const start = Math.max(0, Math.min(from, this.lineCount(runId)));
+    const lines = this.readLines(runId, start, LOG_PAGE_LINES);
+    return { lines, next: start + lines.length };
+  }
+
+  /** The newest saved lines, and the line number of the first one. What a listener gets when it joins. */
+  recentLog(runId: number): { lines: string[]; from: number } {
+    const from = Math.max(0, this.lineCount(runId) - LOG_REPLAY_LINES);
+    return { lines: this.readLines(runId, from, LOG_REPLAY_LINES), from };
   }
 
   subscribe(runId: number, listener: (event: RunEvent) => void): () => void {
@@ -131,9 +144,14 @@ export class RunTracker {
     };
   }
 
-  /** Saves what changed on a run and tells its listeners. A finished run is no longer followed. */
+  /**
+   * Saves what changed on a run and tells its listeners. A finished run is no
+   * longer followed, and it never changes again: an update to it is dropped.
+   */
   update(runId: number, patch: RunUpdate): void {
     if (this.stopped) return;
+    const existing = this.runs.get(runId);
+    if (existing !== null && isFinished(existing.state)) return;
     const { step, download, upload, ...saved } = patch;
     const live = this.liveOf(runId);
     if (step !== undefined) live.step = step;
@@ -203,35 +221,64 @@ export class RunTracker {
     return join(this.dataFolder, "runs", String(runId), "log.txt");
   }
 
-  private savedLines(runId: number): string[] {
+  /** How many lines the run has saved. The file is read for this only the first time. */
+  private lineCount(runId: number): number {
+    let count = this.lineCounts.get(runId);
+    if (count === undefined) {
+      count = countLines(this.readFile(runId));
+      this.lineCounts.set(runId, count);
+    }
+    return count;
+  }
+
+  private readFile(runId: number): string {
     const path = this.logPath(runId);
-    if (!existsSync(path)) return [];
-    const text = readFileSync(path, "utf8");
-    return text === "" ? [] : text.replace(/\n$/, "").split("\n");
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+
+  /** At most `max` lines, starting at line number `start`. */
+  private readLines(runId: number, start: number, max: number): string[] {
+    const text = this.readFile(runId);
+    let at = 0;
+    for (let skipped = 0; skipped < start; skipped++) {
+      const end = text.indexOf("\n", at);
+      if (end === -1) return [];
+      at = end + 1;
+    }
+    const lines: string[] = [];
+    while (lines.length < max && at < text.length) {
+      const end = text.indexOf("\n", at);
+      if (end === -1) {
+        lines.push(text.slice(at));
+        break;
+      }
+      lines.push(text.slice(at, end));
+      at = end + 1;
+    }
+    return lines;
   }
 
   private saveLines(runId: number, lines: string[]): void {
+    const before = this.lineCount(runId);
     const path = this.logPath(runId);
     mkdirSync(join(this.dataFolder, "runs", String(runId)), { recursive: true });
     // One engine line is one file line, so the line count is also the engine's next line number.
     appendFileSync(path, lines.map((line) => `${line.replace(/[\r\n]+/g, " ")}\n`).join(""));
+    this.lineCounts.set(runId, before + lines.length);
   }
 
   /** A run that was being prepared when aidm-ui stopped cannot go on. */
   private abandon(run: RunRecord): void {
-    this.update(run.id, {
-      state: "failed",
-      problem:
-        run.state === "created"
-          ? { code: "download.cancelled", data: { interrupted: true } }
-          : { code: "run.upload_failed", data: { interrupted: true } },
-    });
+    this.update(run.id, { state: "failed", problem: { code: "run.interrupted", data: {} } });
     const engine = run.engineId === null ? null : this.engines.get(run.engineId);
     if (run.taskUuid !== null && engine !== null) {
       const uuid = run.taskUuid;
+      const failed = () => this.logLine(`Run ${run.id}: the engine task could not be removed after the restart.`);
       void this.clientFor({ address: engine.address, token: engine.token })
         .removeTask(uuid)
-        .catch(() => {});
+        .then((removed) => {
+          if (!removed.ok) failed();
+        }, failed);
     }
   }
 
@@ -270,23 +317,23 @@ export class RunTracker {
     const client = this.clientFor({ address: engine.address, token: engine.token });
     const info = await client.taskInfo(run.taskUuid);
     if (!info.ok) {
-      if (this.current(runId, following) !== null) this.pollFailed(runId, following);
+      if (this.current(runId, following) !== null) this.pollFailed(runId, following, info.failure);
       return;
     }
     // The output comes before the state, so a finished run's last lines are saved before the run shows as finished.
-    const output = await client.taskOutput(run.taskUuid, following.lines);
+    const output = await client.taskOutput(run.taskUuid, this.lineCount(runId));
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
-      this.pollFailed(runId, following);
+      this.pollFailed(runId, following, output.failure);
       return;
     }
 
     following.failedPolls = 0;
+    following.notFoundPolls = 0;
     if (output.value.length > 0) {
-      const from = following.lines;
+      const from = this.lineCount(runId);
       this.saveLines(runId, output.value);
-      following.lines += output.value.length;
       this.emit(runId, { type: "log", lines: output.value, from });
     }
 
@@ -305,7 +352,19 @@ export class RunTracker {
     }
   }
 
-  private pollFailed(runId: number, following: Following): void {
+  /** One poll got no usable answer. A task the engine does not know ends the run; anything else is counted as unreachable. */
+  private pollFailed(runId: number, following: Following, failure?: TaskApiFailure): void {
+    if (failure !== undefined && isTaskNotFound(failure)) {
+      // The engine answered, so it is reachable; it just does not have the task.
+      following.failedPolls = 0;
+      following.notFoundPolls++;
+      if (following.notFoundPolls >= NOT_FOUND_POLLS_BEFORE_LOST) {
+        this.logLine(`Run ${runId}: the engine no longer knows the task.`);
+        this.update(runId, { state: "failed", problem: { code: "run.engine_lost", data: {} } });
+      }
+      return;
+    }
+    following.notFoundPolls = 0;
     following.failedPolls++;
     if (following.failedPolls < FAILED_POLLS_BEFORE_UNREACHABLE) return;
     const run = this.runs.get(runId);
@@ -314,6 +373,14 @@ export class RunTracker {
       this.update(runId, { state: "engine_unreachable" });
     }
   }
+}
+
+/** Lines in a log file's text: every line ends with a newline, and a last one that does not still counts. */
+function countLines(text: string): number {
+  if (text === "") return 0;
+  let count = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) count++;
+  return text.endsWith("\n") ? count : count + 1;
 }
 
 function describe(error: unknown): string {

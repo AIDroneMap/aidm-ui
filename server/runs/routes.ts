@@ -49,8 +49,9 @@ export function runRoutes(ctx: RouteContext): RouteTable {
             else send(`event: log\ndata: ${JSON.stringify({ lines: event.lines, from: event.from })}\n\n`);
           });
           send(`event: run\ndata: ${JSON.stringify(tracker.view(id))}\n\n`);
-          const saved = tracker.log(id, 0);
-          send(`event: log\ndata: ${JSON.stringify({ lines: saved.lines, from: 0 })}\n\n`);
+          // Only the newest lines: the page asks the log route for older ones.
+          const recent = tracker.recentLog(id);
+          send(`event: log\ndata: ${JSON.stringify(recent)}\n\n`);
           return unsubscribe;
         });
       },

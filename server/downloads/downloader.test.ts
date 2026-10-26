@@ -112,11 +112,43 @@ test("a connection cut mid-body is retried with a Range header from the bytes th
   expect(ranges[1]).toMatch(/^bytes=[1-9]\d*-$/);
 });
 
-test("gives up with download.failed after the retries", async () => {
-  server.files.delete("/data.bin");
-  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 2 });
+test("gives up with download.failed after the retries when the host keeps failing", async () => {
+  let calls = 0;
+  const failing = asFetch(async () => {
+    calls++;
+    return new Response("Busy", { status: 503 });
+  });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 2, fetch: failing });
   expect(outcome).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
-  expect(server.requests).toHaveLength(3);
+  expect(calls).toBe(3);
+});
+
+test("a 4xx answer other than 408 and 429 fails at once without retries", async () => {
+  server.files.delete("/data.bin");
+  const missing = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5 });
+  expect(missing).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
+  expect(server.requests).toHaveLength(1);
+
+  let calls = 0;
+  const forbidden = asFetch(async () => {
+    calls++;
+    return new Response("No", { status: 403 });
+  });
+  const refused = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5, fetch: forbidden });
+  expect(refused).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
+  expect(calls).toBe(1);
+});
+
+test("408 and 429 are retried like a server error", async () => {
+  const answers = [408, 429];
+  const slowHost = asFetch(async (input, init) => {
+    const status = answers.shift();
+    if (status !== undefined) return new Response("Wait", { status });
+    return fetch(input, init);
+  });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5, fetch: slowHost });
+  expect(outcome).toEqual({ ok: true, path: target.path });
+  expect(answers).toEqual([]);
 });
 
 test("a corrupted file fails verification and is discarded", async () => {
@@ -199,12 +231,40 @@ test("a part that is already complete is verified without a download (416)", asy
   expect(await finalBytes()).toEqual(data);
 });
 
-test("a 416 answer to a part shorter than the file is treated as complete and then verified", async () => {
+test("a 416 answer to a part shorter than the file deletes the part and starts over from byte 0", async () => {
   await Bun.write(`${target.path}.part`, data.subarray(0, 1000));
-  const answers416 = asFetch(async () => new Response(null, { status: 416 }));
-  const outcome = await downloadVerified(target, { freeBytes: PLENTY, fetch: answers416, ...FAST });
-  expect(outcome).toEqual({ ok: false, error: { code: "download.checksum_mismatch", data: {} } });
+  const ranges: Array<string | null> = [];
+  const refusesTheRange = asFetch(async (input, init) => {
+    const range = new Headers(init?.headers).get("range");
+    ranges.push(range);
+    if (range !== null) return new Response(null, { status: 416 });
+    return fetch(input, init);
+  });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, fetch: refusesTheRange, ...FAST });
+  expect(outcome).toEqual({ ok: true, path: target.path });
+  expect(ranges).toEqual(["bytes=1000-", null]);
+  expect(await finalBytes()).toEqual(data);
   expect(existsSync(`${target.path}.part`)).toBe(false);
+});
+
+test("a host that answers 416 again after the fresh start fails with download.failed", async () => {
+  await Bun.write(`${target.path}.part`, data.subarray(0, 1000));
+  let calls = 0;
+  const always416 = asFetch(async () => {
+    calls++;
+    return new Response(null, { status: 416 });
+  });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, fetch: always416, ...FAST });
+  expect(outcome).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
+  expect(calls).toBe(2);
+  expect(existsSync(`${target.path}.part`)).toBe(false);
+});
+
+test("cancelling while an existing file is being checked stops with download.cancelled", async () => {
+  await Bun.write(target.path, data);
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, signal: AbortSignal.abort() });
+  expect(outcome).toEqual({ ok: false, error: { code: "download.cancelled", data: {} } });
+  expect(server.requests).toHaveLength(0);
 });
 
 test("cancelling keeps the part, and a second call resumes from it", async () => {
