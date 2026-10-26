@@ -1,0 +1,4 @@
+# The signature covers the exact bytes of the built-in manifest entry, so a
+# checkout on Windows must not change its line endings.
+server/manifest/builtin/* -text
+*.sh text eol=lf
