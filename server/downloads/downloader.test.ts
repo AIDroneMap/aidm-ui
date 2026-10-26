@@ -79,9 +79,12 @@ test("downloads a file, reports progress up to the total, verifies it and leaves
 
 test("killing the server mid-download and restarting it resumes from the bytes already received", async () => {
   server.cutNextResponseAfter(100_000);
+  // Take the server away once bytes have reached the client, not merely once
+  // the request arrived: otherwise the retry may have nothing to resume from.
+  let firstBytes: () => void = () => {};
+  const bytesArrived = new Promise<void>((resolve) => (firstBytes = resolve));
   const restarting = (async () => {
-    // Wait for the first request, then take the server away for a moment.
-    while (server.requests.length === 0) await Bun.sleep(1);
+    await bytesArrived;
     await server.stop();
     await Bun.sleep(60);
     await server.restart();
@@ -90,6 +93,9 @@ test("killing the server mid-download and restarting it resumes from the bytes a
     freeBytes: PLENTY,
     backoffMs: () => 40,
     retries: 20,
+    onProgress: (received) => {
+      if (received > 0) firstBytes();
+    },
   });
   await restarting;
   expect(outcome).toEqual({ ok: true, path: target.path });
