@@ -3,10 +3,11 @@ import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { LocalInstallStatus } from "../components/LocalInstall.tsx";
+import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes, formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
-import { installStatus, useLocalEngine } from "../localEngine.ts";
+import { installStatus, needsRuntimeSetup, setupUnderWay, useLocalEngine } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
@@ -14,6 +15,7 @@ import type {
   LocalEngineView,
   MachineCheckView as MachineCheckData,
   PackagesView,
+  RuntimeSetupView,
   UpdateCheck,
   UpdateCheckRequest,
   WizardUpdateRequest,
@@ -222,6 +224,16 @@ export interface InstallScreenProps {
   /** Why the server refused to install, when it did. */
   installFailure: ApiFailure | null;
   onInstallLocal: () => void;
+  /** The setup of Podman as the server last said it, or null before one began. */
+  setup: RuntimeSetupView | null;
+  /** True while the request to set up Podman is on its way. */
+  setupBusy: boolean;
+  /** Why the server refused to set up Podman, when it did. */
+  setupFailure: ApiFailure | null;
+  /** True while the end of the wizard is being saved, for the way out to a remote engine. */
+  remoteBusy: boolean;
+  onSetupRuntime: () => void;
+  onRemote: () => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -275,12 +287,25 @@ function InstallButton(props: Pick<InstallScreenProps, "local" | "installBusy" |
 
 export function InstallScreen(props: InstallScreenProps) {
   const { packages } = props;
+  // Where no container tool works, Podman comes first and the install follows by itself.
+  const setupOffered = needsRuntimeSetup(props.local, packages?.offer ?? null) || setupUnderWay(props.setup);
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
       {packages ? <Offer packages={packages} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
       <p>{t("wizard.install.body")}</p>
-      {packages?.offer && (
+      {packages?.offer && runtimeSetupShown(setupOffered, props.setup) && (
+        <RuntimeSetupPanel
+          offered={setupOffered}
+          setup={props.setup}
+          starting={props.setupBusy}
+          refusal={props.setupFailure}
+          remoteBusy={props.remoteBusy}
+          onSetup={props.onSetupRuntime}
+          onRemote={props.onRemote}
+        />
+      )}
+      {packages?.offer && !setupOffered && (
         <InstallButton local={props.local} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
       )}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
@@ -386,6 +411,8 @@ export function WizardPage({
   const [updateAnnouncement, setUpdateAnnouncement] = useState("");
   const [installBusy, setInstallBusy] = useState(false);
   const [installFailure, setInstallFailure] = useState<ApiFailure | null>(null);
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupFailure, setSetupFailure] = useState<ApiFailure | null>(null);
 
   const fail = (error: unknown): ApiFailure => {
     const failure = asApiFailure(error);
@@ -478,6 +505,27 @@ export function WizardPage({
     }
   };
 
+  const setupRuntime = async () => {
+    setSetupBusy(true);
+    setSetupFailure(null);
+    try {
+      local.setSetup(await api<RuntimeSetupView>("POST", "/api/local-engine/setup-runtime"));
+    } catch (error) {
+      const failure = fail(error);
+      setSetupFailure(failure);
+      // A tool that appeared by itself since the page looked: the page looks again, and the install button takes over.
+      if (failure.code === "setup.not_needed") {
+        try {
+          local.setView(await api<LocalEngineView>("GET", "/api/local-engine"));
+        } catch (viewError) {
+          setSetupFailure(fail(viewError));
+        }
+      }
+    } finally {
+      setSetupBusy(false);
+    }
+  };
+
   const finish = async (destination: "#/" | "#/engines") => {
     setFinishing(true);
     setFinishFailure(null);
@@ -533,6 +581,12 @@ export function WizardPage({
           installBusy={installBusy}
           installFailure={installFailure}
           onInstallLocal={() => void installLocal()}
+          setup={local.setup}
+          setupBusy={setupBusy}
+          setupFailure={setupFailure}
+          remoteBusy={finishing}
+          onSetupRuntime={() => void setupRuntime()}
+          onRemote={() => void finish("#/engines")}
           onBack={back}
           onNext={next}
         />
