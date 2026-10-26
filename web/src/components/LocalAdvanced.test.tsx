@@ -145,3 +145,16 @@ test("saving the processor choice says so in the status area, and a refusal is s
   const refused = render({ forceCpuFailure: new ApiFailure(500, "server.internal_error", {}) });
   expect(refused).toContain('role="alert"');
 });
+
+test("a native package has no tool to choose, even where two tools are installed", () => {
+  const native: LocalEngineView = {
+    ...running,
+    installed: { packageVersion: "2.6.0", variant: "linux-amd64-cpu", kind: "native", runtime: null },
+    runtime: { chosen: null, available: ["podman", "docker"], preferred: null },
+  };
+  const html = render({}, native);
+  expect(html).not.toContain('type="radio"');
+  expect(html).not.toContain("Tool that runs the engine");
+  // The limits are still there.
+  expect(html).toContain('id="local-memory"');
+});

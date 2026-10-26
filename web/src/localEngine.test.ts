@@ -212,6 +212,8 @@ test("the update block shows what an update says, and a download problem unless 
   const withProblem = (code: NonNullable<LocalEngineView["problem"]>["code"], state: LocalEngineView["state"]): LocalEngineView => ({ ...fresh, state, problem: { code, data: {} } });
   expect(updateProblem(withProblem("update.failed_rolled_back", "ready"))?.code).toBe("update.failed_rolled_back");
   expect(updateProblem(withProblem("install.pull_failed", "ready"))?.code).toBe("install.pull_failed");
+  expect(updateProblem(withProblem("download.checksum_mismatch", "ready"))?.code).toBe("download.checksum_mismatch");
+  expect(updateProblem(withProblem("install.unpack_failed", "ready"))?.code).toBe("install.unpack_failed");
   expect(updateProblem(withProblem("install.start_failed", "failed"))).toBeNull();
   expect(updateProblem(withProblem("engine.unreachable", "ready"))).toBeNull();
   expect(updateProblem(fresh)).toBeNull();
