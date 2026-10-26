@@ -360,6 +360,14 @@
   "local.runtime.apple-container": "Apple's tool",
   "local.runtime.hint": "AIDM UI uses this choice the next time it installs or starts the engine.",
   "local.runtime.saved": "Choice saved.",
+  "local.update.title": "Engine version",
+  "local.update.hint": "The engine stops for a moment while it changes version. AIDM UI keeps the version before, so you can go back.",
+  "local.update.available": "Engine update: {version} ({size})",
+  "local.update.button": "Update",
+  "local.update.button_busy": "Working...",
+  "local.update.rollback": "Go back to {version}",
+  "local.update.starting": "Starting the engine",
+  "local.update.done": "The engine is now version {version}.",
   "settings.local.title": "Engine on this computer",
   "settings.local.explain": "The memory and CPU cores the engine may use, and the tool that runs it, are on the engines page.",
   "settings.local.link": "Open the advanced options for the engine on this computer",
@@ -402,5 +410,10 @@
   "setup.not_available": "This computer cannot ask for the administrator password from AIDM UI. Add a remote engine, or install Podman yourself.",
   "setup.unsupported_distribution": "AIDM UI cannot install Podman on this kind of Linux ({id}). Install Podman with your software manager, then try again.",
   "setup.failed": "Podman could not be installed (code {code}). Ask the administrator to install it, then try again.",
-  "setup.runtime_not_working": "Podman was installed but does not work yet. Sign out and sign in again, or restart the computer, then try again."
+  "setup.runtime_not_working": "Podman was installed but does not work yet. Sign out and sign in again, or restart the computer, then try again.",
+  "update.run_in_progress": "A run is still going on the engine on this computer. Wait until it has finished, then try again.",
+  "update.engine_not_ready": "The engine on this computer has to be running and answering before it can be updated. Turn it on, or start it again.",
+  "update.no_previous": "There is no earlier version to go back to.",
+  "update.failed_rolled_back": "The new engine version {version} did not get ready, so AIDM UI started the earlier version again. The engine log may say why.",
+  "update.rollback_failed": "The version {version} did not get ready, so AIDM UI started the version that ran before. The engine log may say why."
 }

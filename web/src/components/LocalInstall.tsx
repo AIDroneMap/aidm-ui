@@ -1,6 +1,6 @@
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
-import { installStatus, installSteps } from "../localEngine.ts";
+import { installStatus, installSteps, type InstallStatus } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { GuideLink } from "./GuideLink.tsx";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
@@ -35,6 +35,23 @@ function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" })
         {t(error.code, messageParams(error))} <GuideLink url={error.data.guideUrl} />
       </p>
     </div>
+  );
+}
+
+/** The bar, the parts and the try of a download. Only the line above it is announced, so a screen reader hears each step once. */
+export function DownloadProgress({ status, progressId }: { status: Extract<InstallStatus, { kind: "downloading" }>; progressId: string }) {
+  return (
+    <>
+      {status.done !== null && status.total !== null ? (
+        <progress id={progressId} max={status.total} value={status.done}></progress>
+      ) : (
+        <progress id={progressId}></progress>
+      )}
+      {status.done !== null && status.total !== null && (
+        <p>{t("local.install.parts", { done: status.done, total: status.total })}</p>
+      )}
+      {status.attempt > 1 && <p>{t("local.install.attempt", { attempt: status.attempt, max: status.maxAttempts })}</p>}
+    </>
   );
 }
 
@@ -94,21 +111,7 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
           <progress id={progressId}></progress>
         )
       )}
-      {status.kind === "downloading" && (
-        <>
-          {status.done !== null && status.total !== null ? (
-            <progress id={progressId} max={status.total} value={status.done}></progress>
-          ) : (
-            <progress id={progressId}></progress>
-          )}
-          {status.done !== null && status.total !== null && (
-            <p>{t("local.install.parts", { done: status.done, total: status.total })}</p>
-          )}
-          {status.attempt > 1 && (
-            <p>{t("local.install.attempt", { attempt: status.attempt, max: status.maxAttempts })}</p>
-          )}
-        </>
-      )}
+      {status.kind === "downloading" && <DownloadProgress status={status} progressId={progressId} />}
       {view.warnings.map((warning) => (
         <Note key={warning.code} error={warning} kind="warning" />
       ))}

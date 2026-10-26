@@ -402,6 +402,19 @@ export interface LocalEngineView {
    * Null when no restart is going on.
    */
   restarts: { attempts: number; max: number; nextAt: string | null } | null;
+  update: LocalEngineUpdateView;
+}
+
+/** Updates, rollback and the one previous version (ticket #14). */
+export interface LocalEngineUpdateView {
+  /** A newer package for the installed variant, from the newest manifest that passed every check. */
+  available: { packageVersion: string; size: number } | null;
+  /** The version kept next to the current one, so the operator can go back. */
+  previous: { packageVersion: string } | null;
+  /** Why Update and the way back are refused right now, for example update.run_in_progress. */
+  blockedBy: ApiError | null;
+  /** The update or the way back under way, in the same shape as an install. */
+  applying: InstallProgressView | null;
 }
 
 // Lifecycle (ticket #10).

@@ -105,6 +105,8 @@ export function openHarness(
     localMachine?: LocalEngineDeps["machine"];
     /** The port the local engine is published on; a test passes one that repeats to reuse a port. */
     freePort?: LocalEngineDeps["freePort"];
+    /** How long a new engine version may stay silent before an update is undone. */
+    updateReadyTimeoutMs?: LocalEngineDeps["updateReadyTimeoutMs"];
     /** Passed to the log of the local engine, to make it rotate or retry sooner. */
     localLog?: LocalEngineDeps["logOptions"];
     /** How long a freshly started local engine may stay silent and still be starting. */
@@ -194,6 +196,7 @@ export function openHarness(
     engineStore,
     monitor: engines,
     manifests,
+    runs,
     runtimes: (id) => runtimes[id] ?? null,
     detectRuntimes: () => Promise.all(Object.values(runtimes).map((runtime) => runtime.detect())),
     runner: options.gpuRunner ?? new ScriptedRunner([]),
@@ -208,6 +211,7 @@ export function openHarness(
     now: options.localNow,
     freePort: options.freePort,
     logOptions: options.localLog,
+    updateReadyTimeoutMs: options.updateReadyTimeoutMs,
   });
 
   const sample = new SampleJob({

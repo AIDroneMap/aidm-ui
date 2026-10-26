@@ -138,6 +138,21 @@ test("a started container runs a task API that wants the token from its config f
   expect(await runtime.status(NAME)).toEqual({ ok: true, value: { state: "running", exitCode: null, oomKilled: false } });
 });
 
+test("the version its task API reports comes from the image, when a function says so", async () => {
+  const runtime = fake({ versionOf: (image) => (image === IMAGE ? "2.6.0" : "2.5.0") });
+  await started(runtime);
+  const engine = runtime.engine(NAME)!;
+  expect(await (await fetch(`${engine.address}/info?token=fake-token`)).json()).toMatchObject({ version: "2.6.0" });
+});
+
+test("a silent image starts a container whose engine never answers", async () => {
+  const runtime = fake({ silent: (image) => image === IMAGE });
+  const { containerId } = await started(runtime, { publish: { hostAddress: "127.0.0.1", hostPort: 45987, containerPort: 3000 } });
+  expect(containerId).toMatch(/^[0-9a-f]{64}$/);
+  expect(await runtime.status(NAME)).toEqual({ ok: true, value: { state: "running", exitCode: null, oomKilled: false } });
+  await expect(fetch("http://127.0.0.1:45987/info?token=run-token")).rejects.toThrow();
+});
+
 test("the start command it recorded is the real Podman command line, or Docker's", async () => {
   const podman = fake();
   await started(podman, { publish: { hostAddress: "127.0.0.1", hostPort: 0, containerPort: 3000 } });
