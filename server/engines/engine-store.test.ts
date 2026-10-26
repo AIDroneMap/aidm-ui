@@ -52,3 +52,15 @@ test("the last known state is stored", () => {
   store.setLastState(id, "unreachable");
   expect(store.get(id)?.lastState).toBe("unreachable");
 });
+
+test("a stored state nobody knows is read as starting and logged once", () => {
+  const lines: string[] = [];
+  const logged = new EngineStore(db, (line) => lines.push(line));
+  const { id } = logged.addRemote({ name: "A", address: "https://engine.example.com", token: "t" });
+  db.query("UPDATE engines SET last_state = 'sleeping' WHERE id = ?").run(id);
+  expect(logged.get(id)?.lastState).toBe("starting");
+  logged.list();
+  logged.get(id);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("sleeping");
+});

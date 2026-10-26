@@ -50,8 +50,13 @@ export function compareVersions(a: string, b: string): number {
   return Math.sign(left.preRelease.length - right.preRelease.length);
 }
 
+/** True when the text is a version this code can compare. */
+export function isReadableVersion(version: string): boolean {
+  return parseVersion(version) !== null;
+}
+
 /** True for a version at or above the oldest task API the interface works with. A version we cannot read is not supported. */
 export function isSupportedVersion(version: string): boolean {
-  if (parseVersion(version) === null) return false;
+  if (!isReadableVersion(version)) return false;
   return compareVersions(version, MIN_TASK_API_VERSION) >= 0;
 }

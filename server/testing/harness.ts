@@ -3,8 +3,9 @@ import os from "node:os";
 import { currentAuth } from "../auth/current.ts";
 import { Sessions } from "../auth/sessions.ts";
 import { applyMigrations, migrations } from "../db/migrations.ts";
-import { EngineMonitor } from "../engines/engine-monitor.ts";
+import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
+import { EventStreams } from "../http/event-streams.ts";
 import { listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
@@ -43,6 +44,10 @@ export function openHarness(
     rebind?: (hostname: string) => Promise<void>;
     /** How often the engines are polled; short, so tests do not wait. */
     enginePollMs?: number;
+    /** Swaps the name lookup of the address rule, so a test can move a name between networks. */
+    resolve?: EngineMonitorDeps["resolve"];
+    /** Swaps the way the monitor reaches an engine, for names that only the test knows. */
+    clientFor?: EngineMonitorDeps["clientFor"];
   } = {},
 ): Harness {
   const db = new Database(":memory:", { strict: true });
@@ -55,7 +60,13 @@ export function openHarness(
   let listener: Listener | undefined;
   const log = (line: string) => logs.push(line);
   const engineStore = new EngineStore(db);
-  const engines = new EngineMonitor({ store: engineStore, intervalMs: options.enginePollMs ?? 100, log });
+  const engines = new EngineMonitor({
+    store: engineStore,
+    intervalMs: options.enginePollMs ?? 100,
+    log,
+    resolve: options.resolve,
+    clientFor: options.clientFor,
+  });
 
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
@@ -64,6 +75,7 @@ export function openHarness(
     sessions,
     engines,
     engineStore,
+    streams: new EventStreams(sessions),
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {

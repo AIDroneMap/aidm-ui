@@ -41,6 +41,8 @@ export interface FakeRequest {
 export class FakeTaskApi {
   info: FakeInfo;
   token: string;
+  /** How long the info call waits before it answers. */
+  infoDelayMs = 0;
   readonly requests: FakeRequest[] = [];
 
   private server: Bun.Server<undefined> | undefined;
@@ -79,11 +81,12 @@ export class FakeTaskApi {
     await this.start(this.port);
   }
 
-  private handle(req: Request): Response {
+  private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     this.requests.push({ method: req.method, path: url.pathname, token: url.searchParams.get("token") });
 
     if (req.method === "GET" && url.pathname === "/info") {
+      if (this.infoDelayMs > 0) await Bun.sleep(this.infoDelayMs);
       if (url.searchParams.get("token") !== this.token) return Response.json({ error: WRONG_TOKEN_MESSAGE });
       return Response.json(this.info);
     }

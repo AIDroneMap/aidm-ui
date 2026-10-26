@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { EngineTestView, EngineView } from "../../shared/api-types.ts";
 import { FakeTaskApi, WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
+import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
 let harness: Harness;
@@ -256,6 +257,68 @@ test("an engine can be renamed, given a new address and token, and switched off 
   } finally {
     await other.stop();
   }
+});
+
+test("a new address needs the token typed again, and the same address does not", async () => {
+  const added = await addEngine();
+  const other = new FakeTaskApi({ token: "other-token" });
+  await other.start();
+  try {
+    const refused = await send("PUT", `/api/engines/${added.id}`, { address: other.address });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: { code: "engine.token_required", data: {} } });
+    expect(harness.engineStore.get(added.id)).toMatchObject({ address: fake.address, token: fake.token });
+
+    const same = await send("PUT", `/api/engines/${added.id}`, { address: `${fake.address}/`, name: "Same" });
+    expect(same.status).toBe(200);
+
+    const moved = await send("PUT", `/api/engines/${added.id}`, { address: other.address, token: "other-token" });
+    expect(moved.status).toBe(200);
+  } finally {
+    await other.stop();
+  }
+});
+
+test("an engine removed while an add waits for its first answer is not found", async () => {
+  fake.infoDelayMs = 300;
+  const adding = send("POST", "/api/engines", { name: "Office", address: fake.address, token: fake.token });
+  await eventually(async () => harness.engineStore.list().length === 1);
+  const id = harness.engineStore.list()[0]?.id;
+  await send("DELETE", `/api/engines/${id}`);
+  const response = await adding;
+  expect(response.status).toBe(404);
+  expect(await response.json()).toEqual({ error: { code: "engine.not_found", data: {} } });
+});
+
+test("an engine removed while an edit waits for its first answer is not found", async () => {
+  const added = await addEngine();
+  fake.infoDelayMs = 300;
+  const editing = send("PUT", `/api/engines/${added.id}`, { token: fake.token, name: "Shed" });
+  await eventually(async () => harness.engineStore.get(added.id)?.name === "Shed");
+  await send("DELETE", `/api/engines/${added.id}`);
+  const response = await editing;
+  expect(response.status).toBe(404);
+  expect(await response.json()).toEqual({ error: { code: "engine.not_found", data: {} } });
+});
+
+test("a plain http name that leaves the network is refused by the page too", async () => {
+  await harness.stop();
+  let resolved = ["10.0.0.5"];
+  harness = openHarness({
+    enginePollMs: 50,
+    resolve: async () => resolved,
+    clientFor: (_endpoint, options) => new TaskClient({ address: fake.address, token: fake.token }, options),
+  });
+  const added = await addEngine("Named", "http://engine.example:3000");
+  expect(added.state).toBe("ready");
+  resolved = ["8.8.8.8"];
+  await eventually(async () => (await listEngines())[0]?.problem?.code === "engine.https_required");
+  const count = fake.requests.length;
+  await Bun.sleep(150);
+  expect(fake.requests.length).toBe(count);
+  const again = await send("POST", "/api/engines", { name: "Two", address: "http://engine.example:3000", token: "t" });
+  expect(again.status).toBe(400);
+  expect(await again.json()).toEqual({ error: { code: "engine.https_required", data: {} } });
 });
 
 test("an edit with a bad address or name changes nothing", async () => {

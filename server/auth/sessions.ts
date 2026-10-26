@@ -9,6 +9,7 @@ const LIFETIME_SECONDS = 30 * 24 * 60 * 60;
  */
 export class Sessions {
   private readonly expires = new Map<string, number>();
+  private readonly clearListeners = new Set<() => void>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -43,6 +44,12 @@ export class Sessions {
   /** Ends every session, for when the LAN switch is turned off or the passphrase changes. */
   clear(): void {
     this.expires.clear();
+    for (const listener of [...this.clearListeners]) listener();
+  }
+
+  /** The listener runs after every clear(), so things that outlive a request can end with the sessions. */
+  onClear(listener: () => void): void {
+    this.clearListeners.add(listener);
   }
 
   cookieFor(token: string): string {

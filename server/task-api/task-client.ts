@@ -1,4 +1,5 @@
 import type { EngineInfoView } from "../../shared/api-types.ts";
+import { isReadableVersion } from "../engines/versions.ts";
 
 /** Where an engine is and the token it wants. The token never leaves the server. */
 export interface EngineEndpoint {
@@ -23,6 +24,11 @@ export interface TaskClientOptions {
   timeoutMs?: number;
   fetch?: typeof fetch;
   log?: (line: string) => void;
+  /**
+   * For lines that would repeat on every poll. The key names what the line is
+   * about, so the receiver can drop a line it already has for that key.
+   */
+  logOnce?: (key: string, line: string) => void;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -38,6 +44,7 @@ export class TaskClient {
   private readonly timeoutMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly log: (line: string) => void;
+  private readonly logOnce: (key: string, line: string) => void;
 
   constructor(
     private readonly endpoint: EngineEndpoint,
@@ -46,6 +53,7 @@ export class TaskClient {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.fetchFn = options.fetch ?? fetch;
     this.log = options.log ?? (() => {});
+    this.logOnce = options.logOnce ?? ((_key, line) => this.log(line));
   }
 
   async info(): Promise<TaskApiResult<EngineInfo>> {
@@ -55,6 +63,7 @@ export class TaskClient {
     if (typeof raw.version !== "string" || raw.version.trim() === "") {
       return { ok: false, failure: { kind: "bad_response", detail: "The info answer has no version." } };
     }
+    if (!isReadableVersion(raw.version)) this.unknownValue("version", raw.version);
     return {
       ok: true,
       value: {
@@ -135,7 +144,7 @@ export class TaskClient {
   private unknownValue(field: string, value: unknown): void {
     let shown = JSON.stringify(value) ?? String(value);
     if (shown.length > MAX_LOGGED_VALUE_CHARS) shown = `${shown.slice(0, MAX_LOGGED_VALUE_CHARS)}...`;
-    this.log(this.scrub(`Engine info field ${field} has an unknown value: ${shown}`));
+    this.logOnce(field, this.scrub(`Engine info field ${field} has an unknown value: ${shown}`));
   }
 
   /** Last line of defence: whatever an error message or a reply says, the token is not in it. */

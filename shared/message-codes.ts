@@ -5,6 +5,7 @@ export const MESSAGE_CODES = [
   "api.not_found",
   "api.method_not_allowed",
   "api.invalid_body",
+  "api.too_many_streams",
   "server.internal_error",
   "interface.not_found",
   "interface.not_built",
@@ -26,6 +27,7 @@ export const MESSAGE_CODES = [
   "engine.unsupported_version",
   "engine.not_found",
   "engine.name_required",
+  "engine.token_required",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

@@ -17,6 +17,7 @@ import { Sessions } from "../auth/sessions.ts";
 import { openDatabase } from "../db/database.ts";
 import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
+import { EventStreams } from "../http/event-streams.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
@@ -90,7 +91,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   try {
     const settings = new Settings(db);
     const sessions = new Sessions();
-    const engineStore = new EngineStore(db);
+    const engineStore = new EngineStore(db, options.log);
     const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: options.log });
     let listener: Listener | undefined;
 
@@ -101,6 +102,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       sessions,
       engines,
       engineStore,
+      streams: new EventStreams(sessions),
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
       rebind: async (hostname) => {

@@ -8,7 +8,7 @@ export type AddressCheck =
 
 export type Resolve = (host: string) => Promise<string[]>;
 
-const PLAIN_HTTP_WARNING: ApiError = { code: "engine.plain_http_local", data: {} };
+export const PLAIN_HTTP_WARNING: ApiError = { code: "engine.plain_http_local", data: {} };
 
 async function resolveWithSystem(host: string): Promise<string[]> {
   const found = await lookup(host, { all: true });

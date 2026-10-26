@@ -5,6 +5,7 @@ import type { InstanceIdentity } from "../app/instance.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
 import type { Settings } from "../settings/settings.ts";
+import type { EventStreams } from "./event-streams.ts";
 import type { AssetMap } from "./static-assets.ts";
 
 export interface RequestContext {
@@ -26,6 +27,8 @@ export interface RouteContext {
   sessions: Sessions;
   engines: EngineMonitor;
   engineStore: EngineStore;
+  /** Where every server-sent event stream is opened. */
+  streams: EventStreams;
   /** A function because the hook changes when the LAN switch moves. */
   auth: () => AuthHook;
   /** The port the server listens on now. */

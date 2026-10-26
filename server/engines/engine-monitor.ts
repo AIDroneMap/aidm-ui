@@ -1,8 +1,16 @@
 import type { ApiError } from "../../shared/api-error.ts";
 import { MIN_TASK_API_VERSION, type EngineInfoView, type EngineView } from "../../shared/api-types.ts";
-import { TaskClient, type EngineEndpoint, type TaskApiFailure } from "../task-api/task-client.ts";
+import {
+  TaskClient,
+  type EngineEndpoint,
+  type EngineInfo,
+  type TaskApiFailure,
+  type TaskClientOptions,
+} from "../task-api/task-client.ts";
+import { checkEngineAddress, PLAIN_HTTP_WARNING, type AddressCheck, type Resolve } from "./address-rule.ts";
 import { nextEngineStatus, type EngineEvent, type EngineStatus } from "./engine-state.ts";
 import type { EngineRecord, EngineStore } from "./engine-store.ts";
+import { problemFromFailure } from "./problems.ts";
 import { isSupportedVersion } from "./versions.ts";
 
 export const DEFAULT_POLL_INTERVAL_MS = 3000;
@@ -11,7 +19,10 @@ export interface EngineMonitorDeps {
   store: EngineStore;
   intervalMs: number;
   log: (line: string) => void;
-  clientFor?: (endpoint: EngineEndpoint) => TaskClient;
+  /** Makes the client for one call. The options carry the log and the once-only log of this engine. */
+  clientFor?: (endpoint: EngineEndpoint, options: TaskClientOptions) => TaskClient;
+  /** Looks up a host name for the address rule; the system lookup when missing. */
+  resolve?: Resolve;
 }
 
 /** What the monitor remembers about one engine between polls. */
@@ -22,23 +33,15 @@ interface Entry {
   info: EngineInfoView | null;
   supported: boolean | null;
   problem: ApiError | null;
+  /** The last line logged for each topic, so a value that stays wrong is logged once. */
+  logged: Map<string, string>;
 }
 
-const PLAIN_HTTP_WARNING: ApiError = { code: "engine.plain_http_local", data: {} };
+/** What one poll found: the engine's answer, or why there was none. */
+type Outcome = { ok: true; value: EngineInfo } | { ok: false; problem: ApiError; event: EngineEvent };
 
 function sourceOf(engine: EngineRecord): string {
   return JSON.stringify([engine.address, engine.token]);
-}
-
-function problemFor(failure: TaskApiFailure): ApiError {
-  switch (failure.kind) {
-    case "unreachable":
-      return { code: "engine.unreachable", data: {} };
-    case "engine_error":
-      return { code: "engine.error", data: { message: failure.message } };
-    case "bad_response":
-      return { code: "engine.bad_response", data: {} };
-  }
 }
 
 function eventFor(failure: TaskApiFailure): EngineEvent {
@@ -50,7 +53,8 @@ export class EngineMonitor {
   private readonly store: EngineStore;
   private readonly intervalMs: number;
   private readonly log: (line: string) => void;
-  private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
+  private readonly clientFor: (endpoint: EngineEndpoint, options: TaskClientOptions) => TaskClient;
+  private readonly resolve: Resolve | undefined;
   private readonly entries = new Map<number, Entry>();
   private readonly inFlight = new Map<number, Promise<void>>();
   private readonly listeners = new Set<(views: EngineView[]) => void>();
@@ -62,7 +66,13 @@ export class EngineMonitor {
     this.store = deps.store;
     this.intervalMs = deps.intervalMs;
     this.log = deps.log;
-    this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log }));
+    this.clientFor = deps.clientFor ?? ((endpoint, options) => new TaskClient(endpoint, options));
+    this.resolve = deps.resolve;
+  }
+
+  /** The address rule, with the name lookup this monitor was given. */
+  checkAddress(input: string): Promise<AddressCheck> {
+    return checkEngineAddress(input, this.resolve);
   }
 
   start(): void {
@@ -72,14 +82,15 @@ export class EngineMonitor {
   }
 
   /**
-   * Stops polling. A poll still on its way is dropped when it ends, so nothing
-   * touches the database after this returns.
+   * Stops polling and waits for the polls on their way. Their answers are
+   * dropped, so nothing touches the database after this returns.
    */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer !== undefined) clearInterval(this.timer);
     this.timer = undefined;
     this.listeners.clear();
+    await Promise.allSettled([...this.inFlight.values()]);
   }
 
   /** The browser's picture of every engine. It never holds a token. */
@@ -131,6 +142,7 @@ export class EngineMonitor {
       info: null,
       supported: null,
       problem: null,
+      logged: new Map(),
     };
     this.entries.set(engine.id, fresh);
     return fresh;
@@ -188,15 +200,15 @@ export class EngineMonitor {
       const entry = this.entryFor(engine);
       const source = sourceOf(engine);
 
-      const result = await this.clientFor({ address: engine.address, token: engine.token }).info();
+      const outcome = await this.ask(engine, entry);
 
       // Stopped, or edited, switched off or removed while we waited: the answer is about something else now.
       const now = this.store.get(id);
       if (this.stopped || now === null || !now.enabled || sourceOf(now) !== source || this.entries.get(id) !== entry) return;
 
       const before = entry.status.state;
-      if (result.ok) {
-        const { value } = result;
+      if (outcome.ok) {
+        const { value } = outcome;
         entry.info = value;
         entry.supported = isSupportedVersion(value.version);
         entry.problem = entry.supported
@@ -204,14 +216,13 @@ export class EngineMonitor {
           : { code: "engine.unsupported_version", data: { version: value.version, minimum: MIN_TASK_API_VERSION } };
         entry.status = nextEngineStatus(entry.status, { type: "answered", queueCount: value.queueCount });
       } else {
-        const event = eventFor(result.failure);
         // An engine that answers with an error has no usable numbers; one that is only silent keeps its last ones.
-        if (event.type === "refused") {
+        if (outcome.event.type === "refused") {
           entry.info = null;
           entry.supported = null;
         }
-        entry.problem = problemFor(result.failure);
-        entry.status = nextEngineStatus(entry.status, event);
+        entry.problem = outcome.problem;
+        entry.status = nextEngineStatus(entry.status, outcome.event);
       }
 
       if (entry.status.state !== before) {
@@ -221,6 +232,33 @@ export class EngineMonitor {
     } catch (error) {
       this.log(`Polling engine ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * One call to the engine. A name the operator typed was allowed once, but
+   * DNS can move it, so the address rule runs again first and a name that no
+   * longer passes is not called at all.
+   */
+  private async ask(engine: EngineRecord, entry: Entry): Promise<Outcome> {
+    const checked = await this.checkAddress(engine.address);
+    if (!checked.ok) {
+      this.logOnce(entry, "address", `Engine "${engine.name}" is not called: ${checked.error.code}`);
+      return { ok: false, problem: checked.error, event: { type: "no_answer" } };
+    }
+    const client = this.clientFor(
+      { address: engine.address, token: engine.token },
+      { log: this.log, logOnce: (key, line) => this.logOnce(entry, key, line) },
+    );
+    const result = await client.info();
+    if (result.ok) return result;
+    return { ok: false, problem: problemFromFailure(result.failure), event: eventFor(result.failure) };
+  }
+
+  /** Logs a line unless it is the same as the last one logged for the topic. */
+  private logOnce(entry: Entry, key: string, line: string): void {
+    if (entry.logged.get(key) === line) return;
+    entry.logged.set(key, line);
+    this.log(line);
   }
 
   private publish(): void {
