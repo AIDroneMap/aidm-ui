@@ -18,7 +18,34 @@ export type TaskApiFailure =
 
 export type TaskApiResult<T> = { ok: true; value: T } | { ok: false; failure: TaskApiFailure };
 
+/**
+ * True when the engine says it has no task with that id. The API answers
+ * `{"error": "<uuid> not found"}` (aidm-api index.js, getTaskFromUuid:
+ * `${uuid} not found`). The upload and commit routes say "Invalid uuid (not
+ * found)" instead, which is a different answer and does not match.
+ */
+export function isTaskNotFound(failure: TaskApiFailure): boolean {
+  return failure.kind === "engine_error" && /^\S+ not found$/.test(failure.message);
+}
+
 export type EngineInfo = EngineInfoView;
+
+export interface TaskOption {
+  name: string;
+  value: unknown;
+}
+
+export interface TaskInfo {
+  uuid: string;
+  /** The raw status code; the run state machine maps it. */
+  statusCode: unknown;
+  errorMessage: string | null;
+  /** 0 to 100. */
+  progress: number | null;
+  /** Milliseconds; -1 while the task initialises. */
+  processingTime: number | null;
+  imagesCount: number | null;
+}
 
 export interface TaskClientOptions {
   timeoutMs?: number;
@@ -32,8 +59,14 @@ export interface TaskClientOptions {
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
-/** Every answer this client reads is small JSON. */
+/** One image can be 20 MB or more, sent over a slow link. */
+export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
+/** How long the engine may take to start answering a results download. The body then streams without a limit. */
+const DOWNLOAD_HEADER_TIMEOUT_MS = 5 * 60_000;
+/** Every answer this client reads is small JSON, except a task's output. */
 const MAX_BODY_BYTES = 1024 * 1024;
+/** A task's output lines can add up to a few megabytes between two polls. */
+const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_LOGGED_VALUE_CHARS = 200;
 
 /**
@@ -78,26 +111,183 @@ export class TaskClient {
     };
   }
 
+  async createTask(name: string, options: TaskOption[], signal?: AbortSignal): Promise<TaskApiResult<{ uuid: string }>> {
+    const form = new FormData();
+    form.append("name", name);
+    form.append("options", JSON.stringify(options));
+    const body = await this.requestObject("POST", "/task/new/init", { body: form, signal });
+    if (!body.ok) return body;
+    const uuid = body.value.uuid;
+    if (typeof uuid !== "string" || uuid === "") {
+      return this.badResponse(`${this.endpoint.address}/task/new/init`, "The answer has no uuid.");
+    }
+    return { ok: true, value: { uuid } };
+  }
+
+  /** The data should be a file-backed Blob (Bun.file(path).slice(...)) so that the image is not read into memory first. */
+  async uploadImage(uuid: string, fileName: string, data: Blob, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const form = new FormData();
+    form.append("images", data, fileName);
+    const body = await this.requestObject("POST", `/task/new/upload/${encodeURIComponent(uuid)}`, {
+      body: form,
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+      signal,
+    });
+    return body.ok ? this.expectSuccess(body.value, `/task/new/upload`) : body;
+  }
+
+  async commitTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const body = await this.requestObject("POST", `/task/new/commit/${encodeURIComponent(uuid)}`, { signal });
+    return body.ok ? { ok: true, value: undefined } : body;
+  }
+
+  async taskInfo(uuid: string): Promise<TaskApiResult<TaskInfo>> {
+    const body = await this.requestObject("GET", `/task/${encodeURIComponent(uuid)}/info`, {});
+    if (!body.ok) return body;
+    const raw = body.value;
+    const status = raw.status;
+    if (typeof status !== "object" || status === null || Array.isArray(status)) {
+      return this.badResponse(`${this.endpoint.address}/task/info`, "The info answer has no status.");
+    }
+    const { code, errorMessage } = status as { code?: unknown; errorMessage?: unknown };
+    return {
+      ok: true,
+      value: {
+        uuid,
+        statusCode: code,
+        errorMessage: typeof errorMessage === "string" && errorMessage !== "" ? this.scrub(errorMessage) : null,
+        progress: this.number(raw, "progress"),
+        processingTime: this.number(raw, "processingTime"),
+        imagesCount: this.count(raw, "imagesCount"),
+      },
+    };
+  }
+
+  /** The console lines from line number fromLine on. */
+  async taskOutput(uuid: string, fromLine: number): Promise<TaskApiResult<string[]>> {
+    const body = await this.request("GET", `/task/${encodeURIComponent(uuid)}/output`, {
+      query: { line: String(fromLine) },
+      maxBodyBytes: MAX_OUTPUT_BYTES,
+    });
+    if (!body.ok) return body;
+    if (!Array.isArray(body.value) || !body.value.every((line) => typeof line === "string")) {
+      return this.badResponse(`${this.endpoint.address}/task/output`, "The output is not a list of lines.");
+    }
+    return { ok: true, value: body.value.map((line: string) => this.scrub(line)) };
+  }
+
+  async cancelTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    return this.command("/task/cancel", uuid, signal);
+  }
+
+  async removeTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    return this.command("/task/remove", uuid, signal);
+  }
+
+  /**
+   * The results archive. A JSON answer is the engine saying no (for example
+   * "Asset not ready"); anything else is returned to the caller to stream, so
+   * the archive is never held in memory here.
+   */
+  async downloadResults(uuid: string): Promise<TaskApiResult<Response>> {
+    const where = `${this.endpoint.address}/task/download`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DOWNLOAD_HEADER_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await this.fetchFn(this.urlFor(`/task/${encodeURIComponent(uuid)}/download/all.zip`), {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const detail = this.scrub(describeFailure(error, DOWNLOAD_HEADER_TIMEOUT_MS));
+      this.log(`Could not reach ${where}: ${detail}`);
+      return { ok: false, failure: { kind: "unreachable", detail } };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const type = response.headers.get("content-type") ?? "";
+    if (type.includes("json")) {
+      try {
+        const text = await readCapped(response, MAX_BODY_BYTES);
+        const parsed = this.parse(where, response, text);
+        if (!parsed.ok) return parsed;
+        return this.badResponse(where, "The answer is JSON where an archive was expected.");
+      } catch (error) {
+        const detail = this.scrub(describeFailure(error, DOWNLOAD_HEADER_TIMEOUT_MS));
+        return { ok: false, failure: { kind: "unreachable", detail } };
+      }
+    }
+    if (response.status !== 200 || response.body === null) {
+      await response.body?.cancel();
+      return this.badResponse(where, `HTTP ${response.status}, and no archive.`);
+    }
+    return { ok: true, value: response };
+  }
+
+  private async command(path: string, uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const body = await this.requestObject("POST", path, { body: new URLSearchParams({ uuid }), signal });
+    if (!body.ok) return body;
+    return this.expectSuccess(body.value, path);
+  }
+
+  /** The command routes say {"success": false, "error": ...} for a refusal. */
+  private expectSuccess(body: Record<string, unknown>, path: string): TaskApiResult<void> {
+    if (body.success === true) return { ok: true, value: undefined };
+    return this.badResponse(`${this.endpoint.address}${path}`, "The answer does not say success.");
+  }
+
+  private urlFor(path: string, query: Record<string, string> = {}): string {
+    const extra = Object.entries(query)
+      .map(([key, value]) => `&${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join("");
+    return `${this.endpoint.address}${path}?token=${encodeURIComponent(this.endpoint.token)}${extra}`;
+  }
+
   /** A GET of one path. The path must not contain a query. */
-  private async getJson(path: string): Promise<TaskApiResult<Record<string, unknown>>> {
-    const url = `${this.endpoint.address}${path}?token=${encodeURIComponent(this.endpoint.token)}`;
+  private getJson(path: string): Promise<TaskApiResult<Record<string, unknown>>> {
+    return this.requestObject("GET", path, {});
+  }
+
+  private async requestObject(
+    method: "GET" | "POST",
+    path: string,
+    options: RequestOptions,
+  ): Promise<TaskApiResult<Record<string, unknown>>> {
+    const result = await this.request(method, path, options);
+    if (!result.ok) return result;
+    if (typeof result.value !== "object" || result.value === null || Array.isArray(result.value)) {
+      return this.badResponse(`${this.endpoint.address}${path}`, "The body is JSON but not an object.");
+    }
+    return { ok: true, value: result.value as Record<string, unknown> };
+  }
+
+  /** One call whose answer is small JSON. An {"error": ...} body is the engine's error whatever the HTTP status. */
+  private async request(method: "GET" | "POST", path: string, options: RequestOptions): Promise<TaskApiResult<unknown>> {
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
     const where = `${this.endpoint.address}${path}`;
     let response: Response;
     let text: string;
     try {
-      response = await this.fetchFn(url, {
-        method: "GET",
+      response = await this.fetchFn(this.urlFor(path, options.query), {
+        method,
+        body: options.body,
         // A redirect would carry the token to wherever it points.
         redirect: "manual",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: options.signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), options.signal]) : AbortSignal.timeout(timeoutMs),
       });
-      text = await readCapped(response);
+      text = await readCapped(response, options.maxBodyBytes ?? MAX_BODY_BYTES);
     } catch (error) {
-      const detail = this.scrub(describeFailure(error, this.timeoutMs));
+      const detail = this.scrub(describeFailure(error, timeoutMs));
       this.log(`Could not reach ${where}: ${detail}`);
       return { ok: false, failure: { kind: "unreachable", detail } };
     }
+    return this.parse(where, response, text);
+  }
 
+  private parse(where: string, response: Response, text: string): TaskApiResult<unknown> {
     let body: unknown;
     try {
       body = JSON.parse(text);
@@ -113,10 +303,7 @@ export class TaskClient {
       };
     }
     if (response.status !== 200) return this.badResponse(where, `HTTP ${response.status}.`);
-    if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      return this.badResponse(where, "The body is JSON but not an object.");
-    }
-    return { ok: true, value: body as Record<string, unknown> };
+    return { ok: true, value: body };
   }
 
   private badResponse(where: string, detail: string): { ok: false; failure: TaskApiFailure } {
@@ -129,6 +316,15 @@ export class TaskClient {
     const value = raw[field];
     if (value === undefined || value === null) return null;
     if (typeof value === "number" && Number.isFinite(value) && value >= 0 && Number.isInteger(value)) return value;
+    this.unknownValue(field, value);
+    return null;
+  }
+
+  /** A finite number, or null. */
+  private number(raw: Record<string, unknown>, field: string): number | null {
+    const value = raw[field];
+    if (value === undefined || value === null) return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
     this.unknownValue(field, value);
     return null;
   }
@@ -155,6 +351,16 @@ export class TaskClient {
   }
 }
 
+interface RequestOptions {
+  body?: FormData | URLSearchParams;
+  query?: Record<string, string>;
+  timeoutMs?: number;
+  /** Lets the caller stop the call, for example when the operator cancels an upload. */
+  signal?: AbortSignal;
+  /** The largest answer read, in bytes. */
+  maxBodyBytes?: number;
+}
+
 function describeFailure(error: unknown, timeoutMs: number): string {
   const name = (error as { name?: unknown } | null)?.name;
   if (name === "TimeoutError" || name === "AbortError") return `No answer within ${timeoutMs} ms.`;
@@ -163,7 +369,7 @@ function describeFailure(error: unknown, timeoutMs: number): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function readCapped(response: Response): Promise<string> {
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -172,7 +378,7 @@ async function readCapped(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       await reader.cancel();
       throw new Error("The answer is larger than expected.");
     }

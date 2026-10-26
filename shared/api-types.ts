@@ -114,3 +114,95 @@ export interface EngineTestView {
 
 /** The oldest task API version the interface works with. */
 export const MIN_TASK_API_VERSION = "2.5.0";
+
+// Runs and the sample job (ticket #6).
+
+export const RUN_STATES = [
+  "created",
+  "uploading",
+  "queued",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+  "engine_unreachable",
+  "unknown",
+] as const;
+export type RunState = (typeof RUN_STATES)[number];
+
+/** The states after which a run never changes again. The server and the interface both read this list. */
+export const FINISHED_RUN_STATES: readonly RunState[] = ["completed", "failed", "cancelled"];
+
+export interface RunView {
+  id: number;
+  projectId: number;
+  engineId: number | null;
+  engineName: string | null;
+  state: RunState;
+  /** What the run does before the engine has it: fetching the dataset, then sending the images. */
+  step: "download" | "upload" | null;
+  download: { received: number; total: number } | null;
+  upload: { done: number; total: number } | null;
+  /** The engine's own progress, 0 to 100, while it processes. */
+  progress: number | null;
+  /** The engine's own error message, when the run failed on the engine. */
+  engineMessage: string | null;
+  /** Why the run failed or stopped on this side, when it did. */
+  problem: ApiError | null;
+  /** True after the engine restarted and started the run over (ticket #10). */
+  restarted: boolean;
+  /** True when the results archive can be downloaded. */
+  resultsAvailable: boolean;
+  createdAt: string;
+}
+
+export interface SampleDatasetView {
+  name: string;
+  licence: string;
+  licenceUrl: string;
+  attribution: string;
+  imageCount: number;
+  /** Bytes of the download. */
+  size: number;
+}
+
+/** A measured time on a known test machine, never an estimate for this one. */
+export interface ReferenceTimeView {
+  architecture: "x86-64" | "arm64";
+  seconds: number;
+  cores: number;
+  memoryGiB: number;
+}
+
+export interface SampleEngineOffer {
+  engineId: number;
+  engineName: string;
+  offered: boolean;
+  /** Bytes the engine may use: its memory cap, or the total memory it reports. Null when unknown. */
+  memoryCap: number | null;
+  /** Why the sample job is not offered on this engine. */
+  reason: ApiError | null;
+}
+
+export interface SampleView {
+  dataset: SampleDatasetView;
+  /** The reference time for this computer's architecture, or null when there is none. */
+  reference: ReferenceTimeView | null;
+  /** Bytes, measured. */
+  peakMemory: number;
+  engines: SampleEngineOffer[];
+  /** The latest sample run, if any. */
+  run: RunView | null;
+}
+
+/** POST /api/sample/start */
+export interface SampleStartRequest {
+  engineId: number;
+}
+
+/** GET /api/runs/:id/log?from=N */
+export interface RunLogView {
+  lines: string[];
+  /** The line number to ask for next. */
+  next: number;
+}

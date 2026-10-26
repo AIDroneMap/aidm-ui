@@ -28,6 +28,23 @@ export const MESSAGE_CODES = [
   "engine.not_found",
   "engine.name_required",
   "engine.token_required",
+  "download.failed",
+  "download.cancelled",
+  "download.checksum_mismatch",
+  "download.not_enough_space",
+  "sample.dataset_invalid",
+  "sample.memory_below_peak",
+  "sample.memory_unknown",
+  "sample.engine_not_usable",
+  "sample.already_running",
+  "run.not_found",
+  "run.not_cancellable",
+  "run.results_not_ready",
+  "run.upload_failed",
+  "run.engine_refused",
+  "run.cancelled_without_engine",
+  "run.engine_lost",
+  "run.interrupted",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

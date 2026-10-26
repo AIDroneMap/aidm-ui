@@ -1,0 +1,263 @@
+import { expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ApiFailure } from "../api.ts";
+import {
+  RUN_STATES,
+  type RunView,
+  type SampleEngineOffer,
+  type SampleView,
+} from "../../../shared/api-types.ts";
+import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
+import { RunProgress, SampleIntro, type RunProgressProps, type SampleIntroProps } from "./SampleJobPage.tsx";
+
+const offered: SampleEngineOffer = {
+  engineId: 1,
+  engineName: "Barn engine",
+  offered: true,
+  memoryCap: 16 * 1024 ** 3,
+  reason: null,
+};
+
+const sample: SampleView = {
+  dataset: {
+    name: "Small vineyard",
+    licence: "CC BY 4.0",
+    licenceUrl: "https://creativecommons.org/licenses/by/4.0/",
+    attribution: "Photos by A. Pilot",
+    imageCount: 73,
+    size: 888735308,
+  },
+  reference: { architecture: "x86-64", seconds: 1366, cores: 4, memoryGiB: 15 },
+  peakMemory: 7360806912,
+  engines: [offered],
+  run: null,
+};
+
+const introData = ["Small vineyard", "CC BY 4.0", "Photos by A. Pilot", "73", "848 MiB", "Barn engine", "Small laptop"];
+
+function renderIntro(view: SampleView = sample, overrides: Partial<SampleIntroProps> = {}): string {
+  return renderToStaticMarkup(
+    <SampleIntro
+      sample={view}
+      engineId={view.engines.find((engine) => engine.offered)?.engineId ?? null}
+      onEngineChange={() => {}}
+      starting={false}
+      failure={null}
+      onStart={() => {}}
+      {...overrides}
+    />,
+  );
+}
+
+const run: RunView = {
+  id: 7,
+  projectId: 1,
+  engineId: 1,
+  engineName: "Barn engine",
+  state: "created",
+  step: null,
+  download: null,
+  upload: null,
+  progress: null,
+  engineMessage: null,
+  problem: null,
+  restarted: false,
+  resultsAvailable: false,
+  createdAt: "2026-10-26T10:00:00Z",
+};
+
+const runData = ["Barn engine", "line one\nline two"];
+
+function renderRun(view: Partial<RunView>, overrides: Partial<RunProgressProps> = {}): string {
+  return renderToStaticMarkup(
+    <RunProgress
+      run={{ ...run, ...view }}
+      lines={["line one", "line two"]}
+      connectionLost={false}
+      cancelling={false}
+      failure={null}
+      onCancel={() => {}}
+      onAgain={() => {}}
+      {...overrides}
+    />,
+  );
+}
+
+test("before a run the photos, licence, image count and download size are shown", () => {
+  const html = renderIntro();
+  expect(html).toContain("Small vineyard");
+  expect(html).toContain('<a href="https://creativecommons.org/licenses/by/4.0/"');
+  expect(html).toContain(">CC BY 4.0</a>");
+  expect(html).toContain("Photos by A. Pilot");
+  expect(html).toContain(">73<");
+  expect(html).toContain("848 MiB");
+  expect(untranslatedText(html, introData)).toEqual([]);
+  expect(unlabelledInputs(html)).toEqual([]);
+});
+
+test("the reference time is labelled as a measurement on a test machine", () => {
+  const html = renderIntro();
+  expect(html).toContain(
+    "Measured on a 4-core test machine with 15 GiB of memory (x86-64): 22 min 46 s. Your computer may be faster or slower.",
+  );
+});
+
+test("an arm64 reference reads with its own label and time", () => {
+  const html = renderIntro({ ...sample, reference: { architecture: "arm64", seconds: 982, cores: 4, memoryGiB: 15 } });
+  expect(html).toContain("(arm64): 16 min 22 s");
+});
+
+test("without a reference the page says nothing was measured", () => {
+  const html = renderIntro({ ...sample, reference: null });
+  expect(html).toContain("No time was measured for this kind of computer");
+  expect(html).not.toContain("22 min");
+  expect(untranslatedText(html, introData)).toEqual([]);
+});
+
+test("the measured peak memory is shown", () => {
+  expect(renderIntro()).toContain("the sample job used up to 6.9 GiB of memory");
+});
+
+test("the engine choice is a labelled list with a start button and a skip link", () => {
+  const html = renderIntro();
+  expect(html).toContain('<label for="sample-engine">Engine</label>');
+  expect(html).toContain('<select id="sample-engine"');
+  expect(html).toContain(">Barn engine</option>");
+  expect(html).toContain("It is 848 MiB.");
+  expect(html).toContain("Download the photos and start");
+  expect(html).toContain('<a href="#/">Skip the sample job</a>');
+});
+
+test("an engine that is not offered is listed with its cap and the peak", () => {
+  const small: SampleEngineOffer = {
+    engineId: 2,
+    engineName: "Small laptop",
+    offered: false,
+    memoryCap: 4 * 1024 ** 3,
+    reason: { code: "sample.memory_below_peak", data: {} },
+  };
+  const html = renderIntro({ ...sample, engines: [offered, small] });
+  expect(html).toContain("Small laptop");
+  expect(html).toContain("This engine may use 4.0 GiB of memory. The sample job needs more than 6.9 GiB.");
+  expect(html).not.toContain(">Small laptop</option>");
+  expect(untranslatedText(html, introData)).toEqual([]);
+});
+
+test("with no engine offered there is no start button and a link to the engines page", () => {
+  const small: SampleEngineOffer = {
+    engineId: 2,
+    engineName: "Small laptop",
+    offered: false,
+    memoryCap: null,
+    reason: { code: "sample.memory_unknown", data: {} },
+  };
+  const html = renderIntro({ ...sample, engines: [small] });
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain("<select");
+  expect(html).toContain("No engine can run the sample job yet.");
+  expect(html).toContain('<a href="#/engines">');
+  expect(html).toContain('<a href="#/">Skip the sample job</a>');
+  expect(untranslatedText(html, introData)).toEqual([]);
+});
+
+test("a refused start shows its problem", () => {
+  const html = renderIntro(sample, { failure: new ApiFailure(409, "sample.already_running") });
+  expect(html).toContain('role="alert"');
+  expect(html).toContain("A sample job is already running.");
+});
+
+test("every run state has words", () => {
+  for (const state of RUN_STATES) {
+    const html = renderRun({ state });
+    expect(untranslatedText(html, runData), state).toEqual([]);
+    expect(html, state).toContain('<p role="status" class="run-state">');
+    expect(html, state).not.toContain("run.state.");
+  }
+  expect(renderRun({ state: "engine_unreachable" })).toContain("The engine is not answering");
+  expect(renderRun({ state: "unknown" })).toContain("The engine reported a status AIDM UI does not know");
+});
+
+test("the download step shows the bytes received and the total", () => {
+  const html = renderRun({ step: "download", download: { received: 312 * 1024 ** 2, total: 888735308 } });
+  expect(html).toContain("Downloading the photos: 312 MiB of 848 MiB");
+  expect(html).toMatch(/<progress id="run-download" max="888735308" value="327155712"/);
+  expect(html).toContain('<label for="run-download">');
+});
+
+test("the upload step shows images done of total", () => {
+  const html = renderRun({ state: "uploading", step: "upload", upload: { done: 12, total: 73 } });
+  expect(html).toContain("Sending images: 12 of 73");
+  expect(html).toContain('<label for="run-upload">');
+});
+
+test("processing shows the engine's progress as a percentage", () => {
+  const html = renderRun({ state: "processing", progress: 45 });
+  expect(html).toContain("Processing: 45%");
+  expect(html).toContain('<label for="run-processing">');
+});
+
+test("the log is a labelled, focusable region", () => {
+  const html = renderRun({ state: "processing" });
+  expect(html).toContain('<h3 id="run-log-title">Log</h3>');
+  expect(html).toMatch(/<pre[^>]*aria-labelledby="run-log-title"/);
+  expect(html).toMatch(/<pre[^>]*tabindex="0"/);
+  expect(html).toContain("line one\nline two");
+});
+
+test("an empty log says so", () => {
+  expect(renderRun({}, { lines: [] })).toContain("Nothing has been logged yet.");
+});
+
+test("a run in progress can be cancelled", () => {
+  expect(renderRun({ state: "processing" })).toContain("Cancel the run");
+  expect(renderRun({ state: "engine_unreachable" })).toContain("Cancel the run");
+});
+
+test("a finished run cannot be cancelled but can be started again", () => {
+  for (const state of ["completed", "failed", "cancelled"] as const) {
+    const html = renderRun({ state });
+    expect(html, state).not.toContain("Cancel the run");
+    expect(html, state).toContain("Start again");
+  }
+});
+
+test("a failed run shows the engine's own message", () => {
+  const html = renderRun({ state: "failed", engineMessage: "Out of memory" });
+  expect(html).toContain("The engine said: Out of memory");
+});
+
+test("a failed run shows its problem", () => {
+  const html = renderRun({ state: "failed", problem: { code: "run.upload_failed", data: {} } });
+  expect(html).toContain("AIDM UI could not send the images to the engine.");
+});
+
+test("a restarted run says so", () => {
+  expect(renderRun({ state: "queued", restarted: true })).toContain("The engine restarted, so this run started over.");
+  expect(renderRun({ state: "queued" })).not.toContain("started over");
+});
+
+test("a completed run offers the results", () => {
+  const html = renderRun({ state: "completed", resultsAvailable: true });
+  expect(html).toContain('<a href="/api/runs/7/results" download="">Download the results</a>');
+  expect(untranslatedText(html, runData)).toEqual([]);
+});
+
+test("a completed run whose results are not ready offers no link", () => {
+  const html = renderRun({ state: "completed", resultsAvailable: false });
+  expect(html).not.toContain("/results");
+  expect(html).toContain("The results are being prepared.");
+});
+
+test("a lost live connection is announced while the run is going", () => {
+  expect(renderRun({ state: "processing" }, { connectionLost: true })).toContain("Live updates are paused.");
+  expect(renderRun({ state: "completed" }, { connectionLost: true })).not.toContain("Live updates are paused.");
+});
+
+test("every button in a run has a name", () => {
+  for (const state of RUN_STATES) {
+    const html = renderRun({ state });
+    for (const match of html.matchAll(/<button\b[^>]*>(.*?)<\/button>/g)) {
+      expect((match[1] ?? "").replace(/<[^>]*>/g, "").trim(), state).not.toBe("");
+    }
+  }
+});

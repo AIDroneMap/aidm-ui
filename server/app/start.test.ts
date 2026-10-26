@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
 import { assetsFromFolder, type AssetMap } from "../http/static-assets.ts";
+import { eventually } from "../testing/harness.ts";
 import { LOCK_FILE_NAME, probe, readLock, writeLock } from "./instance.ts";
 import { startAidmUi, type StartResult } from "./start.ts";
 
@@ -233,4 +235,43 @@ test("the same data folder reached through a symlink attaches", async () => {
   await symlink(dataFolder("real"), dataFolder("link"));
   const second = await start("link", port);
   expect(second.kind).toBe("attached");
+});
+
+test("stopping closes the listener first, even while an engine poll is still on its way", async () => {
+  const fake = new FakeTaskApi();
+  await fake.start();
+  try {
+    // The first run gives the data folder an engine to poll.
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    const first = started(await start("a", port));
+    const added = await fetch(`${base}/api/engines`, {
+      method: "POST",
+      body: JSON.stringify({ name: "Office", address: fake.address, token: fake.token }),
+    });
+    expect(added.status).toBe(201);
+    await first.stop();
+    running.pop();
+
+    // The second start polls the engine at once, and the answer takes two seconds.
+    fake.infoDelayMs = 2000;
+    const infoCalls = () => fake.requests.filter((request) => request.path === "/info").length;
+    const before = infoCalls();
+    const second = started(await start("a", port));
+    running.pop();
+    await eventually(async () => infoCalls() > before);
+
+    const stopping = second.stop();
+    await Bun.sleep(200);
+    let answered = true;
+    try {
+      await fetch(`${base}/`);
+    } catch {
+      answered = false;
+    }
+    expect(answered).toBe(false);
+    await stopping;
+  } finally {
+    await fake.stop();
+  }
 });

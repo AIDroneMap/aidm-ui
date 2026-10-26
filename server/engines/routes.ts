@@ -16,7 +16,7 @@ function isString(value: unknown, maxChars: number): value is string {
 }
 
 /** The refusal for a failed call to the engine. Every kind of failure is a bad gateway; the code says which. */
-function failureResponse(failure: TaskApiFailure): Response {
+export function failureResponse(failure: TaskApiFailure): Response {
   const problem = problemFromFailure(failure);
   return errorResponse(502, problem.code, problem.data);
 }

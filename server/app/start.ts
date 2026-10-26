@@ -18,6 +18,10 @@ import { openDatabase } from "../db/database.ts";
 import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { EventStreams } from "../http/event-streams.ts";
+import { RunStore } from "../runs/run-store.ts";
+import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts";
+import { SampleJob } from "../sample/sample-job.ts";
+import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
@@ -93,6 +97,24 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const sessions = new Sessions();
     const engineStore = new EngineStore(db, options.log);
     const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: options.log });
+    const runStore = new RunStore(db);
+    const tracker = new RunTracker({
+      runs: runStore,
+      engines: engineStore,
+      dataFolder,
+      intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
+      log: options.log,
+    });
+    const sample = new SampleJob({
+      dataset: SAMPLE_DATASET,
+      dataFolder,
+      runs: runStore,
+      tracker,
+      engines,
+      engineStore,
+      architecture: process.arch,
+      log: options.log,
+    });
     let listener: Listener | undefined;
 
     const routes = createRoutes({
@@ -103,6 +125,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engines,
       engineStore,
       streams: new EventStreams(sessions),
+      tracker,
+      sample,
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
       rebind: async (hostname) => {
@@ -132,6 +156,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       options.log(`aidm-ui is running at ${url}`);
       databaseBelongsToServer = true;
       engines.start();
+      tracker.start();
       await options.openBrowser(url);
       const result: StartResult = {
         kind: "started",
@@ -139,8 +164,11 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         port,
         dataFolder,
         async stop() {
-          await engines.stop();
+          // No request can arrive once the listener is down, and nothing may use the database after it closes.
           await running.stop();
+          await sample.stop();
+          await tracker.stop();
+          await engines.stop();
           db.close();
           removeLock(dataFolder, process.pid);
         },

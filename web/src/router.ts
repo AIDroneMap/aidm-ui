@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-export type Route = "home" | "engines" | "settings";
+export type Route = "home" | "engines" | "sample" | "settings";
 
 export function routeFromHash(hash: string): Route {
   if (hash === "#/settings") return "settings";
+  if (hash === "#/sample") return "sample";
   return hash === "#/engines" ? "engines" : "home";
 }
 

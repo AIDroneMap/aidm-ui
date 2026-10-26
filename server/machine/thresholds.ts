@@ -1,0 +1,40 @@
+// The numbers the machine check, the downloads and the sample job decide by,
+// in one place, so that the first benchmarks can change them in one edit.
+
+const GiB = 1024 ** 3;
+
+/** Below this much RAM the wizard refuses a local engine. */
+export const RAM_REFUSE_BELOW = 8 * GiB;
+
+/** Below this much RAM a local engine installs with a warning that normal datasets need a remote engine. */
+export const RAM_WARN_BELOW = 16 * GiB;
+
+/** Free disk a run needs, checked right before it starts. */
+export const RUN_FREE_DISK = 10 * GiB;
+
+/**
+ * A download or a pull needs its size plus this share of it free, checked
+ * right before it starts.
+ */
+export const DOWNLOAD_FREE_DISK_MARGIN = 0.2;
+
+/**
+ * The sample job's measured peak memory, in bytes. The sample job is offered
+ * only on an engine whose memory cap is above it.
+ *
+ * Measured on 26 October 2026: the published ghcr.io/aidronemap/aidm-api:2.5.0
+ * image (index digest sha256:d31ddbb2c1e04cfa67365c7a8dc9bc3b6b4f3b486371a2d60b97a2457c79bdcc)
+ * ran the sample dataset (aidm-vineyard-small v1, commit
+ * 6af198c9a327e187e088ede6d7c632eb77b50eaa) through the task API with the
+ * engine's CI options: dsm on and max-concurrency 4. The container was pinned
+ * to four CPUs and had no memory limit. The machine: AMD Ryzen 9 9900X
+ * (12 cores, 24 threads), 60 GiB of RAM, Ubuntu 24.04, Docker 29.
+ *
+ * The value is the container cgroup's memory.peak, the larger of two runs:
+ * 7,222,665,216 and 7,360,806,912 bytes. memory.peak includes page cache.
+ * That is deliberate and on the safe side: page cache counts against the
+ * container's memory limit, so the bar leaves room for it. For reference, in
+ * the second run the anonymous memory, sampled every second, peaked at
+ * 6,247,743,488 bytes (6.25 GB).
+ */
+export const SAMPLE_JOB_PEAK_MEMORY = 7_360_806_912;

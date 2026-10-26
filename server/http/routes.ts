@@ -1,6 +1,8 @@
 import { errorResponse } from "../../shared/api-error.ts";
 import { authRoutes } from "../auth/routes.ts";
 import { engineRoutes } from "../engines/routes.ts";
+import { runRoutes } from "../runs/routes.ts";
+import { sampleRoutes } from "../sample/routes.ts";
 import { settingsRoutes } from "../settings/routes.ts";
 import type { GuardedHandler, ServeRoutes } from "./listener.ts";
 import type { Method, RouteContext, RouteHandler, RouteTable } from "./route-table.ts";
@@ -20,9 +22,16 @@ function healthRoutes(ctx: RouteContext): RouteTable {
   return { "/api/health": { GET: () => Response.json(ctx.identity) } };
 }
 
-/** Every API route. The routes of projects and runs join this table in later tickets. */
+/** Every API route. The routes of operator projects join this table in later tickets. */
 export function apiRoutes(ctx: RouteContext): RouteTable {
-  return { ...healthRoutes(ctx), ...settingsRoutes(ctx), ...authRoutes(ctx), ...engineRoutes(ctx) };
+  return {
+    ...healthRoutes(ctx),
+    ...settingsRoutes(ctx),
+    ...authRoutes(ctx),
+    ...engineRoutes(ctx),
+    ...sampleRoutes(ctx),
+    ...runRoutes(ctx),
+  };
 }
 
 /**
