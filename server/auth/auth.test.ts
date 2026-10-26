@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { openHarness, lanAddress, type Harness } from "../testing/harness.ts";
+import { openHarness, lanAddress, lanTest, type Harness } from "../testing/harness.ts";
 import { SESSION_COOKIE } from "./sessions.ts";
 
 let harness: Harness | undefined;
@@ -36,7 +36,7 @@ async function signIn(url: string, passphrase = PASSPHRASE): Promise<string> {
   return cookie.split(";")[0] ?? "";
 }
 
-test.skipIf(lan === undefined)("with the LAN switch off, a request from another address is refused with a code", async () => {
+lanTest("with the LAN switch off, a request from another address is refused with a code", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   const response = await fetch(`http://${lan}:${harness.port}/api/settings`);
   expect(response.status).toBe(403);
@@ -49,7 +49,7 @@ test.skipIf(lan === undefined)("with the LAN switch off, a request from another 
   expect(own.status).toBe(200);
 });
 
-test.skipIf(lan === undefined)("with the LAN switch on, another address needs the passphrase", async () => {
+lanTest("with the LAN switch on, another address needs the passphrase", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   const remote = `http://${lan}:${harness.port}`;
@@ -92,7 +92,7 @@ test("the operator's own computer needs no login even with the LAN switch on", a
   expect(await (await fetch(`${harness.base}/api/auth/session`)).json()).toEqual({ passphraseRequired: false });
 });
 
-test.skipIf(lan === undefined)("turning the LAN switch off or changing the passphrase ends every session", async () => {
+lanTest("turning the LAN switch off or changing the passphrase ends every session", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   const remote = `http://${lan}:${harness.port}`;
@@ -156,7 +156,7 @@ test("reading is allowed whatever the origin", async () => {
   expect(response.status).toBe(200);
 });
 
-test.skipIf(lan === undefined)("another address cannot write from a foreign origin even with a session", async () => {
+lanTest("another address cannot write from a foreign origin even with a session", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   const remote = `http://${lan}:${harness.port}`;
@@ -199,7 +199,7 @@ test("a right login clears the failures before it", async () => {
   }
 });
 
-test.skipIf(lan === undefined)("odd spellings of an API path do not get past the passphrase", async () => {
+lanTest("odd spellings of an API path do not get past the passphrase", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   harness.settings.set("server.port", 9321);
@@ -236,7 +236,7 @@ test("a passphrase longer than 1024 characters is refused before it is hashed", 
   expect(longest.status).toBe(401);
 });
 
-test.skipIf(lan === undefined)("only the operator's own computer can change the LAN switch, even with a session", async () => {
+lanTest("only the operator's own computer can change the LAN switch, even with a session", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   const remote = `http://${lan}:${harness.port}`;
@@ -251,7 +251,7 @@ test.skipIf(lan === undefined)("only the operator's own computer can change the 
   expect((await fetch(`${remote}/api/settings`, { headers: { cookie } })).status).toBe(200);
 });
 
-test.skipIf(lan === undefined)("a computer on the network without a session may only read the interface and ask to sign in", async () => {
+lanTest("a computer on the network without a session may only read the interface and ask to sign in", async () => {
   harness = openHarness({ hostname: "0.0.0.0" });
   await switchLanOn(harness);
   const remote = `http://${lan}:${harness.port}`;

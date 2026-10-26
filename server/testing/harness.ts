@@ -1,3 +1,4 @@
+import { test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -357,6 +358,25 @@ function endNativeEngine(settings: Settings): void {
 }
 
 /** An IPv4 address of this computer that is not loopback, or undefined when it has none. */
+/**
+ * A test that needs an address on the local network. Without one it is
+ * skipped, so it can run on a laptop without a network, unless
+ * AIDM_REQUIRE_LAN_TESTS is 1: then it fails, so CI cannot pass with these
+ * tests skipped.
+ */
+export function lanTest(name: string, body: (address: string) => Promise<void> | void, timeoutMs?: number): void {
+  const address = lanAddress();
+  if (address !== undefined) {
+    test(name, () => body(address), timeoutMs);
+  } else if (process.env.AIDM_REQUIRE_LAN_TESTS === "1") {
+    test(name, () => {
+      throw new Error("This test needs an IPv4 address on the local network, and AIDM_REQUIRE_LAN_TESTS=1 says it may not be skipped.");
+    });
+  } else {
+    test.skip(name, () => {});
+  }
+}
+
 export function lanAddress(): string | undefined {
   for (const entries of Object.values(os.networkInterfaces())) {
     for (const entry of entries ?? []) {

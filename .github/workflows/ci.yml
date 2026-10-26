@@ -25,6 +25,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+        env:
+          # The ten tests that need an address on the local network fail instead of skipping.
+          AIDM_REQUIRE_LAN_TESTS: "1"
 
   build:
     name: Build the four executables
