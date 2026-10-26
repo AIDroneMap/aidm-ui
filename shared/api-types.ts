@@ -238,3 +238,39 @@ export interface WizardView {
 export interface WizardUpdateRequest {
   completed: boolean;
 }
+
+// Engine packages and the manifest (ticket #8).
+
+export const VARIANT_IDS = ["linux-amd64-cpu", "linux-arm64-cpu", "linux-amd64-gpu", "windows-x64", "darwin-arm64"] as const;
+export type VariantId = (typeof VARIANT_IDS)[number];
+
+/** The engine package that fits this computer, from the newest verified manifest. */
+export interface EnginePackageOffer {
+  packageVersion: string;
+  engineVersion: string;
+  variant: VariantId;
+  kind: "container" | "native";
+  /** Bytes to download, from the manifest. */
+  size: number;
+  /** "builtin" for the entry inside aidm-ui, "downloaded" for one fetched from the releases. */
+  source: "builtin" | "downloaded";
+  /** The release tag the manifest came from, or null for the built-in entry. */
+  tag: string | null;
+}
+
+export type UpdateCheck = "daily" | "never";
+
+export interface PackagesView {
+  offer: EnginePackageOffer | null;
+  /** Why there is no offer. */
+  reason: ApiError | null;
+  /** Null until the operator has answered the question in the wizard. */
+  updateCheck: UpdateCheck | null;
+  /** The last check for a newer manifest, if any. */
+  lastCheck: { at: string; problem: ApiError | null } | null;
+}
+
+/** PUT /api/settings/update-check */
+export interface UpdateCheckRequest {
+  value: UpdateCheck;
+}
