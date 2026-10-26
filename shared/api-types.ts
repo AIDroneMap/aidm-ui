@@ -138,6 +138,8 @@ export interface RunView {
   projectId: number;
   engineId: number | null;
   engineName: string | null;
+  /** True when the engine is the one on this computer. Its name is interface text, so the page writes it itself. */
+  engineLocal: boolean;
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
   step: "download" | "upload" | null;
@@ -177,6 +179,8 @@ export interface ReferenceTimeView {
 export interface SampleEngineOffer {
   engineId: number;
   engineName: string;
+  /** True for the engine on this computer. Its name is interface text, so the page writes it itself. */
+  local: boolean;
   offered: boolean;
   /** Bytes the engine may use: its memory cap, or the total memory it reports. Null when unknown. */
   memoryCap: number | null;
@@ -282,4 +286,64 @@ export interface RefreshView {
 /** PUT /api/settings/update-check */
 export interface UpdateCheckRequest {
   value: UpdateCheck;
+}
+
+/** The container runtimes the engine manager can drive. */
+export const RUNTIME_IDS = ["podman", "docker", "apple-container"] as const;
+export type RuntimeId = (typeof RUNTIME_IDS)[number];
+
+// The local engine (ticket #9).
+
+export interface InstallProgressView {
+  phase: "pulling" | "starting" | "done" | "failed";
+  /** Bytes to download, from the manifest. */
+  size: number;
+  /** Image layers finished and in all, when the runtime's output says so. */
+  layersDone: number | null;
+  layersTotal: number | null;
+  /** The current try of the pull, from 1. */
+  attempt: number;
+  maxAttempts: number;
+}
+
+export interface CapsView {
+  /** What the engine may use from its next start. */
+  memoryBytes: number;
+  cpus: number;
+  /** The most the operator may give it: total RAM minus the reserve, and every core. */
+  maxMemoryBytes: number;
+  maxCpus: number;
+  /** What the running engine got, or null when it is not running. Null memory means no cap. */
+  applied: { memoryBytes: number | null; cpus: number | null } | null;
+}
+
+export interface LocalEngineView {
+  /** Null until a package is installed. */
+  installed: { packageVersion: string; variant: VariantId; kind: "container" | "native"; runtime: RuntimeId | null } | null;
+  /** The engine's row in the engines list, once there is one. */
+  engineId: number | null;
+  state: EngineState;
+  install: InstallProgressView | null;
+  caps: CapsView;
+  runtime: {
+    /** The runtime the engine uses or would use. */
+    chosen: RuntimeId | null;
+    available: RuntimeId[];
+    /** The operator's own choice, or null for automatic. */
+    preferred: RuntimeId | null;
+  };
+  /** For example local.memory_cap_not_enforced. */
+  warnings: ApiError[];
+  problem: ApiError | null;
+}
+
+/** PUT /api/local-engine/caps */
+export interface CapsRequest {
+  memoryBytes: number;
+  cpus: number;
+}
+
+/** PUT /api/settings/runtime */
+export interface RuntimeChoiceRequest {
+  runtime: RuntimeId | null;
 }

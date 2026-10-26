@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error response from daemon: pull access denied for aidm-no-such-owner-9a/nothing, repository does not exist or may require 'docker login'\n"
+}

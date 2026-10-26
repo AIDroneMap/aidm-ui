@@ -13,6 +13,7 @@ import { RunProgress, SampleIntro, SampleJobPage, type RunProgressProps, type Sa
 const offered: SampleEngineOffer = {
   engineId: 1,
   engineName: "Barn engine",
+  local: false,
   offered: true,
   memoryCap: 16 * 1024 ** 3,
   reason: null,
@@ -54,6 +55,7 @@ const run: RunView = {
   projectId: 1,
   engineId: 1,
   engineName: "Barn engine",
+  engineLocal: false,
   state: "created",
   step: null,
   download: null,
@@ -128,10 +130,34 @@ test("the engine choice is a labelled list with a start button and a skip link",
   expect(html).toContain('<a href="#/">Skip the sample job</a>');
 });
 
+test("the engine on this computer is named by the interface, whatever name the server stored for it", () => {
+  const here: SampleEngineOffer = { ...offered, engineId: 3, engineName: "Nom enregistre", local: true };
+  const refused: SampleEngineOffer = {
+    ...here,
+    engineId: 4,
+    offered: false,
+    memoryCap: 4 * 1024 ** 3,
+    reason: { code: "sample.memory_below_peak", data: {} },
+  };
+  const html = renderIntro({ ...sample, engines: [here] });
+  expect(html).toContain(">This computer</option>");
+  expect(html).not.toContain("Nom enregistre");
+  const listed = renderIntro({ ...sample, engines: [offered, refused] });
+  expect(listed).toContain("<strong>This computer</strong>");
+  expect(listed).not.toContain("Nom enregistre");
+});
+
+test("a run on the engine on this computer says so in the interface's words", () => {
+  const html = renderRun({ engineLocal: true, engineName: "Nom enregistre" });
+  expect(html).toContain("Running on This computer");
+  expect(html).not.toContain("Nom enregistre");
+});
+
 test("an engine that is not offered is listed with its cap and the peak", () => {
   const small: SampleEngineOffer = {
     engineId: 2,
     engineName: "Small laptop",
+    local: false,
     offered: false,
     memoryCap: 4 * 1024 ** 3,
     reason: { code: "sample.memory_below_peak", data: {} },
@@ -147,6 +173,7 @@ test("with no engine offered there is no start button and a link to the engines 
   const small: SampleEngineOffer = {
     engineId: 2,
     engineName: "Small laptop",
+    local: false,
     offered: false,
     memoryCap: null,
     reason: { code: "sample.memory_unknown", data: {} },

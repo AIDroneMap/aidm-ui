@@ -8,6 +8,9 @@ import { openDatabase } from "../db/database.ts";
 import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
+import { LocalEngineManager, type LocalEngineDeps } from "../local-engine/manager.ts";
+import { CONTAINER_NAME } from "../packages/container-package.ts";
+import type { RuntimeId } from "../runtimes/runtime.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { ManifestService, type ManifestServiceDeps } from "../manifest/manifest-service.ts";
@@ -21,7 +24,10 @@ import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
+import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { recordedMachine } from "../../test-support/recorded-machine.ts";
+
+const GiB = 1024 ** 3;
 
 export const TEST_IDENTITY = { app: "aidm-ui", version: "9.9.9", instance: "abc" } as const;
 
@@ -34,6 +40,9 @@ export interface Harness {
   sessions: Sessions;
   engines: EngineMonitor;
   engineStore: EngineStore;
+  localEngine: LocalEngineManager;
+  /** The container runtimes the local engine can use, in memory. */
+  runtimes: Partial<Record<RuntimeId, FakeRuntime>>;
   runs: RunStore;
   tracker: RunTracker;
   sample: SampleJob;
@@ -73,6 +82,16 @@ export function openHarness(
     /** The sample dataset entry; tests point it at a fake file server. */
     sampleDataset?: SampleDatasetEntry;
     freeBytes?: FreeBytes;
+    /** The fake container runtimes by id; default: one Podman that works. */
+    runtimes?: Partial<Record<RuntimeId, FakeRuntime>>;
+    /** The computer the local engine is sized for; default: Linux on x64 with 32 GiB and 8 cores. */
+    localMachine?: LocalEngineDeps["machine"];
+    /** The port the local engine is published on; a test passes one that repeats to reuse a port. */
+    freePort?: LocalEngineDeps["freePort"];
+    /** Passed to the log of the local engine, to make it rotate or retry sooner. */
+    localLog?: LocalEngineDeps["logOptions"];
+    /** How long a freshly started local engine may stay silent and still be starting. */
+    startingGraceMs?: number;
     /**
      * Where the manifest comes from. Without a fetch of its own the service
      * has no network at all, so a test can only reach a fake release server on purpose.
@@ -111,6 +130,7 @@ export function openHarness(
     log,
     resolve: options.resolve,
     clientFor: options.clientFor,
+    startingGraceMs: options.startingGraceMs,
   });
   const runs = new RunStore(db);
   const tracker = new RunTracker({
@@ -121,19 +141,6 @@ export function openHarness(
     log,
     clientFor: options.runClientFor,
   });
-  const sample = new SampleJob({
-    dataset: options.sampleDataset ?? SAMPLE_DATASET,
-    dataFolder,
-    runs,
-    tracker,
-    engines,
-    engineStore,
-    architecture: options.architecture ?? process.arch,
-    log,
-    freeBytes: options.freeBytes,
-    clientFor: options.runClientFor,
-  });
-
   const manifests = new ManifestService({
     settings,
     releasesUrl: options.manifest?.releasesUrl,
@@ -147,6 +154,38 @@ export function openHarness(
     now: () => clock.now,
     log,
   });
+  const runtimes = options.runtimes ?? { podman: new FakeRuntime() };
+  const localEngine = new LocalEngineManager({
+    settings,
+    engineStore,
+    monitor: engines,
+    manifests,
+    runtimes: (id) => runtimes[id] ?? null,
+    detectRuntimes: () => Promise.all(Object.values(runtimes).map((runtime) => runtime.detect())),
+    machine: options.localMachine ?? { platform: "linux", arch: "x64", totalMemory: 32 * GiB, cpuCount: 8 },
+    dataFolder,
+    // Not the disk of the machine that runs the tests.
+    freeBytes: options.freeBytes ?? (() => 1024 * GiB),
+    log,
+    sleep: async () => {},
+    freePort: options.freePort,
+    logOptions: options.localLog,
+  });
+
+  const sample = new SampleJob({
+    dataset: options.sampleDataset ?? SAMPLE_DATASET,
+    dataFolder,
+    runs,
+    tracker,
+    engines,
+    engineStore,
+    architecture: options.architecture ?? process.arch,
+    log,
+    freeBytes: options.freeBytes,
+    clientFor: options.runClientFor,
+    localMemoryCap: () => localEngine.memoryCap(),
+  });
+
   const updateChecks = new UpdateCheckScheduler({
     settings,
     manifests,
@@ -162,6 +201,7 @@ export function openHarness(
     sessions,
     engines,
     engineStore,
+    localEngine,
     streams: new EventStreams(sessions),
     tracker,
     sample,
@@ -194,6 +234,8 @@ export function openHarness(
     sessions,
     engines,
     engineStore,
+    localEngine,
+    runtimes,
     runs,
     tracker,
     sample,
@@ -208,7 +250,10 @@ export function openHarness(
       await updateChecks.stop();
       await sample.stop();
       await tracker.stop();
+      await localEngine.close();
       await engines.stop();
+      // The containers of the fake runtimes hold fake engines that listen on real ports.
+      for (const runtime of Object.values(runtimes)) await runtime.remove(CONTAINER_NAME);
       db.close();
       if (ownFolder !== undefined) rmSync(ownFolder, { recursive: true, force: true });
     },

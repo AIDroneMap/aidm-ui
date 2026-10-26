@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "Error: creating container storage: the container name \"aidm-engine\" is already in use by \"8888888888888888888888888888888888888888888888888888888888888888\". You have to remove that container to be able to reuse that name: that name is already in use, or use --replace to instruct Podman to do so.\n"
+}

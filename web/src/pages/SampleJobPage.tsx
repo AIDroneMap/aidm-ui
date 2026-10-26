@@ -31,6 +31,11 @@ function params(data: Record<string, unknown>): Record<string, string | number> 
   return out;
 }
 
+/** The engine on this computer is named by the interface, in the operator's language. */
+function engineLabel(engine: SampleEngineOffer): string {
+  return engine.local ? t("engines.local_name") : engine.engineName;
+}
+
 /** Why an engine cannot run the sample job. The cap and the peak come from the engine and the measurement, not from this computer. */
 function reasonText(offer: SampleEngineOffer, peakMemory: number): string {
   if (offer.reason === null) return "";
@@ -104,7 +109,7 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
           >
             {offered.map((engine) => (
               <option key={engine.engineId} value={engine.engineId}>
-                {engine.engineName}
+                {engineLabel(engine)}
               </option>
             ))}
           </select>
@@ -116,7 +121,7 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
           <ul>
             {refused.map((engine) => (
               <li key={engine.engineId}>
-                <strong>{engine.engineName}</strong>
+                <strong>{engineLabel(engine)}</strong>
                 <br />
                 <span>{reasonText(engine, sample.peakMemory)}</span>
               </li>
@@ -186,7 +191,7 @@ export function RunProgress({ run, lines, connectionLost, cancelling, failure, o
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
     <>
-      {run.engineName !== null && <p>{t("run.engine", { name: run.engineName })}</p>}
+      {run.engineName !== null && <p>{t("run.engine", { name: run.engineLocal ? t("engines.local_name") : run.engineName })}</p>}
       <p role="status" className="run-state">
         {t(known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>

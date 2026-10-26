@@ -135,14 +135,18 @@ export function engineRoutes(ctx: RouteContext): RouteTable {
     "/api/engines/:id": {
       PUT: async (req) => {
         const id = parseId(req.params.id ?? "");
-        if (id === null || store.get(id) === null) return errorResponse(404, "engine.not_found");
+        const engine = id === null ? null : store.get(id);
+        if (id === null || engine === null) return errorResponse(404, "engine.not_found");
+        // The local engine is changed through its own page, never as if it were a remote one.
+        if (engine.kind === "local") return errorResponse(409, "engine.local_not_editable");
         const parsed = await readJson(req);
         return parsed.ok ? editEngine(id, parsed.body) : parsed.response;
       },
       DELETE: async (req) => {
         const id = parseId(req.params.id ?? "");
         const engine = id === null ? null : store.get(id);
-        if (id === null || engine === null || engine.kind !== "remote") return errorResponse(404, "engine.not_found");
+        if (id === null || engine === null) return errorResponse(404, "engine.not_found");
+        if (engine.kind === "local") return errorResponse(409, "engine.local_not_editable");
         store.remove(id);
         await engines.pollNow(id);
         return new Response(null, { status: 204 });

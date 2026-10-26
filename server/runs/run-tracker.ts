@@ -194,6 +194,7 @@ export class RunTracker {
       projectId: run.projectId,
       engineId: run.engineId,
       engineName: run.engineId === null ? null : (this.engines.get(run.engineId)?.name ?? null),
+      engineLocal: run.engineId !== null && this.engines.get(run.engineId)?.kind === "local",
       state: run.state,
       step: live?.step ?? null,
       download: live?.download ?? null,

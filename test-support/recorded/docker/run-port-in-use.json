@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint aidm-engine-b (6666666666666666666666666666666666666666666666666666666666666666): Bind for 127.0.0.1:41823 failed: port is already allocated\n\nRun 'docker run --help' for more information\n"
+}

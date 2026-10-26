@@ -1,0 +1,4 @@
+{
+  "exitCode": 125,
+  "stderr": "docker: Error response from daemon: Conflict. The container name \"/aidm-engine\" is already in use by container \"1111111111111111111111111111111111111111111111111111111111111111\". You have to remove (or rename) that container to be able to reuse that name.\n\nRun 'docker run --help' for more information\n"
+}

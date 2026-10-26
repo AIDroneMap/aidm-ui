@@ -7,6 +7,7 @@ const run: RunView = {
   projectId: 1,
   engineId: 2,
   engineName: "Barn",
+  engineLocal: false,
   state: "processing",
   step: null,
   download: null,

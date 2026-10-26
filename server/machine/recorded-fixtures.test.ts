@@ -8,6 +8,9 @@ const files = readdirSync(RECORDED, { recursive: true, withFileTypes: true })
   .filter((entry) => entry.isFile() && entry.name !== "README.md")
   .map((entry) => join(entry.parentPath, entry.name));
 
+/** Only the Docker info names the machine in its top-level "Name"; in an inspect it is the container's. */
+const isInfo = (file: string) => /\/info[^/]*$/.test(file);
+
 /** Every key and value of a parsed JSON document, with the depth of the key. */
 function entries(value: unknown, depth = 0): Array<{ key: string; value: unknown; depth: number }> {
   if (Array.isArray(value)) return value.flatMap((item) => entries(item, depth));
@@ -33,8 +36,8 @@ test("the recorded outputs hold no host name, user name, home folder, identifier
       expect(address, file).toMatch(/^(192\.0\.2\.|127\.)/);
     }
     for (const { key, value, depth } of entries(parsed(text))) {
-      // The machine's own name: "hostname" at any depth, and the top-level "Name" of the Docker info.
-      if (key.toLowerCase() === "hostname" || (key === "Name" && depth === 0)) {
+      // The machine's own name: "hostname" at any depth, and the top-level "Name" of the Docker info (not of an inspect).
+      if (key.toLowerCase() === "hostname" || (key === "Name" && depth === 0 && isInfo(file))) {
         expect(value, `${file} ${key}`).toBe("operator-pc");
         expect(String(value), `${file} ${key}`).not.toMatch(/^[0-9a-f]{12}$/);
       }

@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error response from daemon: failed to resolve reference \"docker.io/library/busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000\": docker.io/library/busybox@sha256:0000000000000000000000000000000000000000000000000000000000000000: not found\n"
+}

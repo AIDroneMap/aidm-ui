@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
+import { EngineLog } from "../components/EngineLog.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { LocalAdvanced } from "../components/LocalAdvanced.tsx";
 import { formatCount, formatMemory, parseEngineList, sameAddress, stateChanges } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
+import { useEngineLog, useLocalEngine } from "../localEngine.ts";
 import {
   MIN_TASK_API_VERSION,
   type EngineAddRequest,
@@ -101,6 +104,15 @@ export interface EngineListProps {
   onAskRemove: (engine: EngineView) => void;
   onConfirmRemove: (engine: EngineView) => void;
   onKeep: (engine: EngineView) => void;
+  /** The engine log of the local engine, when the page has it. */
+  log?: { open: boolean; lines: string[]; onToggle: () => void };
+}
+
+const LOG_ID = "engine-log";
+
+/** The local engine has no name of its own to show: it is this computer. */
+function displayName(engine: EngineView): string {
+  return engine.kind === "local" ? t("engines.local_name") : engine.name;
 }
 
 export function EngineList(props: EngineListProps) {
@@ -109,10 +121,9 @@ export function EngineList(props: EngineListProps) {
     <ul className="engine-list" aria-label={t("engines.list_label")}>
       {props.engines.map((engine) => (
         <li key={engine.id} className="engine">
-          <h2>{engine.name}</h2>
+          <h2>{displayName(engine)}</h2>
           <p>
             <code>{engine.address}</code>
-            {engine.kind === "local" && <span className="badge">{t("engines.local")}</span>}
           </p>
           <p>
             <span className="state">
@@ -123,7 +134,19 @@ export function EngineList(props: EngineListProps) {
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
           {engine.problem && <EngineNote error={engine.problem} kind="problem" />}
           {engine.warning && <EngineNote error={engine.warning} kind="warning" />}
-          {props.askingToRemove === engine.id ? (
+          {engine.kind === "local" ? (
+            <>
+              {/* The local engine is turned on and off by its own switch, not by enabling it like a remote one. */}
+              <div className="actions">
+                {props.log && (
+                  <button type="button" className="secondary" aria-controls={LOG_ID} onClick={props.log.onToggle}>
+                    {t(props.log.open ? "engines.log.hide" : "engines.log.show")}
+                  </button>
+                )}
+              </div>
+              {props.log?.open && <EngineLog id={LOG_ID} lines={props.log.lines} />}
+            </>
+          ) : props.askingToRemove === engine.id ? (
             <RemoveAsk engine={engine} onConfirm={props.onConfirmRemove} onKeep={props.onKeep} />
           ) : (
             <div className="actions">
@@ -310,6 +333,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
   const [form, setForm] = useState<FormState | null>(null);
   const [askingToRemove, setAskingToRemove] = useState<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [logOpen, setLogOpen] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const previous = useRef<EngineView[] | null>(null);
   // The latest callback, so the long-lived effects below never call a stale one.
@@ -321,6 +345,9 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     if (result.code === "auth.passphrase_required") authRequired.current();
     return result;
   };
+
+  const local = useLocalEngine(true, () => authRequired.current());
+  const logLines = useEngineLog(logOpen);
 
   useEffect(() => {
     let current = true;
@@ -357,7 +384,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
       if (changes.length > 0) {
         setAnnouncement(
           changes
-            .map((engine) => t("engines.state_changed", { name: engine.name, state: t(`engine.state.${engine.state}`) }))
+            .map((engine) => t("engines.state_changed", { name: displayName(engine), state: t(`engine.state.${engine.state}`) }))
             .join(". "),
         );
       }
@@ -451,7 +478,11 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
           onAskRemove={(engine) => setAskingToRemove(engine.id)}
           onConfirmRemove={(engine) => void remove(engine)}
           onKeep={() => setAskingToRemove(null)}
+          log={{ open: logOpen, lines: logLines, onToggle: () => setLogOpen((open) => !open) }}
         />
+      )}
+      {local.view && (local.view.installed !== null || local.view.runtime.available.length > 0) && (
+        <LocalAdvanced view={local.view} onView={local.setView} onAuthRequired={onAuthRequired} />
       )}
       <section aria-label={t("engines.add")}>
         {form ? (

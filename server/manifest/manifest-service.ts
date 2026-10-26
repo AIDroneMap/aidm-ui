@@ -261,13 +261,18 @@ export class ManifestService {
    * for a newer interface, the offer stays and the reason says so.
    */
   async offer(facts: { platform: string; arch: string }): Promise<PackagesView> {
+    return (await this.offerWithVariant(facts)).view;
+  }
+
+  /** The offer, and the manifest's own entry for it, which holds the image and its digest. */
+  async offerWithVariant(facts: { platform: string; arch: string }): Promise<{ view: PackagesView; variant: ManifestVariant | null }> {
     const base = {
       updateCheck: this.deps.settings.get("updates.check"),
       lastCheck: this.deps.settings.get("updates.lastCheck"),
     };
     // The Windows local engine has no spec yet, so whatever a manifest holds, nothing is offered.
     if (facts.platform === "win32") {
-      return { ...base, offer: null, reason: { code: "machine.windows_not_yet", data: {} } };
+      return { view: { ...base, offer: null, reason: { code: "machine.windows_not_yet", data: {} } }, variant: null };
     }
 
     const candidates = await this.candidates();
@@ -281,15 +286,18 @@ export class ManifestService {
       usable === newest
         ? null
         : { code: "manifest.update_interface", data: { minimum: newest.manifest.minimumUiVersion, running } };
-    if (usable === undefined) return { ...base, offer: null, reason: waiting };
+    if (usable === undefined) return { view: { ...base, offer: null, reason: waiting }, variant: null };
 
     const { manifest, source, tag } = usable;
     const chosen = variantFor(manifest, facts);
     if (chosen === null) {
       return {
-        ...base,
-        offer: null,
-        reason: { code: "manifest.no_variant", data: { platform: facts.platform, arch: facts.arch } },
+        view: {
+          ...base,
+          offer: null,
+          reason: { code: "manifest.no_variant", data: { platform: facts.platform, arch: facts.arch } },
+        },
+        variant: null,
       };
     }
     const offer: EnginePackageOffer = {
@@ -301,6 +309,6 @@ export class ManifestService {
       source,
       tag,
     };
-    return { ...base, offer, reason: waiting };
+    return { view: { ...base, offer, reason: waiting }, variant: chosen.variant };
   }
 }

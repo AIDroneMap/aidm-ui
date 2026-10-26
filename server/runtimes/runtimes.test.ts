@@ -33,6 +33,8 @@ test("rootless Podman with the memory controller is available and can cap memory
     available: true,
     version: "5.8.9",
     memoryCapEnforced: true,
+    cpuCapEnforced: true,
+    storagePath: "/home/operator/.local/share/containers/storage",
     problem: null,
   });
 });
@@ -42,12 +44,21 @@ test("rootless Podman without the memory controller cannot cap memory", async ()
   const detection = await podmanRuntime(runner).detect();
   expect(detection.available).toBe(true);
   expect(detection.memoryCapEnforced).toBe(false);
+  expect(detection.cpuCapEnforced).toBe(true);
+});
+
+test("rootless Podman without the cpu controller cannot cap CPUs, and can still cap memory", async () => {
+  const detection = await podmanRuntime(new ScriptedRunner([podmanVersion, podmanInfo("info-rootless-no-cpu")])).detect();
+  expect(detection.available).toBe(true);
+  expect(detection.cpuCapEnforced).toBe(false);
+  expect(detection.memoryCapEnforced).toBe(true);
 });
 
 test("rootful Podman owns its cgroup, with or without the memory controller listed", async () => {
   for (const name of ["info-rootful", "info-rootful-no-memory"]) {
     const detection = await podmanRuntime(new ScriptedRunner([podmanVersion, podmanInfo(name)])).detect();
     expect(detection.memoryCapEnforced).toBe(true);
+    expect(detection.cpuCapEnforced).toBe(true);
   }
 });
 
@@ -57,6 +68,8 @@ test("a computer without Podman gives runtime.not_installed", async () => {
     available: false,
     version: null,
     memoryCapEnforced: null,
+    cpuCapEnforced: null,
+    storagePath: null,
     problem: { code: "runtime.not_installed", data: { runtime: "podman" } },
   });
 });
@@ -80,8 +93,16 @@ test("Docker with a reachable daemon gives the server version", async () => {
     available: true,
     version: "29.9.2",
     memoryCapEnforced: true,
+    cpuCapEnforced: true,
+    storagePath: "/var/lib/docker",
     problem: null,
   });
+});
+
+test("Docker that cannot apply a CPU quota cannot cap CPUs", async () => {
+  const detection = await dockerRuntime(new ScriptedRunner([dockerVersion("version"), dockerInfo("info-no-cpu-quota")])).detect();
+  expect(detection.cpuCapEnforced).toBe(false);
+  expect(detection.memoryCapEnforced).toBe(true);
 });
 
 test("Docker whose info fails is still available, with what is unknown left null", async () => {
@@ -89,6 +110,8 @@ test("Docker whose info fails is still available, with what is unknown left null
   const detection = await dockerRuntime(runner).detect();
   expect(detection.available).toBe(true);
   expect(detection.memoryCapEnforced).toBeNull();
+  expect(detection.cpuCapEnforced).toBeNull();
+  expect(detection.storagePath).toBeNull();
 });
 
 test("Docker with no daemon to talk to gives runtime.docker_daemon_unreachable", async () => {
@@ -118,6 +141,8 @@ test("Apple's container with its service running is available", async () => {
     available: true,
     version: "1.6.1",
     memoryCapEnforced: true,
+    cpuCapEnforced: true,
+    storagePath: null,
     problem: null,
   });
 });
@@ -148,7 +173,7 @@ test("each platform asks about its own runtimes", () => {
 });
 
 function detection(id: RuntimeDetection["id"], available = true): RuntimeDetection {
-  return { id, available, version: "1", memoryCapEnforced: null, problem: null };
+  return { id, available, version: "1", memoryCapEnforced: null, cpuCapEnforced: null, storagePath: null, problem: null };
 }
 
 test("Podman is preferred over Docker when both answer", () => {

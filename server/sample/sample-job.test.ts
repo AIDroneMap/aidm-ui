@@ -163,7 +163,7 @@ test("the size is shown first and nothing is downloaded until the operator start
   expect(view.dataset.size).toBe(zipBytes.length);
   expect(view.run).toBeNull();
   expect(view.engines).toEqual([
-    { engineId: engine.id, engineName: "Office", offered: true, memoryCap: 64895025152, reason: null },
+    { engineId: engine.id, engineName: "Office", local: false, offered: true, memoryCap: 64895025152, reason: null },
   ]);
   await Bun.sleep(150);
   expect(files.requests).toEqual([]);
@@ -184,6 +184,7 @@ test("starting answers at once with a run that is downloading", async () => {
     download: { received: 0, total: zipBytes.length },
     engineId: engine.id,
     engineName: "Office",
+    engineLocal: false,
     resultsAvailable: false,
   });
   expect((await getJson<SampleView>("/api/sample")).run?.id).toBe(run.id);
@@ -430,6 +431,7 @@ test("an engine with less memory than the sample job's peak is not offered, and 
   expect(below).toEqual({
     engineId: engine.id,
     engineName: "Office",
+    local: false,
     offered: false,
     memoryCap: SAMPLE_JOB_PEAK_MEMORY - 1,
     reason: { code: "sample.memory_below_peak", data: { cap: SAMPLE_JOB_PEAK_MEMORY - 1, peak: SAMPLE_JOB_PEAK_MEMORY } },

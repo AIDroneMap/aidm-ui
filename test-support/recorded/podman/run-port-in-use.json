@@ -1,0 +1,4 @@
+{
+  "exitCode": 126,
+  "stderr": "Error: rootlessport listen tcp 127.0.0.1:41823: bind: address already in use\n"
+}

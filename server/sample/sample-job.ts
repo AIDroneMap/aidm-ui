@@ -30,6 +30,8 @@ export interface SampleJobDeps {
   fetch?: typeof fetch;
   freeBytes?: FreeBytes;
   clientFor?: (endpoint: EngineEndpoint) => TaskClient;
+  /** The memory the local engine has, or null for no cap. Without it the local engine counts like a remote one. */
+  localMemoryCap?: () => number | null;
 }
 
 /** How often the page hears about download and upload progress. */
@@ -37,12 +39,15 @@ const PROGRESS_INTERVAL_MS = 150;
 const SAMPLE_PROJECT = "sample";
 
 /**
- * The memory cap of an engine: what the sample job may count on. For now it is
- * the total memory the engine reports. The ticket that sets a cap on the
- * local engine changes this one function.
+ * The memory cap of an engine: what the sample job may count on. A remote
+ * engine has no cap we know of, so it is the total memory it reports. The
+ * local engine has the cap the manager gave it; when that is no cap at all
+ * (the runtime could not enforce one) it is the total memory as well.
  */
-export function engineMemoryCap(engine: EngineView): number | null {
-  return engine.info?.totalMemory ?? null;
+export function engineMemoryCap(engine: EngineView, localCap?: () => number | null): number | null {
+  const reported = engine.info?.totalMemory ?? null;
+  if (engine.kind !== "local" || localCap === undefined) return reported;
+  return localCap() ?? reported;
 }
 
 /** One sample run that is being prepared here: downloading, then uploading. */
@@ -180,8 +185,8 @@ export class SampleJob {
   }
 
   private offerFor(engine: EngineView): SampleEngineOffer {
-    const memoryCap = engineMemoryCap(engine);
-    const base = { engineId: engine.id, engineName: engine.name, memoryCap };
+    const memoryCap = engineMemoryCap(engine, this.deps.localMemoryCap);
+    const base = { engineId: engine.id, engineName: engine.name, local: engine.kind === "local", memoryCap };
     if (!this.deps.engines.isUsable(engine.id)) {
       return { ...base, offered: false, reason: { code: "sample.engine_not_usable", data: {} } };
     }

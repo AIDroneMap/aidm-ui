@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
+import { LocalInstallStatus } from "../components/LocalInstall.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes, formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
+import { installStatus, useLocalEngine } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { SampleJobPage } from "./SampleJobPage.tsx";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
 import type {
+  LocalEngineView,
   MachineCheckView as MachineCheckData,
   PackagesView,
   UpdateCheck,
@@ -212,6 +215,13 @@ export interface InstallScreenProps {
   /** Said by the status area after the answer is saved, so a screen reader hears it. */
   announcement: string;
   onUpdateCheckChange: (value: UpdateCheck) => void;
+  /** The local engine as the server last said it, or null until it has. */
+  local: LocalEngineView | null;
+  /** True while the request to install is on its way. */
+  installBusy: boolean;
+  /** Why the server refused to install, when it did. */
+  installFailure: ApiFailure | null;
+  onInstallLocal: () => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -245,6 +255,24 @@ function Offer({ packages }: { packages: PackagesView }) {
   );
 }
 
+function InstallButton(props: Pick<InstallScreenProps, "local" | "installBusy" | "onInstallLocal">) {
+  const status = installStatus(props.local).kind;
+  const underWay = status === "downloading" || status === "starting";
+  const done = props.local?.installed != null;
+  // The button stays in place after the click, so keyboard focus stays on it.
+  return (
+    <div className="actions">
+      <BusyButton busy={props.installBusy || underWay || done} onClick={props.onInstallLocal}>
+        {done
+          ? t("local.install.button_done")
+          : props.installBusy || underWay
+            ? t("local.install.button_busy")
+            : t("local.install.button")}
+      </BusyButton>
+    </div>
+  );
+}
+
 export function InstallScreen(props: InstallScreenProps) {
   const { packages } = props;
   return (
@@ -252,6 +280,11 @@ export function InstallScreen(props: InstallScreenProps) {
       <Heading>{t("wizard.install.title")}</Heading>
       {packages ? <Offer packages={packages} /> : props.failure ? null : <p>{t("wizard.install.loading")}</p>}
       <p>{t("wizard.install.body")}</p>
+      {packages?.offer && (
+        <InstallButton local={props.local} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
+      )}
+      {props.installFailure && <ErrorMessage failure={props.installFailure} />}
+      <LocalInstallStatus view={props.local} />
       {packages && (packages.updateCheck === null || props.answeredHere) && (
         <UpdateCheckQuestion
           idPrefix="wizard"
@@ -351,6 +384,8 @@ export function WizardPage({
   const [updateSaving, setUpdateSaving] = useState(false);
   const [answeredHere, setAnsweredHere] = useState(false);
   const [updateAnnouncement, setUpdateAnnouncement] = useState("");
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installFailure, setInstallFailure] = useState<ApiFailure | null>(null);
 
   const fail = (error: unknown): ApiFailure => {
     const failure = asApiFailure(error);
@@ -393,6 +428,8 @@ export function WizardPage({
     // The callback it uses is re-created on every render.
   }, [onInstall]);
 
+  const local = useLocalEngine(onInstall, onAuthRequired);
+
   // On arrival too: from the settings, from a link or at load, the operator starts at the heading.
   useEffect(() => {
     focusHeading();
@@ -426,6 +463,18 @@ export function WizardPage({
       setPackagesFailure(fail(error));
     } finally {
       setUpdateSaving(false);
+    }
+  };
+
+  const installLocal = async () => {
+    setInstallBusy(true);
+    setInstallFailure(null);
+    try {
+      local.setView(await api<LocalEngineView>("POST", "/api/local-engine/install"));
+    } catch (error) {
+      setInstallFailure(fail(error));
+    } finally {
+      setInstallBusy(false);
     }
   };
 
@@ -480,6 +529,10 @@ export function WizardPage({
           answeredHere={answeredHere}
           announcement={updateAnnouncement}
           onUpdateCheckChange={(value) => void saveUpdateCheck(value)}
+          local={local.view}
+          installBusy={installBusy}
+          installFailure={installFailure}
+          onInstallLocal={() => void installLocal()}
           onBack={back}
           onNext={next}
         />

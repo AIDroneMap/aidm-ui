@@ -81,6 +81,29 @@ export class EngineStore {
     return this.toRecord(row);
   }
 
+  /** The local engine's row, or null while none is installed. There is at most one. */
+  local(): EngineRecord | null {
+    const row = this.db.query("SELECT * FROM engines WHERE kind = 'local' ORDER BY id LIMIT 1").get() as EngineRow | null;
+    return row === null ? null : this.toRecord(row);
+  }
+
+  /** The row of the local engine. It has no address until the engine has started. */
+  addLocal(engine: { name: string; token: string; packageKind: "native" | "container"; installedVersion: string }): EngineRecord {
+    const row = this.db
+      .query(
+        `INSERT INTO engines (kind, package_kind, name, address, token, enabled, installed_version, last_state)
+         VALUES ('local', ?, ?, '', ?, 1, ?, 'installing') RETURNING *`,
+      )
+      .get(engine.packageKind, engine.name, engine.token, engine.installedVersion) as EngineRow;
+    return this.toRecord(row);
+  }
+
+  setInstalledVersion(id: number, packageKind: "native" | "container", installedVersion: string): void {
+    this.db
+      .query("UPDATE engines SET package_kind = ?, installed_version = ? WHERE id = ?")
+      .run(packageKind, installedVersion, id);
+  }
+
   /** Changes the fields given and leaves the others. Null when there is no such engine. */
   update(id: number, patch: EnginePatch): EngineRecord | null {
     const current = this.get(id);
