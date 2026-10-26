@@ -56,7 +56,7 @@ test("a missing file under /assets/ is a coded 404, not the page", async () => {
   const assets = await assetsFromFolder(folder);
   const response = serveAsset(assets, "/assets/gone.js");
   expect(response?.status).toBe(404);
-  expect(await response?.json()).toEqual({ error: { code: "interface.not_found" } });
+  expect(await response?.json()).toEqual({ error: { code: "interface.not_found", data: {} } });
 });
 
 test("API paths never fall back to the interface", async () => {

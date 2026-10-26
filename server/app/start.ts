@@ -12,13 +12,17 @@ import {
   type InstanceIdentity,
 } from "./instance.ts";
 import { platformOpener, type OpenBrowser } from "./open-browser.ts";
+import { currentAuth } from "../auth/current.ts";
+import { Sessions } from "../auth/sessions.ts";
+import { openDatabase } from "../db/database.ts";
+import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
+import { Settings } from "../settings/settings.ts";
+import { DEFAULT_PORT } from "../../shared/api-types.ts";
 
-export const DEFAULT_PORT = 8823;
 /** 8823, 8824, ... 8832 */
 export const PORT_ATTEMPTS = 10;
-export const LOOPBACK = "127.0.0.1";
 
 export interface StartOptions {
   argv: string[];
@@ -79,43 +83,69 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   const lock = readLock(dataFolder);
   if (lock && isProcessAlive(lock.pid) && (await isOurs(lock.port))) return attach(lock.port);
 
-  const routes = createRoutes({ identity, assets: options.assets });
-  const fetch = fallbackFetch();
-  const first = commandLine.port ?? DEFAULT_PORT;
-  const last = Math.min(first + PORT_ATTEMPTS - 1, 65535);
+  const db = openDatabase(dataFolder);
+  let databaseBelongsToServer = false;
+  try {
+    const settings = new Settings(db);
+    const sessions = new Sessions();
+    let listener: Listener | undefined;
 
-  for (let port = first; port <= last; port++) {
-    let server: ReturnType<typeof Bun.serve>;
-    try {
-      // Outside development mode Bun shares a port between listeners (SO_REUSEPORT)
-      // unless told otherwise, which would hide a second copy behind the first.
-      server = Bun.serve({ hostname: LOOPBACK, port, development: false, reusePort: false, routes, fetch });
-    } catch (error) {
-      if (!isAddressInUse(error)) throw error;
-      if (await isOurs(port)) return attach(port);
-      continue;
+    const routes = createRoutes({
+      identity,
+      assets: options.assets,
+      settings,
+      sessions,
+      auth: () => currentAuth(settings, sessions),
+      listeningPort: () => listener?.port ?? 0,
+      rebind: async (hostname) => {
+        await listener?.rebind(hostname);
+      },
+      now: Date.now,
+      log: options.log,
+    });
+    const fetch = fallbackFetch();
+    // The command line wins over the stored setting, which wins over the default.
+    const first = commandLine.port ?? settings.get("server.port") ?? DEFAULT_PORT;
+    const last = Math.min(first + PORT_ATTEMPTS - 1, 65535);
+    const hostname = settings.get("lan.enabled") ? ALL_INTERFACES : LOOPBACK;
+
+    for (let port = first; port <= last; port++) {
+      try {
+        listener = listen({ hostname, port, routes, fetch });
+      } catch (error) {
+        if (!isAddressInUse(error)) throw error;
+        if (await isOurs(port)) return await attach(port);
+        continue;
+      }
+
+      const running = listener;
+      writeLock(dataFolder, { pid: process.pid, port });
+      const url = urlFor(port);
+      options.log(`aidm-ui is running at ${url}`);
+      databaseBelongsToServer = true;
+      await options.openBrowser(url);
+      const result: StartResult = {
+        kind: "started",
+        url,
+        port,
+        dataFolder,
+        async stop() {
+          await running.stop();
+          db.close();
+          removeLock(dataFolder, process.pid);
+        },
+      };
+      return result;
     }
 
-    writeLock(dataFolder, { pid: process.pid, port });
-    const url = urlFor(port);
-    options.log(`aidm-ui is running at ${url}`);
-    await options.openBrowser(url);
     return {
-      kind: "started",
-      url,
-      port,
-      dataFolder,
-      async stop() {
-        await server.stop(true);
-        removeLock(dataFolder, process.pid);
-      },
+      kind: "failed",
+      problem: `No free port from ${first} to ${last}. Close the program that uses them or pass --port.`,
     };
+  } finally {
+    // A running server keeps the database until it stops.
+    if (!databaseBelongsToServer) db.close();
   }
-
-  return {
-    kind: "failed",
-    problem: `No free port from ${first} to ${last}. Close the program that uses them or pass --port.`,
-  };
 }
 
 export async function runFromCommandLine(assets: AssetMap, version: string): Promise<void> {
