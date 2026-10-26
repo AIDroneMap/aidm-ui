@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
-import { downloadVerified, type DownloadTarget } from "./downloader.ts";
+import type { ApiError } from "../../shared/api-error.ts";
+import { downloadVerified, type DownloadRequest, type DownloadTarget } from "./downloader.ts";
 
 const data = Uint8Array.from({ length: 300_000 }, (_, i) => (i * 31 + (i >> 8)) & 0xff);
 const SHA = new Bun.CryptoHasher("sha256").update(data).digest("hex");
@@ -92,7 +93,7 @@ test("killing the server mid-download and restarting it resumes from the bytes a
   const outcome = await downloadVerified(target, {
     freeBytes: PLENTY,
     backoffMs: () => 40,
-    retries: 20,
+    stallMs: 5000,
     onProgress: (received) => {
       if (received > 0) firstBytes();
     },
@@ -118,20 +119,30 @@ test("a connection cut mid-body is retried with a Range header from the bytes th
   expect(ranges[1]).toMatch(/^bytes=[1-9]\d*-$/);
 });
 
-test("gives up with download.failed after the retries when the host keeps failing", async () => {
+test("gives up with download.stalled when no byte arrives for the stall time", async () => {
   let calls = 0;
   const failing = asFetch(async () => {
     calls++;
     return new Response("Busy", { status: 503 });
   });
-  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 2, fetch: failing });
-  expect(outcome).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
-  expect(calls).toBe(3);
+  const reasons: ApiError[] = [];
+  const outcome = await downloadVerified(target, {
+    freeBytes: PLENTY,
+    backoffMs: () => 20,
+    stallMs: 200,
+    fetch: failing,
+    onRetry: (reason) => reasons.push(reason),
+  });
+  // 200 ms rounds to 0 seconds.
+  expect(outcome).toEqual({ ok: false, error: { code: "download.stalled", data: { seconds: 0 } } });
+  expect(calls).toBeGreaterThan(2);
+  expect(reasons).toContainEqual({ code: "download.host_busy", data: { status: 503 } });
+  expect(existsSync(target.path)).toBe(false);
 });
 
-test("a 4xx answer other than 408 and 429 fails at once without retries", async () => {
+test("a 4xx answer other than 408 and 429 fails at once without trying again", async () => {
   server.files.delete("/data.bin");
-  const missing = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5 });
+  const missing = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, stallMs: 2000 });
   expect(missing).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
   expect(server.requests).toHaveLength(1);
 
@@ -140,7 +151,7 @@ test("a 4xx answer other than 408 and 429 fails at once without retries", async 
     calls++;
     return new Response("No", { status: 403 });
   });
-  const refused = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5, fetch: forbidden });
+  const refused = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, stallMs: 2000, fetch: forbidden });
   expect(refused).toEqual({ ok: false, error: { code: "download.failed", data: {} } });
   expect(calls).toBe(1);
 });
@@ -152,7 +163,7 @@ test("408 and 429 are retried like a server error", async () => {
     if (status !== undefined) return new Response("Wait", { status });
     return fetch(input, init);
   });
-  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 5, fetch: slowHost });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, stallMs: 5000, fetch: slowHost });
   expect(outcome).toEqual({ ok: true, path: target.path });
   expect(answers).toEqual([]);
 });
@@ -321,14 +332,57 @@ test("a file longer than the pinned size is stopped and discarded", async () => 
   expect(existsSync(target.path)).toBe(false);
 });
 
-test("a link that keeps breaking but makes progress each time is not given up", async () => {
-  // Every response breaks after a quarter of the file: four attempts are needed,
-  // more than the two retries allowed, yet each one brings new bytes.
+test("a link that keeps breaking but makes progress each time is never given up, however many tries it takes", async () => {
+  // Every response breaks after 28 000 bytes: the file takes eleven tries.
+  // Each one brings new bytes, so there is no cap on the number of tries.
+  let tries = 0;
   const cutEvery = asFetch(async (input, init) => {
-    server.cutNextResponseAfter(data.length / 4);
+    tries++;
+    server.cutNextResponseAfter(28_000);
     return fetch(input, init);
   });
-  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, retries: 2, fetch: cutEvery });
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, stallMs: 5000, fetch: cutEvery });
   expect(outcome).toEqual({ ok: true, path: target.path });
   expect(await finalBytes()).toEqual(data);
+  expect(tries).toBeGreaterThanOrEqual(10);
+});
+
+test("a connection that stays open but silent is dropped and the download goes on from the bytes it had", async () => {
+  server.stallNextResponseAfter(100_000);
+  const reasons: ApiError[] = [];
+  const outcome = await downloadVerified(target, {
+    freeBytes: PLENTY,
+    ...FAST,
+    idleMs: 100,
+    stallMs: 5000,
+    onRetry: (reason) => reasons.push(reason),
+  });
+  expect(outcome).toEqual({ ok: true, path: target.path });
+  expect(await finalBytes()).toEqual(data);
+  // 100 ms rounds to 0 seconds.
+  expect(reasons[0]).toEqual({ code: "download.connection_silent", data: { seconds: 0 } });
+  const gets = server.requests.filter((r) => r.method === "GET");
+  expect(gets).toHaveLength(2);
+  expect(gets[0]?.range).toBeNull();
+  expect(gets[1]?.range).toMatch(/^bytes=[1-9]\d*-$/);
+});
+
+test("a request function replaces the GET, is called once per try and gets the Range header on the second", async () => {
+  const seen: Array<Record<string, string>> = [];
+  const request: DownloadRequest = (headers, signal) => {
+    seen.push({ ...headers });
+    if (seen.length === 1) server.cutNextResponseAfter(120_000);
+    return fetch(server.url("/data.bin"), { headers, signal });
+  };
+  // The URL of the target is never used when a request function is given.
+  const outcome = await downloadVerified(
+    { ...target, url: "http://127.0.0.1:1/never-asked" },
+    { freeBytes: PLENTY, ...FAST, stallMs: 5000, request },
+  );
+  expect(outcome).toEqual({ ok: true, path: target.path });
+  expect(await finalBytes()).toEqual(data);
+  expect(seen).toHaveLength(2);
+  expect(seen[0]?.range).toBeUndefined();
+  expect(seen[1]?.range).toMatch(/^bytes=[1-9]\d*-$/);
+  expect(server.requests.map((r) => r.path)).toEqual(["/data.bin", "/data.bin"]);
 });

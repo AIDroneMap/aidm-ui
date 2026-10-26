@@ -69,7 +69,8 @@ export interface MacSetupDeps {
   freeBytes?: FreeBytes;
   /** Passed to the downloader, so a test does not wait between tries. */
   backoffMs?: DownloadOptions["backoffMs"];
-  retries?: DownloadOptions["retries"];
+  /** Passed to the downloader, so a test does not wait minutes for a stall. */
+  stallMs?: DownloadOptions["stallMs"];
   /** Waits for the given milliseconds. */
   sleep?: (ms: number) => Promise<void>;
   /** Milliseconds since the epoch. */
@@ -132,7 +133,7 @@ export class MacSetup {
         signal: run.signal,
         freeBytes: this.deps.freeBytes,
         backoffMs: this.deps.backoffMs,
-        retries: this.deps.retries,
+        stallMs: this.deps.stallMs,
         onProgress: (received) => run.onReceived(received),
       },
     );

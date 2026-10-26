@@ -18,6 +18,32 @@ export const RUN_FREE_DISK = 10 * GiB;
  */
 export const DOWNLOAD_FREE_DISK_MARGIN = 0.2;
 
+/**
+ * A download fails only when no byte has arrived for this long. Until then it
+ * tries again as often as it takes, each time from the last byte on disk.
+ * Five minutes rides out a link that drops for a minute or two, as a mobile
+ * link through a VPN does, and still tells a dead link within a coffee break.
+ */
+export const DOWNLOAD_STALL_MS = 5 * 60_000;
+
+/**
+ * A connection that stays open but sends nothing for this long is dropped and
+ * made again, because a fresh connection often works where a silent one never
+ * wakes up. Shorter than the stall time, so a download gets several new
+ * connections before it gives up.
+ */
+export const DOWNLOAD_IDLE_MS = 60_000;
+
+/**
+ * How much room an image takes in a runtime's storage once its layers are
+ * unpacked, as a multiple of its download size. Measured on 26 October 2026
+ * by unpacking every layer of the three images of aidm-api 2.5.0: linux/arm64
+ * 1,726,758,400 bytes from 622,710,197 (2.77 times), linux/amd64
+ * 1,868,324,352 from 682,533,845 (2.74), and the graphics card image
+ * 10,624,373,760 from 5,678,958,647 (1.87). The largest, rounded up.
+ */
+export const IMAGE_UNPACKED_FACTOR = 2.8;
+
 /** The local engine keeps back at least this much memory for the computer itself. */
 export const MEMORY_RESERVE_MIN = 2 * GiB;
 
