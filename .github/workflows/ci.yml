@@ -44,10 +44,29 @@ jobs:
         run: bun scripts/build.ts --development
       - name: Smoke test the Linux x64 executable
         run: scripts/ci/smoke-test.sh dist/aidm-ui-linux-x64
+      # One artifact per platform, named after it, so a tester downloads one executable.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: aidm-ui-executables
-          path: dist/
+          name: aidm-ui-linux-x64
+          path: dist/aidm-ui-linux-x64
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aidm-ui-linux-arm64
+          path: dist/aidm-ui-linux-arm64
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aidm-ui-macos-arm64
+          path: dist/aidm-ui-macos-arm64
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aidm-ui-windows-x64
+          path: dist/aidm-ui-windows-x64.exe
           if-no-files-found: error
           retention-days: 7
 
