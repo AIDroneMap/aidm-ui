@@ -12,6 +12,7 @@ export const caps: CapsView = {
 };
 
 export const fresh: LocalEngineView = {
+  platform: "linux",
   installed: null,
   engineId: null,
   enabled: true,

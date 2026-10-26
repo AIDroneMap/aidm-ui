@@ -368,6 +368,8 @@ export interface CapsView {
 }
 
 export interface LocalEngineView {
+  /** The operating system of the computer the server runs on, as Node names it: "linux", "darwin" or "win32". */
+  platform: string;
   /** Null until a package is installed. */
   installed: { packageVersion: string; variant: VariantId; kind: "container" | "native"; runtime: RuntimeId | null } | null;
   /** The engine's row in the engines list, once there is one. */

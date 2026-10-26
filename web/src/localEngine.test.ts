@@ -159,6 +159,9 @@ test("Podman is offered only on Linux with a package, no engine and no working t
   expect(needsRuntimeSetup(null, offer)).toBe(false);
   expect(needsRuntimeSetup(none, { ...offer, variant: "darwin-arm64" })).toBe(false);
   expect(needsRuntimeSetup(none, { ...offer, variant: "linux-amd64-gpu" })).toBe(true);
+  // A Mac with no runtime runs the Linux arm64 package through Apple's tool, and is never offered Podman.
+  const mac: LocalEngineView = { ...none, platform: "darwin" };
+  expect(needsRuntimeSetup(mac, { ...offer, variant: "linux-arm64-cpu" })).toBe(false);
   const installed = { packageVersion: "2.5.0", variant: "linux-amd64-cpu", kind: "container", runtime: "podman" } as const;
   expect(needsRuntimeSetup({ ...none, installed }, offer)).toBe(false);
 });

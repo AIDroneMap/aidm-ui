@@ -367,6 +367,7 @@ export class LocalEngineManager {
     warnings.push(...this.gpuWarnings(installedPackage));
 
     return {
+      platform: this.deps.machine.platform,
       installed:
         installedPackage === null || installedKind === null
           ? null
