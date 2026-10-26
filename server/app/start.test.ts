@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,9 +58,9 @@ function dataFolder(name: string): string {
   return join(root, name);
 }
 
-async function start(folderName: string, port: number): Promise<StartResult> {
+async function start(folderName: string, port: number, extraArguments: string[] = [], log: (line: string) => void = () => {}): Promise<StartResult> {
   const result = await startAidmUi({
-    argv: ["--port", String(port), "--data-dir", dataFolder(folderName)],
+    argv: ["--port", String(port), "--data-dir", dataFolder(folderName), ...extraArguments],
     env: {},
     platform: process.platform,
     homeDir: root,
@@ -69,7 +70,7 @@ async function start(folderName: string, port: number): Promise<StartResult> {
     openBrowser: async (url) => {
       opened.push(url);
     },
-    log: () => {},
+    log,
   });
   if (result.kind === "started") running.push(result);
   return result;
@@ -97,6 +98,29 @@ test("serves the interface on the given port and opens the browser once", async 
   expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
 
   expect(await (await fetch(`${base}/some/page`)).text()).toBe("<h1>home</h1>");
+});
+
+test("without --record-runtime-commands no diagnostics folder appears", async () => {
+  const port = await freePort();
+  const result = started(await start("a", port));
+  // The runtimes are looked at just after the start, which is when a recording would begin.
+  await Bun.sleep(300);
+
+  expect(existsSync(join(result.dataFolder, "diagnostics"))).toBe(false);
+});
+
+test("--record-runtime-commands says where it records, and the runtime commands end up there", async () => {
+  const port = await freePort();
+  const lines: string[] = [];
+  const result = started(await start("a", port, ["--record-runtime-commands"], (line) => lines.push(line)));
+  const file = join(result.dataFolder, "diagnostics", "runtime-commands.jsonl");
+
+  expect(lines).toContain(
+    `Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`,
+  );
+  // On start the server asks each container runtime whether it answers. The programs may be missing here,
+  // and a missing program is recorded too, so this holds on any machine.
+  await eventually(async () => existsSync(file) && readFileSync(file, "utf8").includes('"kind":"run"'));
 });
 
 test("health names the app, the version and the data folder's instance", async () => {

@@ -4,6 +4,8 @@ import { isValidUserName } from "../runtimes/setup-command.ts";
 export interface CommandLine {
   port?: number;
   dataFolder?: string;
+  /** A diagnostic option for the maintainer. It is not shown in the interface. */
+  recordRuntimeCommands?: true;
 }
 
 export type ParseResult =
@@ -12,13 +14,14 @@ export type ParseResult =
 
 // These lines go to the terminal, not to the interface, so they are plain English here.
 export function parseCommandLine(argv: string[]): ParseResult {
-  let values: { port?: string; "data-dir"?: string };
+  let values: { port?: string; "data-dir"?: string; "record-runtime-commands"?: boolean };
   try {
     ({ values } = parseArgs({
       args: argv,
       options: {
         port: { type: "string" },
         "data-dir": { type: "string" },
+        "record-runtime-commands": { type: "boolean" },
       },
       strict: true,
       allowPositionals: false,
@@ -35,6 +38,7 @@ export function parseCommandLine(argv: string[]): ParseResult {
     commandLine.port = port;
   }
   if (values["data-dir"] !== undefined) commandLine.dataFolder = values["data-dir"];
+  if (values["record-runtime-commands"] === true) commandLine.recordRuntimeCommands = true;
   return { ok: true, commandLine };
 }
 

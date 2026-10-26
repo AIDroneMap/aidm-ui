@@ -24,6 +24,21 @@ test("both flags can be given together", () => {
   });
 });
 
+test("--record-runtime-commands is off by default and on when given", () => {
+  expect(parseCommandLine(["--record-runtime-commands"])).toEqual({
+    ok: true,
+    commandLine: { recordRuntimeCommands: true },
+  });
+  expect(parseCommandLine(["--port", "9000", "--record-runtime-commands", "--data-dir", "x"])).toEqual({
+    ok: true,
+    commandLine: { port: 9000, dataFolder: "x", recordRuntimeCommands: true },
+  });
+});
+
+test("--record-runtime-commands takes no value", () => {
+  expect(parseCommandLine(["--record-runtime-commands=yes"]).ok).toBe(false);
+});
+
 test.each(["0", "70000", "abc", "-5", "80.5"])("port %s is a problem", (port) => {
   const result = parseCommandLine(["--port", port]);
   expect(result.ok).toBe(false);
