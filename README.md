@@ -4,7 +4,7 @@
 
 AIDM UI will give a single operator a complete drone mapping tool in the browser: create a project, upload images, check them, start processing, follow progress, and view and export the results. It installs the AIDM engine on the operator's own computer without Docker or a terminal, and works with any AIDM task API on the network or in the cloud.
 
-> **Status: pre-alpha, not for use.** There is no code yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
+> **Status: pre-alpha, not for use.** The first specification ([#2](https://github.com/AIDroneMap/aidm-ui/issues/2), local server and engine manager) is built: the executable, the wizard that checks the machine and installs the engine, the sample job, and remote engines. Projects, uploads, the viewers and exports are not written yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
 
 ## What it will do
 
@@ -29,18 +29,16 @@ What it will not do: user accounts, teams or billing. AIDM UI is for one operato
 
 AIDM UI talks to every engine only through the task API, so it works the same with the engine on your computer, a server on your network, or a cloud endpoint.
 
-## Planned technology
-
-Subject to the specification:
+## Technology
 
 - A small server written in TypeScript on Bun, with SQLite, compiled into one executable per platform. It serves the interface, holds the engine manager, and makes every call to every engine.
 - A single-page application built with TypeScript, React and Vite, compiled to static files and embedded in that executable, so there is nothing extra to install, and it works without an internet connection.
-- MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
-- The engine runs as a native package where one exists, and through a container runtime that the wizard installs itself until then.
+- Planned: MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
+- The engine runs as a native package where one exists, and through a container runtime (Podman, Docker or Apple's container tool) until then. The wizard installs the runtime when the computer has none.
 
 ## Contributing
 
-The project is at the specification stage, so the most useful contributions right now are ideas and use cases. Open a discussion or an issue describing how you process drone data and what you need from the interface.
+The project is pre-alpha and most of the interface has no specification yet, so the most useful contributions right now are ideas and use cases. Open a discussion or an issue describing how you process drone data and what you need from the interface.
 
 Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) before opening a pull request. Every commit needs a DCO sign-off (`git commit -s`).
 
