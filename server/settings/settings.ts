@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import type { ApiError } from "../../shared/api-error.ts";
+import type { UpdateCheck } from "../../shared/api-types.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
 
 export interface SettingValues {
@@ -11,6 +13,12 @@ export interface SettingValues {
   "runtime.preferred": RuntimeId | null;
   /** True once the operator has finished the wizard or chosen the interface only. */
   "wizard.completed": boolean;
+  /** How often to look for a newer manifest; null until the operator has answered. */
+  "updates.check": UpdateCheck | null;
+  /** The last look for a newer manifest: when it ended and what went wrong, if anything. */
+  "updates.lastCheck": { at: string; problem: ApiError | null } | null;
+  /** The newest verified downloaded manifest. It is verified again on every load. */
+  "manifest.held": { bytes: string; signature: string; tag: string } | null;
 }
 
 const DEFAULTS: SettingValues = {
@@ -19,6 +27,9 @@ const DEFAULTS: SettingValues = {
   "lan.passphraseHash": null,
   "runtime.preferred": null,
   "wizard.completed": false,
+  "updates.check": null,
+  "updates.lastCheck": null,
+  "manifest.held": null,
 };
 
 export class Settings {

@@ -19,6 +19,8 @@ import { DEFAULT_POLL_INTERVAL_MS, EngineMonitor } from "../engines/engine-monit
 import { EngineStore } from "../engines/engine-store.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import { systemMachine } from "../machine/system.ts";
+import { ManifestService } from "../manifest/manifest-service.ts";
+import { UpdateCheckScheduler } from "../manifest/update-check.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts";
 import { SampleJob } from "../sample/sample-job.ts";
@@ -116,6 +118,13 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       architecture: process.arch,
       log: options.log,
     });
+    const manifests = new ManifestService({
+      settings,
+      uiVersion: options.version,
+      now: Date.now,
+      log: options.log,
+    });
+    const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: options.log });
     let listener: Listener | undefined;
 
     const routes = createRoutes({
@@ -128,6 +137,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       streams: new EventStreams(sessions),
       tracker,
       sample,
+      manifests,
       machine: systemMachine(dataFolder),
       auth: () => currentAuth(settings, sessions),
       listeningPort: () => listener?.port ?? 0,
@@ -159,6 +169,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       databaseBelongsToServer = true;
       engines.start();
       tracker.start();
+      updateChecks.start();
       await options.openBrowser(url);
       const result: StartResult = {
         kind: "started",
@@ -168,6 +179,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
         async stop() {
           // No request can arrive once the listener is down, and nothing may use the database after it closes.
           await running.stop();
+          await updateChecks.stop();
           await sample.stop();
           await tracker.stop();
           await engines.stop();
