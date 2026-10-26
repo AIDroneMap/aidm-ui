@@ -13,6 +13,8 @@ export interface MachineFacts {
   cpuInfo: string | null;
   /** `sw_vers -productVersion` on macOS. */
   macosVersion: string | null;
+  /** The name a Linux system gives itself (PRETTY_NAME in /etc/os-release), or null. */
+  linuxName: string | null;
   /** Bytes. */
   totalMemory: number;
   /** Bytes free where the engine data will live (the data folder for now). */
@@ -44,6 +46,13 @@ async function macosVersion(runner: CommandRunner): Promise<string | null> {
   return answer.exitCode === 0 && version !== "" ? version : null;
 }
 
+/** PRETTY_NAME from the text of an os-release file, without its quotes. */
+export function prettyName(osRelease: string | null): string | null {
+  const match = /^PRETTY_NAME=(.*)$/m.exec(osRelease ?? "");
+  const name = match?.[1]?.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+  return name === undefined || name === "" ? null : name;
+}
+
 /** Everything the machine check decides by. It runs commands side by side. */
 export async function gatherMachineFacts(deps: MachineFactsDeps): Promise<MachineFacts> {
   const linux = deps.platform === "linux";
@@ -59,6 +68,7 @@ export async function gatherMachineFacts(deps: MachineFactsDeps): Promise<Machin
     arch: deps.arch,
     cpuInfo: linux ? deps.readFile("/proc/cpuinfo") : null,
     macosVersion: version,
+    linuxName: linux ? prettyName(deps.readFile("/etc/os-release")) : null,
     totalMemory: deps.totalMemory(),
     freeDisk: deps.freeBytes(deps.dataFolder),
     nvidia,

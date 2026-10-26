@@ -9,6 +9,8 @@ export interface MachineInputs {
   arch: string;
   /** The text of /proc/cpuinfo, or null when it cannot be read. */
   cpuInfo: string | null;
+  /** The text of /etc/os-release, or null when it cannot be read. */
+  osRelease?: string | null;
   totalMemory: number;
   freeDisk: number;
   /** The commands that answer; every other command is not installed. */
@@ -20,6 +22,7 @@ export function linuxInputs(overrides: Partial<MachineInputs> = {}): MachineInpu
     platform: "linux",
     arch: "x64",
     cpuInfo: recordedText("cpuinfo", "x86-64-avx2"),
+    osRelease: recordedText("os-release", "ubuntu-24.04"),
     totalMemory: 32 * GiB,
     freeDisk: 100 * GiB,
     rules: [],
@@ -51,6 +54,7 @@ export function macInputs(version: "26" | "15", overrides: Partial<MachineInputs
     platform: "darwin",
     arch: "arm64",
     cpuInfo: null,
+    osRelease: null,
     rules: [{ argv: ["sw_vers", "-productVersion"], result: recorded("macos", `sw-vers-${version}`) }],
     ...overrides,
   });
@@ -90,7 +94,7 @@ export function recordedMachine(initial: MachineInputs = linuxInputs()): Recorde
         platform: inputs.platform,
         arch: inputs.arch,
         runner,
-        readFile: (path) => (path === "/proc/cpuinfo" ? inputs.cpuInfo : null),
+        readFile: (path) => (path === "/proc/cpuinfo" ? inputs.cpuInfo : path === "/etc/os-release" ? (inputs.osRelease ?? null) : null),
         totalMemory: () => inputs.totalMemory,
         freeBytes: () => inputs.freeDisk,
         dataFolder: "/data",

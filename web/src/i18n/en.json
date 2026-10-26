@@ -239,6 +239,8 @@
   "wizard.sample.body": "The sample job runs a small set of public drone photos through an engine, so you can see that everything works before you use your own photos.",
   "wizard.sample.finish": "Finish",
   "machine.platform_ok": "This operating system can run the engine.",
+  "machine.platform_ok_macos": "This Mac runs macOS {version}, which can run the engine.",
+  "machine.platform_ok_linux": "This computer runs {name}, which can run the engine.",
   "machine.platform_unsupported": "The engine cannot run on this operating system. Use an engine on another computer, or use AIDM UI without one.",
   "machine.windows_not_yet": "The engine cannot run on Windows yet. Use an engine on another computer, or use AIDM UI without one for now.",
   "machine.mac_intel": "The engine needs a Mac with Apple silicon, and this Mac has an Intel processor. You can still use an engine on another computer.",
