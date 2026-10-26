@@ -223,6 +223,12 @@ export function SettingsForm(props: SettingsFormProps) {
         <p role="status">{updatesStatus(props)}</p>
       </section>
 
+      <section aria-labelledby="settings-local-title">
+        <h2 id="settings-local-title">{t("settings.local.title")}</h2>
+        <p>{t("settings.local.explain")}</p>
+        <a href="#/engines">{t("settings.local.link")}</a>
+      </section>
+
       <section aria-labelledby="settings-wizard-title">
         <h2 id="settings-wizard-title">{t("settings.wizard.title")}</h2>
         <p>{t("settings.wizard.explain")}</p>

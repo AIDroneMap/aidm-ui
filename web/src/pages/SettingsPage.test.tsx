@@ -207,3 +207,10 @@ test("a saved answer is said in the status area", () => {
   const html = render({ updateSaved: true });
   expect(html).toContain('<p role="status">Your answer is saved.</p>');
 });
+
+test("the settings point to the advanced options of the engine on this computer", () => {
+  const html = render();
+  expect(html).toContain("<h2 id=\"settings-local-title\">Engine on this computer</h2>");
+  expect(html).toContain('<a href="#/engines">Open the advanced options for the engine on this computer</a>');
+  expect(untranslatedText(html)).toEqual([]);
+});

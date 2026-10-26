@@ -255,3 +255,59 @@ test("the page has a quiet status area for state changes and a heading that can 
   expect(html).toContain('<h1 tabindex="-1">Engines</h1>');
   expect(html).toMatch(/<p role="status" class="visually-hidden"><\/p>/);
 });
+
+const local: EngineView = {
+  id: 2,
+  kind: "local",
+  name: "local",
+  address: "http://127.0.0.1:41873",
+  enabled: true,
+  state: "ready",
+  supported: true,
+  info,
+  problem: null,
+  warning: null,
+};
+
+test("the local engine is called This computer and has no Edit and no Remove", () => {
+  const html = renderList([engine, local]);
+  expect(html).toContain("<h2>This computer</h2>");
+  expect(html).not.toContain(">local<");
+  const entry = html.split('<li class="engine">')[2] ?? "";
+  expect(entry).toContain("This computer");
+  expect(entry).not.toContain(">Edit<");
+  expect(entry).not.toContain(">Remove<");
+  expect(entry).not.toContain("aria-label=\"Edit");
+  expect(entry).not.toContain("aria-label=\"Remove");
+  // The remote engine keeps both.
+  const remote = html.split('<li class="engine">')[1] ?? "";
+  expect(remote).toContain(">Edit<");
+  expect(remote).toContain(">Remove<");
+  expect(untranslatedText(html, [...data, local.address])).toEqual([]);
+  expect(buttonsHaveNames(html)).toBe(true);
+});
+
+test("the local engine has a toggle for its log, closed at first", () => {
+  const closed = renderList([local], { log: { open: false, lines: [], onToggle: () => {} } });
+  expect(closed).toContain(">Show the engine log</button>");
+  expect(closed).toContain('aria-controls="engine-log"');
+  expect(closed).not.toContain("<pre");
+  // A remote engine has none.
+  expect(renderList([engine], { log: { open: false, lines: [], onToggle: () => {} } })).not.toContain("engine log");
+});
+
+test("the open log panel is a labelled region that can take focus and shows the lines it is given", () => {
+  const lines = ["starting the engine", "listening on port 3000"];
+  const html = renderList([local], { log: { open: true, lines, onToggle: () => {} } });
+  expect(html).toContain(">Hide the engine log</button>");
+  expect(html).toMatch(/<pre id="engine-log"[^>]*tabindex="0"/);
+  expect(html).toContain('role="region"');
+  expect(html).toContain('aria-label="Engine log"');
+  expect(html).toContain("starting the engine\nlistening on port 3000");
+  expect(untranslatedText(html, [...data, local.address, lines.join("\n")])).toEqual([]);
+});
+
+test("an open log with no lines yet says so", () => {
+  const html = renderList([local], { log: { open: true, lines: [], onToggle: () => {} } });
+  expect(html).toContain("The engine has not written anything yet.");
+});
