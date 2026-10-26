@@ -343,24 +343,37 @@ export class RunTracker {
     const processingTime = info.value.processingTime;
     // The engine started the task over, and its log starts again too. The run's own state cannot tell:
     // polls that got no answer may have turned it into engine_unreachable in between.
+    // A processing time that went down is a restart. Queued again after processing is only a hint,
+    // since the memory of "processing" may be stale (from before a restart of aidm-ui): it counts
+    // only when the engine's output is shorter than the lines of its latest start that we hold.
     const queuedAgain = state === "queued" && following.wasProcessing;
     const timeWentBack =
       state === "processing" && processingTime !== null && following.processingTime !== null && processingTime < following.processingTime;
-    if (queuedAgain || timeWentBack) this.markRestart(runId);
+    if (timeWentBack) this.markRestart(runId);
     if (state !== "unknown") {
       following.wasProcessing = state === "processing";
       following.processingTime = state === "processing" ? processingTime : null;
     }
 
     // The output comes before the state, so a finished run's last lines are saved before the run shows as finished.
-    // One line already held is asked for again: an engine that answers with nothing then has fewer lines than we got,
-    // so it started over without us seeing it.
+    // One line already held is asked for again (all of them when a restart is suspected): an engine that answers
+    // with fewer lines than we got started over without us seeing it.
     let held = this.heldLines(runId);
-    let output = await client.taskOutput(run.taskUuid, Math.max(0, held - 1));
-    if (output.ok && held > 0 && output.value.length === 0) {
+    let output = await client.taskOutput(run.taskUuid, queuedAgain ? 0 : Math.max(0, held - 1));
+    const shorter = output.ok && held > 0 && (queuedAgain ? output.value.length < held : output.value.length === 0);
+    if (shorter) {
       this.markRestart(runId);
+      following.wasProcessing = false;
+      following.processingTime = null;
       held = 0;
-      output = await client.taskOutput(run.taskUuid, 0);
+      if (!queuedAgain) output = await client.taskOutput(run.taskUuid, 0);
+    } else if (queuedAgain && held === 0) {
+      // Nothing of the new start was held yet, so where its output begins does not move.
+      this.markRestart(runId);
+    }
+    if (queuedAgain && !shorter && output.ok && held > 0) {
+      // The whole output was asked for; keep only what follows the last line held, as on any other poll.
+      output = { ok: true, value: output.value.slice(held - 1) };
     }
     const before = this.current(runId, following);
     if (before === null) return;

@@ -765,6 +765,22 @@ test("where the new output begins is kept when aidm-ui is started again, and the
   expect((await logView(second, runId)).lines).toEqual(["old one", "old two", "new one", "new two"]);
 });
 
+test("one restart seen through two signals in a row is counted once, and no line is saved twice", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two"] });
+  await eventually(async () => (await logView(h, runId)).lines.length === 2);
+  const engine = podman(h).engine(CONTAINER_NAME);
+  // First the output starts over while the task still reports processing...
+  engine?.setTask(uuid, { statusCode: 20, processingTime: 1000, output: ["new one"] });
+  await eventually(async () => (await logView(h, runId)).restartedAtLine === 2);
+  // ...then, a poll later, the task is back in the queue. That is the same restart.
+  engine?.setTask(uuid, { statusCode: 10, processingTime: -1 });
+  await eventually(async () => (await runView(h, runId)).state === "queued");
+  await Bun.sleep(200);
+  expect(await logView(h, runId)).toMatchObject({ lines: ["old one", "old two", "new one"], restartedAtLine: 2 });
+});
+
 // The real crash path: the run was not told, it only saw the engine go quiet and come back.
 
 test("a task seen processing, then not answering for several polls, then queued again is a restart", async () => {
