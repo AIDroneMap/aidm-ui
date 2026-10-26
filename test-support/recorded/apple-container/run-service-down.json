@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error: interrupted: \"XPC connection error: Connection invalid\"\nEnsure container system service has been started with `container system start`.\n"
+}

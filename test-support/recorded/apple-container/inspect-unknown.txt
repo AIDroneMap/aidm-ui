@@ -1,0 +1,17 @@
+[
+  {
+    "configuration": {
+      "id": "aidm-engine",
+      "mounts": [],
+      "resources": {
+        "cpus": 8,
+        "memoryInBytes": 27487790694
+      }
+    },
+    "id": "aidm-engine",
+    "status": {
+      "networks": [],
+      "state": "unknown"
+    }
+  }
+]

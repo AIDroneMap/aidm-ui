@@ -10,12 +10,13 @@ import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor
 import { EngineStore } from "../engines/engine-store.ts";
 import { LocalEngineManager, type LocalEngineDeps } from "../local-engine/manager.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
+import { MacSetup, type MacSetupDeps } from "../runtimes/apple-container-installer.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
 import { EventStreams } from "../http/event-streams.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { ManifestService, type ManifestServiceDeps } from "../manifest/manifest-service.ts";
 import { MachineChecks } from "../machine/machine-checks.ts";
-import type { CommandRunner } from "../process/command-runner.ts";
 import { RuntimeSetup, type PrivilegedRunner } from "../runtimes/podman-setup.ts";
 import { OS_RELEASE_FILE, type SystemFiles } from "../runtimes/setup-command.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
@@ -113,6 +114,11 @@ export function openHarness(
     updateCheckMs?: number;
     /** The computer the machine check reads; default: a Linux computer with 32 GiB and no container runtime. */
     machine?: RouteContext["machine"];
+    /**
+     * The Mac setup, for a test that runs the install on a Mac: the runner that
+     * answers the commands and the pins and waits to change. Without it there is none.
+     */
+    macSetup?: Omit<MacSetupDeps, "dataFolder" | "log" | "runner"> & { runner: CommandRunner };
     /** process.arch of the computer, for the reference time. */
     architecture?: string;
     /** Swaps parts of the Podman setup: the privileged runner, the files and the programs run as the operator. */
@@ -169,6 +175,12 @@ export function openHarness(
     log,
   });
   const runtimes = options.runtimes ?? { podman: new FakeRuntime() };
+  const machine = options.machine ?? recordedMachine();
+  const machineChecks = new MachineChecks({
+    machine,
+    settings,
+    now: () => clock.now,
+  });
   const localEngine = new LocalEngineManager({
     settings,
     engineStore,
@@ -182,6 +194,8 @@ export function openHarness(
     // Not the disk of the machine that runs the tests.
     freeBytes: options.freeBytes ?? (() => 1024 * GiB),
     log,
+    macSetup: options.macSetup === undefined ? undefined : new MacSetup({ ...options.macSetup, dataFolder, log }),
+    localEngineOffer: async () => (await machineChecks.read()).localEngine,
     sleep: async () => {},
     freePort: options.freePort,
     logOptions: options.localLog,
@@ -209,12 +223,6 @@ export function openHarness(
     log,
   });
 
-  const machine = options.machine ?? recordedMachine();
-  const machineChecks = new MachineChecks({
-    machine,
-    settings,
-    now: () => clock.now,
-  });
   const privileged = options.setup?.privileged ?? new FakePrivilegedRunner();
   const runtimeSetup = new RuntimeSetup({
     platform: options.localMachine?.platform ?? "linux",

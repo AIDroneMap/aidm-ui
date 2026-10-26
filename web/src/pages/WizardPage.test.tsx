@@ -9,7 +9,7 @@ import type {
   RuntimeSetupView,
 } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
-import { fresh } from "../localEngine.fixtures.ts";
+import { engineInstall, fresh, macInstall, macPlan } from "../localEngine.fixtures.ts";
 import { textNodes, unlabelledInputs, untranslatedText } from "../test-helpers.ts";
 import {
   EngineChoiceScreen,
@@ -249,8 +249,10 @@ function renderInstall(
       installFailure={null}
       onInstallLocal={() => {}}
       setup={null}
-      remoteBusy={false}
       onRemote={() => {}}
+      remoteBusy={false}
+      onStopWaiting={() => {}}
+      stopWaitingBusy={false}
       onBack={() => {}}
       onNext={() => {}}
       {...overrides}
@@ -460,7 +462,7 @@ const MIB = 1024 ** 2;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: { phase: "pulling", variant: "linux-amd64-cpu", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
+  install: engineInstall({ size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2 }),
 };
 
 test("the install screen offers to install on this computer, below the package offer", () => {
@@ -638,6 +640,17 @@ test("the way out is busy while the end of the wizard is being saved", () => {
   expect(html).toMatch(/aria-disabled="true"[^>]*>Add a remote engine</);
 });
 
+test("a failed Podman setup and a refused install offer the way to a remote engine once, not twice", () => {
+  const both = renderInstall(builtIn, {
+    local: noRuntime,
+    setup: setupView("failed", { code: "setup.dismissed", data: {} }),
+    installFailure: new ApiFailure(409, "setup.already_running", {}),
+  });
+  expect(both.match(/>Add a remote engine<\/button>/g)).toHaveLength(1);
+  const installOnly = renderInstall(builtIn, { local: fresh, installFailure: new ApiFailure(409, "install.no_runtime", {}) });
+  expect(installOnly.match(/>Add a remote engine<\/button>/g)).toHaveLength(1);
+});
+
 test("the setup text never uses the system's own words", () => {
   for (const [key, text] of Object.entries(en)) {
     if (!key.startsWith("setup.")) continue;
@@ -735,4 +748,114 @@ test("the button stays busy during the test run and the deletion of the graphics
     });
     expect(html).toContain(">Installing...</button>");
   }
+});
+
+// The Mac path.
+
+const macCheck = (code: "machine.mac_intel" | "machine.macos_too_old", data = {}): MachineCheckData => ({
+  lines: [{ id: "platform", result: "fail", message: { code, data } }],
+  localEngine: { offered: false, reason: { code, data } },
+  checkedAt: "2026-10-26T10:00:00Z",
+});
+
+test("on an Intel Mac the choice screen does not offer the local engine, says why, and offers a remote engine", () => {
+  const html = renderChoice(macCheck("machine.mac_intel"));
+  expect(html).not.toContain("Install on this computer</button>");
+  expect(html).toContain("this Mac has an Intel processor");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("on macOS 15 the choice screen says which macOS is needed and offers a remote engine", () => {
+  const html = renderChoice(macCheck("machine.macos_too_old", { version: "15.6.1", minimumVersion: 26 }));
+  expect(html).not.toContain("Install on this computer</button>");
+  expect(html).toContain("The engine needs macOS 26 or newer.");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("the install screen on a Mac lists the steps with their sizes before the operator clicks", () => {
+  const html = renderInstall(builtIn, { local: { ...fresh, plan: macPlan } });
+  const order = [
+    "Apple&#x27;s container tool, 149 MiB",
+    "Your approval: macOS asks for your password once",
+    "Kernel, about 665 MiB, no resume",
+    "Startup files, size not known",
+    "AIDM engine, 594 MiB",
+  ].map((text) => html.indexOf(text));
+  expect(order.every((index) => index > 0)).toBe(true);
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  expect(html.indexOf("Install on this computer</button>")).toBeGreaterThan(0);
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the install screen marks the current Mac step and keeps the button busy", () => {
+  const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall("approve") } });
+  expect(html).toContain('<li aria-current="step"');
+  expect(html).toContain(">Installing...</button>");
+  expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Installing\.\.\.<\/button>/);
+});
+
+test("a failed Mac step shows its message and a button to add a remote engine", () => {
+  const html = renderInstall(builtIn, {
+    local: {
+      ...fresh,
+      state: "failed",
+      plan: macPlan,
+      install: macInstall("approve", { phase: "failed" }),
+      problem: { code: "mac.install_not_finished", data: { reason: "timeout" } },
+    },
+  });
+  expect(html).toContain("Apple&#x27;s container tool was not installed.");
+  expect(html).toContain("You can use an engine on another computer instead.");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("while the page waits for the password, it offers a remote engine and a Stop waiting button", () => {
+  const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall("approve") } });
+  expect(html).toContain("You can use an engine on another computer instead.");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(html).toMatch(/<button type="button"[^>]*>Stop waiting<\/button>/);
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("Stop waiting is shown only while the approval is awaited", () => {
+  for (const step of ["installer", "kernel", "init", "engine"] as const) {
+    const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall(step) } });
+    expect(html, step).not.toContain("Stop waiting");
+    expect(html, step).not.toContain("Add a remote engine");
+  }
+  const failed = renderInstall(builtIn, {
+    local: { ...fresh, state: "failed", plan: macPlan, install: macInstall("approve", { phase: "failed" }), problem: { code: "mac.install_not_finished", data: { reason: "cancelled" } } },
+  });
+  expect(failed).not.toContain("Stop waiting");
+  expect(failed).toContain(">Add a remote engine</button>");
+});
+
+test("Stop waiting is busy, with keyboard focus kept, while the request is on its way", () => {
+  const html = renderInstall(builtIn, {
+    local: { ...fresh, state: "installing", plan: macPlan, install: macInstall("approve") },
+    stopWaitingBusy: true,
+  });
+  expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Stopping\.\.\.<\/button>/);
+});
+
+test("a refusal of the install, such as an Intel Mac, also offers the remote engine", () => {
+  const html = renderInstall(builtIn, {
+    local: fresh,
+    installFailure: new ApiFailure(409, "machine.mac_intel"),
+  });
+  expect(html).toContain("this Mac has an Intel processor");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(renderInstall(builtIn, { local: fresh })).not.toContain("Add a remote engine");
+});
+
+test("the remote engine button is busy, with keyboard focus kept, while the wizard is saved", () => {
+  const html = renderInstall(builtIn, {
+    local: fresh,
+    installFailure: new ApiFailure(409, "machine.mac_intel"),
+    remoteBusy: true,
+  });
+  expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Add a remote engine<\/button>/);
 });

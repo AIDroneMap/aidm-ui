@@ -8,10 +8,15 @@ const countFormat = new Intl.NumberFormat("en");
 const gibFormat = new Intl.NumberFormat("en", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const wholeFormat = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-/** A size in bytes as the operator reads it: MiB with no decimals under 1 GiB, GiB with one decimal from there. */
-export function formatBytes(bytes: number): string {
+/**
+ * A size in bytes as the operator reads it: MiB with no decimals under 1 GiB, GiB with one decimal from there.
+ * "up" rounds whole MiB up, for a size that is said with "about": the user is never told less than is coming.
+ */
+export function formatBytes(bytes: number, rounding: "nearest" | "up" = "nearest"): string {
   if (bytes >= GIB) return t("unit.bytes.gib", { value: gibFormat.format(bytes / GIB) });
-  if (bytes >= MIB) return t("unit.bytes.mib", { value: wholeFormat.format(bytes / MIB) });
+  if (bytes >= MIB) {
+    return t("unit.bytes.mib", { value: wholeFormat.format(rounding === "up" ? Math.ceil(bytes / MIB) : bytes / MIB) });
+  }
   if (bytes >= KIB) return t("unit.bytes.kib", { value: wholeFormat.format(bytes / KIB) });
   return t("unit.bytes.b", { value: countFormat.format(bytes) });
 }

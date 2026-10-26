@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error: notFound: \"manifest unknown: ghcr.io/aidronemap/aidm-api@sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd\"\n"
+}

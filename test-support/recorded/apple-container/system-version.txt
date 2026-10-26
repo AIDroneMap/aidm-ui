@@ -1,1 +1,0 @@
-[{"appName":"container","buildType":"release","commit":"804209b","version":"1.6.1"},{"appName":"container-apiserver","buildType":"release","commit":"804209b","version":"1.6.1"}]

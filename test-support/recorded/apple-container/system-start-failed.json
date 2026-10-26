@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error: internalError: \"failed to start container-apiserver\"\n"
+}

@@ -1,5 +1,6 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { parseCommandLine, parseSetupCommand } from "./cli.ts";
 import { resolveDataFolder } from "./data-folder.ts";
 import {
@@ -20,6 +21,8 @@ import { EngineStore } from "../engines/engine-store.ts";
 import { LocalEngineManager } from "../local-engine/manager.ts";
 import { freeBytes } from "../machine/disk.ts";
 import { systemRunner } from "../process/command-runner.ts";
+import { recordingRunner } from "../process/recording-runner.ts";
+import { MacSetup } from "../runtimes/apple-container-installer.ts";
 import { RuntimeSetup, pkexecRunner } from "../runtimes/podman-setup.ts";
 import { allRuntimes, containerRuntime } from "../runtimes/registry.ts";
 import { runSetupFromCommandLine, SETUP_EXIT, systemFiles } from "../runtimes/setup-command.ts";
@@ -130,7 +133,19 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       now: Date.now,
       log: options.log,
     });
-    const runner = systemRunner();
+    let runner = systemRunner();
+    if (commandLine.recordRuntimeCommands) {
+      // A diagnostic for the maintainer, so the line goes to the terminal and the interface never hears of it.
+      const file = join(dataFolder, "diagnostics", "runtime-commands.jsonl");
+      runner = recordingRunner(runner, {
+        file,
+        secrets: () => engineStore.list().filter((engine) => engine.kind === "local").map((engine) => engine.token),
+      });
+      options.log(`Recording every runtime command to ${file}. Turn it off by starting without --record-runtime-commands.`);
+    }
+    const machine = systemMachine(dataFolder);
+    const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
+    const onMac = process.platform === "darwin";
     const localEngine = new LocalEngineManager({
       settings,
       engineStore,
@@ -148,6 +163,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       dataFolder,
       freeBytes,
       log: options.log,
+      macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: options.log }) : undefined,
+      localEngineOffer: async () => (await machineChecks.read()).localEngine,
     });
     const sample = new SampleJob({
       dataset: SAMPLE_DATASET,
@@ -160,8 +177,6 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       log: options.log,
       localMemoryCap: () => localEngine.memoryCap(),
     });
-    const machine = systemMachine(dataFolder);
-    const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
     const runtimeSetup = new RuntimeSetup({
       platform: process.platform,
       operator: operatorName(),

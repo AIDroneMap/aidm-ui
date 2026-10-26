@@ -1,0 +1,4 @@
+{
+  "exitCode": 0,
+  "stderr": "[1/2] Fetching image 0% (0 of 7 blobs, zero KB/zero KB) [0s]\n[1/2] Fetching image 31% (2 of 7 blobs, 190.1/610.4 MB, 38.0 MB/s) [5s]\n[1/2] Fetching image 64% (4 of 7 blobs, 390.7/610.4 MB, 39.1 MB/s) [10s]\n[1/2] Fetching image 100% (7 of 7 blobs, 610.4/610.4 MB, 40.2 MB/s) [15s]\n[2/2] Unpacking image 0% (0 of 412 entries) [0s]\n[2/2] Unpacking image 52% (214 of 412 entries) [4s]\n[2/2] Unpacking image 100% (412 of 412 entries) [8s]\n"
+}

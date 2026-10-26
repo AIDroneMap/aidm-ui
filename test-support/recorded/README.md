@@ -77,13 +77,34 @@ them (see the table above).
 
 No Mac was available. These are rebuilt from the output formats in the Apple
 `container` source (release 1.6.1: `SystemStatus.swift` for the status JSON,
-`docs/command-reference.md` for the version JSON) and from the sample lines in
+`ReleaseVersion.swift` for the version line) and from the sample lines in
 the runtime research notes. They have not been checked against a real run.
 
 - `docker/run-image-not-found.*` (exit 125, `No such image`, which is what `docker run --pull=never` says for an image that is not stored; from the Docker CLI and daemon sources)
-- `apple-container/system-version.txt`, `system-version-not-started.txt`
 - `apple-container/system-status-running.txt`, `system-status-not-running.*`,
   `system-status-unregistered.*` (exit 1, as the source does)
+- Every other file in `apple-container/`, for the operations of the adapter. None was captured; each is built from
+  the command reference and the source of release 1.6.1, and the error texts are the ones the research notes quote.
+  What is a guess is said here, so nobody takes it for a recording:
+  - `cli-version.txt`: the `container --version` line, in the format of `ReleaseVersion.swift`.
+  - `pull.*`: the plain progress lines. The source gives their parts (`[1/2]`, a description, a percent, the
+    parenthesised counts) but the exact text was never captured, so the wording of the counts is a guess. The
+    progress goes to stderr, because the plain renderer writes there. `pull-not-found.*` and `pull-service-down.*`
+    carry error texts the research notes do not quote for a pull; the first is a guess, the second is the
+    rewritten service error of `Application.swift`.
+  - `run.txt` (the ID is the name), `run-name-in-use.*` (`container already exists: <id>`, from the source),
+    `run-service-down.*`. `run-port-in-use.*` and `run-image-not-found.*` are guesses: the research notes found no
+    port conflict message and no image message for a run. The adapter matches whole phrases only, and a failed run is never followed by a delete.
+  - `inspect-running.txt`, `inspect-stopped.txt`, `inspect-stopping.txt`, `inspect-unknown.txt`: the shape of the
+    documentation sample, with the state in `status.state`. No exit code is in any of them, because
+    the research notes found none. `inspect-missing.*` is `container not found: <id>`, from the source.
+  - `logs.txt`, `logs-missing.*`, `stop.txt`, `stop-not-running.*` (`container <id> is not running`, from the
+    source), `stop-missing.*`, `delete.txt`, `delete-missing.*`. A real `delete --force` of a missing container may
+    print nothing and succeed; the adapter accepts both.
+  - `image-delete.txt`, `image-delete-missing.*` and `image-delete-in-use.*`: the first prints the reference, as the
+    source does; the other two texts are guesses.
+  - `system-start.*`, `system-start-failed.*`: the lines are `Launching container-apiserver...` and `Installing kernel...` from the source, plus an init line of a made-up wording. The installer step tells the init step from
+    any line that names "init", so that wording is the one thing a real run could change.
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
 - `nvidia/smi-l-no-driver.*` (exit 9, the driver message from the `nvidia-smi` manual and the text people quote from it; whether a real machine without a loaded driver exits 9 or 255 was not confirmed). The same file stands for the failing listing inside the engine image.

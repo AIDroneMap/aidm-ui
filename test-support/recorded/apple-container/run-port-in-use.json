@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error: internalError: \"failed to bind 127.0.0.1:41823: address already in use\"\n"
+}

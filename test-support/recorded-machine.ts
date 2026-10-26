@@ -45,14 +45,25 @@ export function dockerRules(version: DockerVersion): ScriptedRule[] {
   ];
 }
 
+/** A Mac with Apple silicon (or Intel with arch "x64"), on the macOS version of a recorded `sw_vers` answer. */
+export function macInputs(version: "26" | "15", overrides: Partial<MachineInputs> = {}): MachineInputs {
+  return linuxInputs({
+    platform: "darwin",
+    arch: "arm64",
+    cpuInfo: null,
+    rules: [{ argv: ["sw_vers", "-productVersion"], result: recorded("macos", `sw-vers-${version}`) }],
+    ...overrides,
+  });
+}
+
 export function appleRules(started: boolean): ScriptedRule[] {
   return [
     {
-      argv: ["container", "system", "version", "--format", "json"],
-      result: recorded("apple-container", started ? "system-version" : "system-version-not-started"),
+      argv: ["/usr/local/bin/container", "--version"],
+      result: recorded("apple-container", "cli-version"),
     },
     {
-      argv: ["container", "system", "status", "--format", "json"],
+      argv: ["/usr/local/bin/container", "system", "status", "--format", "json"],
       result: recorded("apple-container", started ? "system-status-running" : "system-status-not-running"),
     },
   ];

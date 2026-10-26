@@ -75,6 +75,14 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
       },
     },
 
+    // Ends the wait for the password of macOS. The page offers it only at that step; at any other time it changes nothing.
+    "/api/local-engine/install/cancel": {
+      POST: () => {
+        localEngine.stopWaitingForApproval();
+        return Response.json(localEngine.view());
+      },
+    },
+
     "/api/local-engine/logs": {
       GET: (req, rc) => {
         rc.server.timeout(req, 0);

@@ -48,17 +48,17 @@ export const EXIT_CANNOT_RUN = 126;
 /** A streamed call whose signal fired before the program started. */
 export const EXIT_ABORTED = 130;
 
-/**
- * A command line fit for a log: the value after --token is hidden, in both
- * the "--token value" and the "--token=value" form.
- */
+/** The argument list with the value after --token hidden, in both the "--token value" and the "--token=value" form. */
+export function hideTokenArguments(argv: string[]): string[] {
+  return argv.map((part, index) => {
+    if (argv[index - 1] === "--token") return "***";
+    return part.startsWith("--token=") ? "--token=***" : part;
+  });
+}
+
+/** A command line fit for a log: the value after --token is hidden. */
 export function describeCommand(argv: string[]): string {
-  return argv
-    .map((part, index) => {
-      if (argv[index - 1] === "--token") return "***";
-      return part.startsWith("--token=") ? "--token=***" : part;
-    })
-    .join(" ");
+  return hideTokenArguments(argv).join(" ");
 }
 
 /** A line longer than this many characters (64 KiB for plain text) is handed over in pieces, so a program that never breaks its lines cannot fill the memory. */

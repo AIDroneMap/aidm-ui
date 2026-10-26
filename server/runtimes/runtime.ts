@@ -31,7 +31,7 @@ export interface ContainerSpec {
   name: string;
   /** Always pinned: "<repository>@sha256:<digest>". */
   image: string;
-  /** e.g. "linux/arm64"; null lets the runtime pick (Apple's tool always gets one). */
+  /** e.g. "linux/arm64"; null lets the runtime pick. Apple's tool takes the platform at the pull and has no platform flag for run. */
   platform: string | null;
   publish: { hostAddress: "127.0.0.1"; hostPort: number; containerPort: number };
   /**
@@ -69,7 +69,7 @@ export interface ContainerStatus {
 }
 
 export interface PullProgress {
-  /** Image layers finished, when the tool's output says; null when it does not. */
+  /** Parts of the image finished, when the tool's output says; null when it does not. Some tools count layers, Apple's counts blobs (layers, config and manifests together). */
   layersDone: number | null;
   layersTotal: number | null;
   phase: "downloading" | "writing";

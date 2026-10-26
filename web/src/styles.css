@@ -416,3 +416,35 @@ legend {
   padding: 0 0.5rem;
   font-weight: 600;
 }
+
+.install-steps {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+
+.install-steps li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid #5f6368;
+}
+
+.install-steps li[aria-current="step"] {
+  font-weight: 700;
+  border-left-color: #0b57d0;
+}
+
+.install-steps li.install-step-done {
+  border-left-color: #1e6b2f;
+}
+
+.install-steps li.install-step-failed {
+  font-weight: 700;
+  border-left-color: #b3261e;
+}
+
+.install-step-state {
+  white-space: nowrap;
+}

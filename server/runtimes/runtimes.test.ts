@@ -23,8 +23,8 @@ function dockerInfo(name: string): ScriptedRule {
   return { argv: ["docker", "info", "--format", "json"], result: recorded("docker", name) };
 }
 
-const appleVersionArgv = ["container", "system", "version", "--format", "json"];
-const appleStatusArgv = ["container", "system", "status", "--format", "json"];
+const appleVersionArgv = ["/usr/local/bin/container", "--version"];
+const appleStatusArgv = ["/usr/local/bin/container", "system", "status", "--format", "json"];
 
 test("rootless Podman with the memory controller is available and can cap memory", async () => {
   const runner = new ScriptedRunner([podmanVersion, podmanInfo("info-rootless")]);
@@ -133,7 +133,7 @@ test("a computer without Docker gives runtime.not_installed", async () => {
 
 test("Apple's container with its service running is available", async () => {
   const runner = new ScriptedRunner([
-    { argv: appleVersionArgv, result: recorded("apple-container", "system-version") },
+    { argv: appleVersionArgv, result: recorded("apple-container", "cli-version") },
     { argv: appleStatusArgv, result: recorded("apple-container", "system-status-running") },
   ]);
   expect(await appleContainerRuntime(runner).detect()).toEqual({
@@ -150,7 +150,7 @@ test("Apple's container with its service running is available", async () => {
 test("Apple's container not started, or never registered, gives runtime.apple_not_started", async () => {
   for (const status of ["system-status-not-running", "system-status-unregistered"]) {
     const runner = new ScriptedRunner([
-      { argv: appleVersionArgv, result: recorded("apple-container", "system-version-not-started") },
+      { argv: appleVersionArgv, result: recorded("apple-container", "cli-version") },
       { argv: appleStatusArgv, result: recorded("apple-container", status) },
     ]);
     const detection = await appleContainerRuntime(runner).detect();
