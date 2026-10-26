@@ -1,3 +1,4 @@
+import { TaskClient } from "../task-api/task-client.ts";
 import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
@@ -22,7 +23,7 @@ import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
 import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
-import { NativePackage, type ChildState, type SpawnEngine } from "../packages/native-package.ts";
+import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
 import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
 import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts";
 import type { RunStore } from "../runs/run-store.ts";
@@ -45,6 +46,8 @@ export const LOCAL_ENGINE_NAME = "This computer";
 const PORT_TRIES = 3;
 /** A page load reuses a look at the graphics card this young. An install and a start always look again. */
 const GPU_PRECHECK_MAX_AGE_MS = 60_000;
+/** Looking for systemd, and trying a scope, each wait this long. */
+const SYSTEMD_TIMEOUT_MS = 10_000;
 /** A start does not ask the runtimes again if they answered this recently. */
 const DETECTION_MAX_AGE_MS = 10_000;
 /** Seconds to wait before each try to bring back a crashed engine: 2, 4, 8, 16, 32. */
@@ -111,16 +114,28 @@ interface UpdateOffer {
   variant: ManifestVariant;
 }
 
-/** What a package is, apart from the others: the image it pins, or the folder of its version. */
-function identityOf(installed: InstalledPackage): string {
-  return isNativePackage(installed)
-    ? `native:${installed.packageVersion}`
-    : `${installed.container.image}@${installed.container.digest}`;
+/** What differs between the two kinds of package, so that the rest of the manager does not switch on the kind. */
+interface KindView {
+  kind: "container" | "native";
+  /** The runtime that pulled the image; null for a program. */
+  runtime: RuntimeId | null;
+  gpu: boolean;
+  /** The bytes a package downloads, from the manifest entry it was installed from. */
+  size: number;
+  /** What a package is, apart from the others: the image it pins, or the folder of its version. */
+  identity: string;
 }
 
-/** The bytes a package downloads, from the manifest entry it was installed from. */
-function sizeOf(installed: InstalledPackage): number {
-  return isNativePackage(installed) ? installed.native.size : installed.container.size;
+function kindOf(installed: InstalledPackage): KindView {
+  return isNativePackage(installed)
+    ? { kind: "native", runtime: null, gpu: installed.native.gpu, size: installed.native.size, identity: `native:${installed.packageVersion}` }
+    : {
+        kind: "container",
+        runtime: installed.runtime,
+        gpu: installed.container.gpu,
+        size: installed.container.size,
+        identity: `${installed.container.image}@${installed.container.digest}`,
+      };
 }
 
 /** The progress at the start of a download or of a start, before the package says more. */
@@ -135,7 +150,7 @@ function firstProgress(phase: "pulling" | "starting", size: number, installed: I
     layersDone: null,
     layersTotal: null,
     attempt: 1,
-    maxAttempts: isNativePackage(installed) ? 1 : PULL_ATTEMPTS,
+    maxAttempts: kindOf(installed).kind === "native" ? 1 : PULL_ATTEMPTS,
   };
 }
 
@@ -190,18 +205,10 @@ export interface LocalEngineDeps {
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
   /** How long a new version may take to answer before an update or a rollback is undone; default 120 seconds. */
   updateReadyTimeoutMs?: number;
-  /** Runs tar to unpack a native package and systemctl to look for systemd. Default: the real programs. */
+  /** Runs tar to unpack a native package, and systemctl and systemd-run to look for systemd. Default: the real programs. */
   runner?: CommandRunner;
   /** For native packages; a test swaps the way the program is started and the way the archive is fetched. */
-  native?: {
-    spawn?: SpawnEngine;
-    fetch?: typeof fetch;
-    backoffMs?: (attempt: number) => number;
-    stopGraceMs?: number;
-    logPollMs?: number;
-    /** Added to the command line of the engine. */
-    extraArgs?: string[];
-  };
+  native?: NativeOptions;
 }
 
 function randomToken(): string {
@@ -229,6 +236,9 @@ function refusal(status: number, code: ApiError["code"], data: Record<string, un
  * Installs, starts, stops and watches the local engine. It keeps no state the
  * database does not also hold, except what is happening right now.
  */
+/** How long the reattach waits for the running engine to confirm the stored token. */
+const CONFIRM_TIMEOUT_MS = 5_000;
+
 export class LocalEngineManager {
   private readonly settings: Settings;
   private readonly store: EngineStore;
@@ -267,6 +277,8 @@ export class LocalEngineManager {
   private systemdLookup: Promise<void> | undefined;
   /** The programs this run of aidm-ui started, so that a silent one is still known to be ours. */
   private readonly children = new Map<number, ChildState>();
+  /** The package objects of native versions, made once each. */
+  private readonly nativePackages = new Map<string, NativePackage>();
   /** The update or the way back under way, shown like an install. */
   private updateProgress: InstallProgressView | null = null;
   private offer: UpdateOffer | null = null;
@@ -329,9 +341,9 @@ export class LocalEngineManager {
 
     const available = this.drivable().filter((detection) => detection.available);
     const preferred = this.settings.get("runtime.preferred");
-    const native = installedPackage !== null && isNativePackage(installedPackage);
-    const installedRuntime = installedPackage !== null && !isNativePackage(installedPackage) ? installedPackage.runtime : null;
-    const chosen = native ? null : (installedRuntime ?? preferredRuntime(available, preferred)?.id ?? null);
+    const installedKind = installedPackage === null ? null : kindOf(installedPackage);
+    const native = installedKind?.kind === "native";
+    const chosen = native ? null : (installedKind?.runtime ?? preferredRuntime(available, preferred)?.id ?? null);
     const detection = this.detections.find((candidate) => candidate.id === chosen);
     const warnings: ApiError[] = [];
     if (native) {
@@ -351,13 +363,13 @@ export class LocalEngineManager {
 
     return {
       installed:
-        installedPackage === null
+        installedPackage === null || installedKind === null
           ? null
           : {
               packageVersion: installedPackage.packageVersion,
               variant: installedPackage.variant,
-              kind: isNativePackage(installedPackage) ? "native" : "container",
-              runtime: isNativePackage(installedPackage) ? null : installedPackage.runtime,
+              kind: installedKind.kind,
+              runtime: installedKind.runtime,
             },
       engineId: engine?.id ?? null,
       enabled: this.isEnabled(),
@@ -434,7 +446,7 @@ export class LocalEngineManager {
         answered = true;
         // The view warns about a missing memory limit only once it knows.
         const installed = this.settings.get("local.package");
-        if (installed !== null && isNativePackage(installed)) await this.lookForSystemd();
+        if (installed !== null && kindOf(installed).kind === "native") await this.lookForSystemd();
       } catch (error) {
         this.deps.log(`Looking for container runtimes failed: ${error instanceof Error ? error.message : String(error)}`);
         return;
@@ -461,15 +473,27 @@ export class LocalEngineManager {
     return this.lookAtRuntimes();
   }
 
-  /** Looks once for systemd's user manager, which gives a native package its memory limit. Linux only. */
+  /**
+   * Looks once for systemd's user manager, which gives a native package its
+   * memory limit, and tries a scope with a limit, since a manager that runs
+   * can still refuse one (no user bus, no permission). Linux only.
+   */
   private lookForSystemd(): Promise<void> {
     this.systemdLookup ??= (async () => {
       if (this.deps.machine.platform !== "linux") {
         this.systemd = false;
         return;
       }
-      const result = await this.runner.run(["systemctl", "--user", "show-environment"]);
-      this.systemd = result.exitCode === 0;
+      const found = await this.runner.run(["systemctl", "--user", "show-environment"], { timeoutMs: SYSTEMD_TIMEOUT_MS });
+      if (found.exitCode !== 0) {
+        this.systemd = false;
+        return;
+      }
+      const scope = await this.runner.run(["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=1G", "--", "true"], {
+        timeoutMs: SYSTEMD_TIMEOUT_MS,
+      });
+      this.systemd = scope.exitCode === 0;
+      if (!this.systemd) this.deps.log(`systemd cannot start a scope with a memory limit (exit ${scope.exitCode}): ${scope.stderr.trim().slice(0, 300)}`);
     })().catch((error: unknown) => {
       this.deps.log(`Looking for systemd failed: ${error instanceof Error ? error.message : String(error)}`);
       this.systemd = false;
@@ -682,7 +706,7 @@ export class LocalEngineManager {
         if (
           release !== null &&
           // A release is an update of the same kind of package. Moving from a container to a program is a new install.
-          release.variant.kind === (isNativePackage(installed) ? "native" : "container") &&
+          release.variant.kind === kindOf(installed).kind &&
           compareVersions(release.packageVersion, installed.packageVersion) > 0
         ) {
           next = { packageVersion: release.packageVersion, size: release.variant.size, variant: release.variant };
@@ -804,7 +828,7 @@ export class LocalEngineManager {
     if (kind === "rollback") {
       const previous = this.settings.get("local.previous");
       if (previous === null) return { refused: refusal(409, "update.no_previous") };
-      return { to: previous, progress: progress("starting", sizeOf(previous), previous) };
+      return { to: previous, progress: progress("starting", kindOf(previous).size, previous) };
     }
 
     await this.refreshUpdateOffer();
@@ -855,7 +879,7 @@ export class LocalEngineManager {
     const oldPkg = this.packageFor(from);
     const newPkg = this.packageFor(to);
     if (engine === null || oldPkg === null || newPkg === null) {
-      return this.endSwitch({ code: "runtime.not_available", data: { runtime: isNativePackage(from) ? null : from.runtime } });
+      return this.endSwitch({ code: "runtime.not_available", data: { runtime: kindOf(from).runtime } });
     }
 
     if (kind === "update") {
@@ -946,7 +970,7 @@ export class LocalEngineManager {
     this.busy = true;
     this.monitor.setHeld(engine.id, true);
     this.failure = null;
-    this.updateProgress = firstProgress("starting", sizeOf(pending.to), pending.to);
+    this.updateProgress = firstProgress("starting", kindOf(pending.to).size, pending.to);
     this.background = (async () => {
       const status = await newPkg.status();
       const running = status.ok && status.value.state === "running" && engine.address !== "";
@@ -1002,9 +1026,9 @@ export class LocalEngineManager {
    * nothing depends on it.
    */
   private async dropVersion(version: InstalledPackage, ...alsoKeep: InstalledPackage[]): Promise<void> {
-    const identity = identityOf(version);
+    const identity = kindOf(version).identity;
     const keep = [this.settings.get("local.package"), this.settings.get("local.previous"), ...alsoKeep];
-    if (keep.some((other) => other !== null && identityOf(other) === identity)) return;
+    if (keep.some((other) => other !== null && kindOf(other).identity === identity)) return;
     try {
       if (isNativePackage(version)) {
         await this.packageFor(version)?.remove();
@@ -1048,7 +1072,7 @@ export class LocalEngineManager {
       const engine = this.store.local();
       if (installed === null || engine === null) return fail("local.not_installed");
       const pkg = this.packageFor(installed);
-      if (pkg === null) return fail("runtime.not_available", { runtime: isNativePackage(installed) ? null : installed.runtime });
+      if (pkg === null) return fail("runtime.not_available", { runtime: kindOf(installed).runtime });
       const stopped = await pkg.stop();
       if (!stopped.ok) return stopped;
       // The log ends by itself when the container does; this only makes sure.
@@ -1088,9 +1112,20 @@ export class LocalEngineManager {
       const status = await pkg.status();
       if (this.closed) return;
       if (status.ok && status.value.state === "running" && engine.address !== "") {
-        this.token = engine.token;
-        this.engineLog.follow(pkg, { fresh: false });
-        return;
+        // Confirmed by the stored token: the engine that answers is the one this
+        // data folder started. One that refuses the token is stopped and started fresh.
+        const answer = await new TaskClient(
+          { address: engine.address, token: engine.token },
+          { timeoutMs: CONFIRM_TIMEOUT_MS, log: this.deps.log },
+        ).info();
+        if (this.closed) return;
+        if (answer.ok || answer.failure.kind !== "engine_error") {
+          this.token = engine.token;
+          this.engineLog.follow(pkg, { fresh: false });
+          return;
+        }
+        this.deps.log("The running engine refused the stored token, so it is started again.");
+        await pkg.stop();
       }
       if (this.busy) return;
       this.busy = true;
@@ -1175,12 +1210,12 @@ export class LocalEngineManager {
       engine = this.store.addLocal({
         name: LOCAL_ENGINE_NAME,
         token,
-        packageKind: isNativePackage(installed) ? "native" : "container",
+        packageKind: kindOf(installed).kind,
         installedVersion: installed.packageVersion,
       });
     } else {
       this.store.update(engine.id, { token });
-      this.store.setInstalledVersion(engine.id, isNativePackage(installed) ? "native" : "container", installed.packageVersion);
+      this.store.setInstalledVersion(engine.id, kindOf(installed).kind, installed.packageVersion);
     }
     this.settings.set("local.package", installed);
     this.settings.set("local.previous", null);
@@ -1391,19 +1426,20 @@ export class LocalEngineManager {
 
     const pkg = this.packageFor(installed);
     if (pkg === null) {
-      return this.failStart(engine.id, { code: "runtime.not_available", data: { runtime: isNativePackage(installed) ? null : installed.runtime } });
+      return this.failStart(engine.id, { code: "runtime.not_available", data: { runtime: kindOf(installed).runtime } });
     }
 
     // A cap is left out where it cannot be enforced, each one on its own.
     const caps = this.capsNow();
+    const kind = kindOf(installed);
     let applied: { memoryBytes: number | null; cpus: number | null };
-    if (isNativePackage(installed)) {
+    if (kind.kind === "native") {
       // Only systemd gives a program a limit, and only for memory.
       await this.lookForSystemd();
       applied = { memoryBytes: this.systemd === true ? caps.memoryBytes : null, cpus: null };
     } else {
       await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-      const detection = this.detections.find((candidate) => candidate.id === installed.runtime);
+      const detection = this.detections.find((candidate) => candidate.id === kind.runtime);
       applied = {
         memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
         cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,
@@ -1414,7 +1450,7 @@ export class LocalEngineManager {
     try {
       engineDataFolder = this.settings.get("engine.dataFolder") ?? join(this.deps.dataFolder, "engine-data");
       // The folder goes into "-v host:container", where a colon would cut it in two, and a relative one means a named volume.
-      if (!isAbsolute(engineDataFolder) || (!isNativePackage(installed) && engineDataFolder.includes(":"))) {
+      if (!isAbsolute(engineDataFolder) || (kind.kind === "container" && engineDataFolder.includes(":"))) {
         this.deps.log("The engine data folder must be a full path without a colon. The engine was not started.");
         return this.failStart(engine.id, { code: "server.internal_error", data: {} });
       }
@@ -1424,7 +1460,7 @@ export class LocalEngineManager {
       return this.failStart(engine.id, { code: "server.internal_error", data: {} });
     }
 
-    let started: PackageResult<{ address: string }> = fail("runtime.start_failed");
+    let started: PackageResult<{ address: string; memoryCapEnforced?: boolean }> = fail("runtime.start_failed");
     for (let attempt = 1; attempt <= PORT_TRIES; attempt++) {
       let hostPort: number;
       try {
@@ -1439,11 +1475,16 @@ export class LocalEngineManager {
         cpus: applied.cpus,
         engineDataFolder,
         // With the processor-only choice the card stays out, and the engine runs on the processor.
-        gpu: (isNativePackage(installed) ? installed.native.gpu : installed.container.gpu) && !this.settings.get("local.forceCpu"),
+        gpu: kind.gpu && !this.settings.get("local.forceCpu"),
       });
       if (started.ok || started.error.code !== "runtime.port_in_use") break;
     }
     if (!started.ok) return this.failStart(engine.id, started.error);
+    if (started.value.memoryCapEnforced === false && applied.memoryBytes !== null) {
+      // The scope with the limit did not work, and the engine runs without one. The view warns, and later starts do not try again.
+      this.systemd = false;
+      applied = { ...applied, memoryBytes: null };
+    }
 
     // The container runs now. If recording it fails, nothing would know about it, so it is taken away again.
     try {
@@ -1656,25 +1697,25 @@ export class LocalEngineManager {
   /** The package of what is installed. For a container, the one driven by the runtime that pulled it, or null when this version cannot drive that runtime. */
   private packageFor(installed: InstalledPackage): EnginePackage | null {
     if (isNativePackage(installed)) {
-      const native = this.deps.native;
-      return new NativePackage({
-        variant: installed.native,
-        version: installed.packageVersion,
-        dataFolder: this.deps.dataFolder,
-        freeBytes: this.deps.freeBytes,
-        settings: this.settings,
-        runner: this.runner,
-        token: () => this.store.local()?.token ?? null,
-        systemd: () => this.systemd === true,
-        children: this.children,
-        log: this.deps.log,
-        spawn: native?.spawn,
-        fetch: native?.fetch,
-        backoffMs: native?.backoffMs,
-        stopGraceMs: native?.stopGraceMs,
-        logPollMs: native?.logPollMs,
-        extraArgs: native?.extraArgs,
-      });
+      // One object per version, which holds nothing that changes: the program itself is found through the settings.
+      const key = `${installed.packageVersion}:${installed.native.sha256}`;
+      let pkg = this.nativePackages.get(key);
+      if (pkg === undefined) {
+        pkg = new NativePackage({
+          ...this.deps.native,
+          variant: installed.native,
+          version: installed.packageVersion,
+          dataFolder: this.deps.dataFolder,
+          freeBytes: this.deps.freeBytes,
+          settings: this.settings,
+          runner: this.runner,
+          systemd: () => this.systemd === true,
+          children: this.children,
+          log: this.deps.log,
+        });
+        this.nativePackages.set(key, pkg);
+      }
+      return pkg;
     }
     const runtime = this.deps.runtimes(installed.runtime);
     if (runtime === null) return null;

@@ -29,8 +29,12 @@ export interface EnginePackage {
     onProgress?: (progress: InstallProgressView) => void;
     signal?: AbortSignal;
   }): Promise<PackageResult<void>>;
-  /** Starts the engine detached. The address is `http://127.0.0.1:<hostPort>`. */
-  start(options: PackageStartOptions): Promise<PackageResult<{ address: string }>>;
+  /**
+   * Starts the engine detached. The address is `http://127.0.0.1:<hostPort>`.
+   * `memoryCapEnforced` is false when a memory limit was asked for and the
+   * engine runs without it.
+   */
+  start(options: PackageStartOptions): Promise<PackageResult<{ address: string; memoryCapEnforced?: boolean }>>;
   stop(): Promise<PackageResult<void>>;
   status(): Promise<PackageResult<PackageStatus>>;
   logs(options: {

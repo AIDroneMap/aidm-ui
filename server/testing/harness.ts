@@ -218,7 +218,7 @@ export function openHarness(
     logOptions: options.localLog,
     updateReadyTimeoutMs: options.updateReadyTimeoutMs,
     runner: options.runner ?? runnerWithSystemd(false),
-    native: { stopGraceMs: 2000, logPollMs: 25, ...options.native },
+    native: { stopGraceMs: 2000, logPollMs: 25, wrapWatchMs: 200, ...options.native },
   });
 
   const sample = new SampleJob({

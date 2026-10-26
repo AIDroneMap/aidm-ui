@@ -65,7 +65,7 @@ export function describeCommand(argv: string[]): string {
 export const MAX_LINE_LENGTH = 64 * 1024;
 
 /** Cuts a stream of text into lines, holding back the last partial line until the next chunk or the end. */
-function lineSplitter(onLine: (line: string) => void): { push(text: string): void; end(): void } {
+export function lineSplitter(onLine: (line: string) => void): { push(text: string): void; end(): void } {
   let pending = "";
   const emit = (line: string) => onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
   return {

@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { LocalEngineView, VariantId } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
-import { archiveFetch, buildNativeArchive, nativeRelease, runnerWithSystemd, type TestArchive } from "../../test-support/native-archive.ts";
+import {
+  archiveFetch,
+  buildHostileArchive,
+  buildNativeArchive,
+  nativeRelease,
+  runnerWithSystemd,
+  type Hostility,
+  type TestArchive,
+} from "../../test-support/native-archive.ts";
 import { generateSigner, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import type { Manifest } from "../manifest/schema.ts";
-import { spawnEngine, type SpawnEngine } from "../packages/native-package.ts";
+import { engineConfigFile, spawnEngine, type NativeOptions, type SpawnEngine } from "../packages/native-package.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
 const LATEST = "/releases/latest/download/manifest.json";
@@ -42,14 +50,21 @@ afterEach(async () => {
   for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
 
-/** What a start was asked to run, and where. The program is really started, except for the wrapper of a memory limit. */
-function recordingSpawn() {
+/**
+ * What a start was asked to run, and where. The program is really started,
+ * except for the wrapper of a memory limit, which is never run for real: the
+ * program behind it is started directly, or, with `wrapperFails`, the wrapper
+ * ends at once with an error, as systemd-run does when it is refused.
+ */
+function recordingSpawn(options: { wrapperFails?: boolean } = {}) {
   const starts: Array<{ argv: string[]; cwd: string; pid: number }> = [];
-  const spawn: SpawnEngine = (argv, options) => {
-    // systemd-run is never run for real: the program behind the wrapper is started directly.
-    const direct = argv[0] === "systemd-run" ? argv.slice(argv.indexOf("--") + 1) : argv;
-    const child = spawnEngine(direct, options);
-    starts.push({ argv, cwd: options.cwd, pid: child.pid });
+  const spawn: SpawnEngine = (argv, spawnOptions) => {
+    const wrapped = argv[0] === "systemd-run";
+    const direct = wrapped ? argv.slice(argv.indexOf("--") + 1) : argv;
+    const refused = ["sh", "-c", "echo 'Failed to start transient scope unit: Access denied' >&2; exit 1"];
+    const child = spawnEngine(wrapped && options.wrapperFails === true ? refused : direct, spawnOptions);
+    const { cwd } = spawnOptions;
+    starts.push({ argv, cwd, pid: child.pid });
     return child;
   };
   return { starts, spawn };
@@ -65,7 +80,7 @@ function keptFolder(): string {
 
 function start(
   spawner: Spawner,
-  options: { timeoutMs?: number; harness?: Parameters<typeof openHarness>[0] } = {},
+  options: { timeoutMs?: number; harness?: Parameters<typeof openHarness>[0]; native?: NativeOptions } = {},
 ): Harness {
   harness = openHarness({
     enginePollMs: 50,
@@ -74,7 +89,7 @@ function start(
     runtimes: {},
     updateReadyTimeoutMs: options.timeoutMs ?? 3000,
     manifest: { releasesUrl: fake.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
-    native: { spawn: spawner.spawn, fetch: archiveFetch((path) => fake.url(path)) },
+    native: { spawn: spawner.spawn, fetch: archiveFetch((path) => fake.url(path)), ...options.native },
     ...options.harness,
   });
   return harness;
@@ -177,7 +192,7 @@ test("an archive that is not the one the manifest pins is refused and nothing is
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).problem?.code === "download.checksum_mismatch");
   expect(existsSync(join(h.dataFolder, "engine-packages"))).toBe(false);
-  expect(h.settings.get("local.package")).toBeNull();
+  expect((await localView(h)).installed).toBeNull();
 });
 
 test("a package without its program, or an archive that is not one, is refused with a code", async () => {
@@ -210,9 +225,9 @@ test("an install with too little free disk is refused before anything is downloa
   expect(fake.requests.filter((request) => request.path === archive.path)).toEqual([]);
 });
 
-// Criterion: the recorded spawn has the working directory set to the engine data directory and carries the port, token, one parallel job and the engine path.
+// Criterion: the recorded spawn has the working directory set to the engine data directory and carries the config file of the port, token, one parallel job and engine path.
 
-test("the program is started in the engine data folder with the port, the token, one parallel job and the engine path", async () => {
+test("the program is started in the engine data folder with only the path of its config file, and the token is not on any command line", async () => {
   const archive = await buildNativeArchive({ version: "2.6.0" });
   const spawner = recordingSpawn();
   const h = start(spawner);
@@ -220,51 +235,84 @@ test("the program is started in the engine data folder with the port, the token,
   await installAndWaitReady(h);
 
   const engine = h.engineStore.local();
+  const token = engine?.token as string;
   const port = new URL(engine?.address as string).port;
   const folder = join(h.dataFolder, "engine-packages", "2.6.0");
+  const config = join(h.dataFolder, "engine-config", "native-2.6.0.json");
   expect(spawner.starts).toHaveLength(1);
   expect(spawner.starts[0]?.cwd).toBe(join(h.dataFolder, "engine-data"));
-  expect(spawner.starts[0]?.argv).toEqual([
-    join(folder, "aidm-api"),
-    "--port",
-    port,
-    "--token",
-    engine?.token as string,
-    "--parallel_queue_processing",
-    "1",
-    "--odx_path",
-    join(folder, "engine"),
-  ]);
-  expect(h.settings.get("local.native")).toEqual({ pid: spawner.starts[0]?.pid as number, port: Number(port), version: "2.6.0" });
-  // The program saw the same folder as its working directory.
+  expect(spawner.starts[0]?.argv).toEqual([join(folder, "aidm-api"), "--config", config]);
+  expect(spawner.starts[0]?.argv.join(" ")).not.toContain(token);
+  // What the system shows to every user of the computer holds no token either.
+  if (process.platform === "linux") {
+    const shown = readFileSync(`/proc/${spawner.starts[0]?.pid}/cmdline`, "utf8");
+    expect(shown).toContain(config);
+    expect(shown).not.toContain(token);
+  }
+  // The file is the one way the token reaches the program, and only this user may read it.
+  expect(statSync(config).mode & 0o777).toBe(0o600);
+  expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
+    token,
+    port: Number(port),
+    parallelQueueProcessing: 1,
+    odx_path: join(folder, "engine"),
+  });
+  // The program read it: it answers on that port, to that token, in that folder.
+  expect(await runningVersion(h)).toBe("2.6.0");
   await eventually(async () => h.localEngine.logs.lines().some((line) => line.includes(`started in ${join(h.dataFolder, "engine-data")} `)));
 });
 
 // Criterion: after an aidm-ui restart, the running fake process is found by pid, confirmed by token, and not started twice.
 
-test("after aidm-ui restarts, the running program is found by its pid, confirmed by the token and not started twice", async () => {
+test("after aidm-ui restarts, the running program is found by its pid, confirmed by its command line and its token, and not started twice", async () => {
   const folder = keptFolder();
   const archive = await buildNativeArchive({ version: "2.6.0" });
   const spawner = recordingSpawn();
   const first = start(spawner, { harness: { dataFolder: folder } });
   await offer(first, archive, 2);
   await installAndWaitReady(first);
-  const record = first.settings.get("local.native");
+  const pid = spawner.starts[0]?.pid as number;
   const token = first.engineStore.local()?.token;
   await first.stop({ leaveEngines: true });
-  expect(alive(record?.pid as number)).toBe(true);
+  expect(alive(pid)).toBe(true);
 
   const second = start(spawner, { harness: { dataFolder: folder } });
   await eventually(async () => (await localView(second)).state === "ready");
   expect(spawner.starts).toHaveLength(1);
-  expect(second.settings.get("local.native")).toEqual(record);
+  expect(alive(pid)).toBe(true);
   expect(second.engineStore.local()?.token).toBe(token);
   expect(await runningVersion(second)).toBe("2.6.0");
   // The output of the program that kept running is followed again, from where it is now.
   await eventually(async () => second.localEngine.logs.isFollowing());
 });
 
-test("a program that answers with another token is not taken for the engine, and is left alone", async () => {
+test("after aidm-ui restarts, a running program that refuses the stored token is stopped and started again", async () => {
+  const folder = keptFolder();
+  const archive = await buildNativeArchive({ version: "2.6.0" });
+  const spawner = recordingSpawn();
+  const first = start(spawner, { harness: { dataFolder: folder } });
+  await offer(first, archive, 2);
+  await installAndWaitReady(first);
+  const pid = spawner.starts[0]?.pid as number;
+  const engine = first.engineStore.local();
+  // The stored token no longer matches the one the running program has, as after a restored backup.
+  first.engineStore.update(engine?.id as number, { token: "a-token-the-program-never-had" });
+  await first.stop({ leaveEngines: true });
+
+  const second = start(spawner, { harness: { dataFolder: folder } });
+  await eventually(async () => spawner.starts.length === 2 && (await localView(second)).state === "ready");
+  expect(alive(pid)).toBe(false);
+});
+
+/** A process that is not the engine, such as the program that now has a number the engine used to have. */
+function bystander(): { pid: number; alive: () => boolean } {
+  const child = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+  child.unref();
+  strays.push(child.pid);
+  return { pid: child.pid, alive: () => alive(child.pid) };
+}
+
+test("a program that is not the engine, on the recorded pid and port, is left alone and is never sent the token", async () => {
   const folder = keptFolder();
   const archive = await buildNativeArchive({ version: "2.6.0" });
   const spawner = recordingSpawn();
@@ -273,18 +321,47 @@ test("a program that answers with another token is not taken for the engine, and
   await installAndWaitReady(first);
   const original = first.settings.get("local.native");
   strays.push(original?.pid as number);
-  // The number now belongs to another program, which answers on the recorded port with a token of its own.
-  const stranger = new FakeTaskApi({ token: "someone-elses" });
-  await stranger.start();
-  first.settings.set("local.native", { ...(original as NonNullable<typeof original>), port: Number(new URL(stranger.address).port) });
+  // The number now belongs to another program, which answers on the recorded port like a task API of its own.
+  const stranger = bystander();
+  const listener = new FakeTaskApi({ token: "someone-elses" });
+  await listener.start();
+  first.settings.set("local.native", {
+    pid: stranger.pid,
+    port: Number(new URL(listener.address).port),
+    version: "2.6.0",
+  });
   await first.stop({ leaveEngines: true });
 
   const second = start(spawner, { harness: { dataFolder: folder } });
   await eventually(async () => spawner.starts.length === 2);
   await eventually(async () => (await localView(second)).state === "ready");
-  expect(alive(original?.pid as number)).toBe(true);
-  expect(second.settings.get("local.native")?.pid).toBe(spawner.starts[1]?.pid as number);
-  await stranger.stop();
+  expect(stranger.alive()).toBe(true);
+  expect(listener.requests.filter((request) => request.token !== null)).toEqual([]);
+  expect(listener.requests).toEqual([]);
+  await listener.stop();
+});
+
+test("a program that is the engine but does not confirm it is still the engine: it is kept, not started twice, and ended when asked", async () => {
+  const folder = keptFolder();
+  // The info route answers without a version, like an engine that is not well. It is never ready, but it runs.
+  const archive = await buildNativeArchive({ version: "2.6.0", badInfo: true });
+  const spawner = recordingSpawn();
+  const first = start(spawner, { harness: { dataFolder: folder } });
+  await offer(first, archive, 2);
+  expect((await send(first, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => spawner.starts.length === 1);
+  const pid = spawner.starts[0]?.pid as number;
+  strays.push(pid);
+  await first.stop({ leaveEngines: true });
+
+  const second = start(spawner, { harness: { dataFolder: folder } });
+  await eventually(async () => second.localEngine.logs.isFollowing());
+  expect(spawner.starts).toHaveLength(1);
+  expect(alive(pid)).toBe(true);
+
+  const off = await fetch(`${second.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  expect(off.status).toBe(200);
+  expect(alive(pid)).toBe(false);
 });
 
 // Criterion: on Linux with systemd present (recorded), the spawn is wrapped in a user scope with the memory limit; without systemd, the warning is shown.
@@ -308,7 +385,9 @@ test("with systemd the program is started inside a user scope with the memory li
     "--",
     join(folder, "aidm-api"),
   ]);
-  expect(spawner.starts[0]?.argv).toContain("--odx_path");
+  // The scope shows the command line of the program, and so no token.
+  expect(spawner.starts[0]?.argv.slice(8)).toEqual(["--config", engineConfigFile(h.dataFolder, "2.6.0")]);
+  expect(spawner.starts[0]?.argv.join(" ")).not.toContain(h.engineStore.local()?.token as string);
   expect(spawner.starts[0]?.cwd).toBe(join(h.dataFolder, "engine-data"));
   const view = await localView(h);
   expect(view.warnings).toEqual([]);
@@ -326,6 +405,53 @@ test("without systemd the program is not wrapped and the view warns that the mem
   const view = await localView(h);
   expect(view.warnings).toEqual([{ code: "local.memory_cap_not_enforced", data: {} }]);
   expect(view.caps.applied).toEqual({ memoryBytes: null, cpus: null });
+});
+
+test("a systemd that cannot start a scope is found out once, and the program is started without a limit and with the warning", async () => {
+  const archive = await buildNativeArchive({ version: "2.6.0" });
+  const spawner = recordingSpawn();
+  const calls: Array<{ argv: string[]; timeoutMs: number | undefined }> = [];
+  const h = start(spawner, { harness: { runner: runnerWithSystemd(true, { scope: false, calls }) } });
+  await offer(h, archive, 2);
+  await installAndWaitReady(h);
+
+  expect(spawner.starts[0]?.argv[0]).toBe(join(h.dataFolder, "engine-packages", "2.6.0", "aidm-api"));
+  const view = await localView(h);
+  expect(view.warnings).toEqual([{ code: "local.memory_cap_not_enforced", data: {} }]);
+  expect(view.caps.applied).toEqual({ memoryBytes: null, cpus: null });
+  // Both questions to systemd are bounded, and the trial scope is the one with the limit that a start would use.
+  expect(calls).toEqual([
+    { argv: ["systemctl", "--user", "show-environment"], timeoutMs: 10_000 },
+    { argv: ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=1G", "--", "true"], timeoutMs: 10_000 },
+  ]);
+
+  // A second start does not try again.
+  await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
+  await eventually(async () => (await localView(h)).state === "ready");
+  expect(calls).toHaveLength(2);
+});
+
+test("a start inside a scope that ends at once is tried again without the scope, and the view warns", async () => {
+  const archive = await buildNativeArchive({ version: "2.6.0" });
+  const spawner = recordingSpawn({ wrapperFails: true });
+  const h = start(spawner, { harness: { runner: runnerWithSystemd(true) } });
+  await offer(h, archive, 2);
+  await installAndWaitReady(h);
+
+  const program = join(h.dataFolder, "engine-packages", "2.6.0", "aidm-api");
+  expect(spawner.starts.map((entry) => entry.argv[0])).toEqual(["systemd-run", program]);
+  const view = await localView(h);
+  expect(view.warnings).toEqual([{ code: "local.memory_cap_not_enforced", data: {} }]);
+  expect(view.caps.applied).toEqual({ memoryBytes: null, cpus: null });
+  expect(await runningVersion(h)).toBe("2.6.0");
+  expect(h.logs.some((line) => line.includes("Access denied"))).toBe(true);
+
+  // The next start goes straight to the program.
+  await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
+  await eventually(async () => (await localView(h)).state === "ready");
+  expect(spawner.starts.map((entry) => entry.argv[0])).toEqual(["systemd-run", program, program]);
 });
 
 test("on a Mac the native package runs without a memory limit, and systemd is not asked for", async () => {
@@ -373,7 +499,7 @@ test("switching the engine off ends the program, and switching it on starts a ne
 
   await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
   expect(alive(pid)).toBe(false);
-  expect(h.settings.get("local.native")).toBeNull();
+  expect((await localView(h)).enabled).toBe(false);
 
   await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
   await eventually(async () => (await localView(h)).state === "ready");
@@ -542,4 +668,85 @@ test("aidm-ui stopping while the new program never answers puts the previous ver
   // The program that never answered is found by its token on the command line and ended.
   expect(alive(silentPid)).toBe(false);
   expect(packageFolders(second)).toEqual(["2.6.0"]);
+});
+
+// A program that ignores the polite stop is ended by force.
+
+test("a program that ignores the polite stop is ended by force when the engine is switched off", async () => {
+  const spawner = recordingSpawn();
+  const h = start(spawner, { native: { stopGraceMs: 300 } });
+  await offer(h, await buildNativeArchive({ version: "2.6.0", ignoreTerm: true }), 2);
+  await installAndWaitReady(h);
+  const pid = spawner.starts[0]?.pid as number;
+
+  const off = await fetch(`${h.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  expect(off.status).toBe(200);
+  expect(alive(pid)).toBe(false);
+  expect(h.logs.some((line) => line.includes("ended by force"))).toBe(true);
+});
+
+// The engine's output file is bounded.
+
+test("the output of a noisy engine is kept in a file that is copied and emptied, with three old copies at most", async () => {
+  const spawner = recordingSpawn();
+  const limit = 64 * 1024;
+  const h = start(spawner, { native: { outputRotateBytes: limit } });
+  await offer(h, await buildNativeArchive({ version: "2.6.0", noiseLines: 4000 }), 2);
+  await installAndWaitReady(h);
+  // 4000 lines of about 100 bytes, six times the limit.
+  await eventually(async () => h.localEngine.logs.lines().some((line) => line.includes("noise done")), 10_000);
+
+  const files = readdirSync(join(h.dataFolder, "logs"))
+    .filter((name) => name.startsWith("native-engine.out"))
+    .sort();
+  expect(files).toEqual(["native-engine.out", "native-engine.out.1", "native-engine.out.2", "native-engine.out.3"]);
+  for (const name of files) {
+    // A little over the limit: the engine writes on between two looks at the file.
+    expect(statSync(join(h.dataFolder, "logs", name)).size).toBeLessThan(2 * limit);
+  }
+}, { timeout: 20000 });
+
+// An archive is not trusted.
+
+async function refusedWith(archive: TestArchive, reason: string): Promise<Harness> {
+  const h = start(recordingSpawn());
+  await offer(h, archive, 2);
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).problem?.code === "install.unpack_failed");
+  expect((await localView(h)).problem?.data).toMatchObject({ reason });
+  expect(readdirSync(join(h.dataFolder, "engine-packages"))).toEqual([]);
+  expect((await localView(h)).installed).toBeNull();
+  return h;
+}
+
+test("an archive with an absolute path is refused and writes nothing there", async () => {
+  const outside = join(keptFolder(), "elsewhere");
+  const hostile: Hostility = { kind: "absolute_path", target: outside };
+  await refusedWith(await buildHostileArchive("2.6.0", hostile), "unsafe_path");
+  expect(existsSync(outside)).toBe(false);
+});
+
+test("an archive with an entry that climbs out of the folder is refused", async () => {
+  const h = await refusedWith(await buildHostileArchive("2.6.0", { kind: "parent_path" }), "unsafe_path");
+  expect(existsSync(join(h.dataFolder, "aidm-api-2.6.0-linux-x64"))).toBe(false);
+  expect(existsSync(join(h.dataFolder, "engine-packages", "aidm-api-2.6.0-linux-x64"))).toBe(false);
+});
+
+test("an archive with a link to a place outside its folder is refused, whether the link is absolute or climbs out", async () => {
+  const outside = keptFolder();
+  mkdirSync(join(outside, "secrets"));
+  await refusedWith(await buildHostileArchive("2.6.0", { kind: "link_outside", target: join(outside, "secrets") }), "unsafe_link");
+  await harness?.stop();
+  harness = undefined;
+  await refusedWith(await buildHostileArchive("2.6.0", { kind: "link_outside", target: "../../../../../../../../etc" }), "unsafe_link");
+});
+
+test("an archive whose program is a link is refused, even to a file inside the package", async () => {
+  await refusedWith(await buildHostileArchive("2.6.0", { kind: "program_is_link" }), "executable_not_a_file");
+});
+
+test("an archive that unpacks to far more than its own size is refused before anything is unpacked", async () => {
+  const archive = await buildHostileArchive("2.6.0", { kind: "size_bomb", bytes: 32 * 1024 * 1024 });
+  expect(archive.bytes.length).toBeLessThan(1024 * 1024);
+  await refusedWith(archive, "too_large");
 });

@@ -15,13 +15,11 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 // AIDM_REAL_TASK_API_VERSION names a release of AIDroneMap/aidm-api that
 // has a Linux x64 archive, such as "2.6.0". It skips everywhere else.
 //
-// The archive's SHA-256 is not pinned here yet: no release with bundled tools
-// exists (AIDroneMap/aidm-api#8). Until one does, the test reads the checksum
-// from the release's own SHA256SUMS over HTTPS, which proves the download is
-// whole but not that the release is the right one. Pin the value here once
-// the release is tagged.
+// The archive's SHA-256 comes from the release's own SHA256SUMS over HTTPS.
+// That proves only that the download is whole, not that the release is the
+// right one. The real check comes from the signed manifest, once aidm-api
+// publishes one (AIDroneMap/aidm-api#25).
 const version = process.env.AIDM_REAL_TASK_API_VERSION;
-const PINNED_SHA256: string | undefined = undefined;
 const SLOW = 300_000;
 
 const archiveName = `aidm-api-${version}-linux-x64.tar.gz`;
@@ -29,7 +27,6 @@ const releaseUrl = `https://github.com/AIDroneMap/aidm-api/releases/download/v${
 
 /** The checksum the release publishes for the archive, over HTTPS. */
 async function publishedChecksum(): Promise<string> {
-  if (PINNED_SHA256 !== undefined) return PINNED_SHA256;
   const response = await fetch(`${releaseUrl}/SHA256SUMS`, { redirect: "follow" });
   if (!response.ok) throw new Error(`SHA256SUMS answered ${response.status}.`);
   for (const line of (await response.text()).split("\n")) {
