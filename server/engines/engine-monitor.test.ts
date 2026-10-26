@@ -138,6 +138,42 @@ test("an answer to a poll that began before the local engine was stopped and sta
   }
 });
 
+test("a local engine that was just started is not logged as unreachable while it comes up, and is once its time is over", async () => {
+  await monitor.stop();
+  let refuse = true;
+  const failing = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    if (refuse) throw Object.assign(new Error("The socket connection was closed unexpectedly."), { code: "ECONNRESET" });
+    return fetch(input, init);
+  }) as unknown as typeof fetch;
+  const make = (startingGraceMs: number) =>
+    new EngineMonitor({
+      store,
+      intervalMs: 20,
+      log: (line) => logs.push(line),
+      startingGraceMs,
+      clientFor: (endpoint, options) => new TaskClient(endpoint, { ...options, fetch: failing }),
+    });
+  monitor = make(60_000);
+  const { id } = store.addLocal({ name: "This computer", token: fake.token, packageKind: "container", installedVersion: "2.5.0" });
+  store.update(id, { address: fake.address });
+  monitor.setLocalState(id, "starting");
+  monitor.start();
+  await Bun.sleep(150);
+  expect(logs.filter((line) => line.startsWith("Could not reach"))).toEqual([]);
+  refuse = false;
+  await eventually(async () => monitor.views()[0]?.state === "ready");
+  expect(logs.filter((line) => line.startsWith("Could not reach"))).toEqual([]);
+
+  // An engine that stays silent past its time to come up is logged, as before.
+  await monitor.stop();
+  refuse = true;
+  logs.length = 0;
+  monitor = make(0);
+  monitor.setLocalState(id, "starting");
+  monitor.start();
+  await eventually(async () => logs.some((line) => line.startsWith("Could not reach")));
+});
+
 test("a plain http name is checked again before every call, and a name that left the network is not called", async () => {
   let resolved = ["10.0.0.5"];
   await monitor.stop();
