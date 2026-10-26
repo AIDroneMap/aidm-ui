@@ -64,6 +64,7 @@ const run: RunView = {
   engineMessage: null,
   problem: null,
   restarted: false,
+  restartedAtLine: null,
   resultsAvailable: false,
   createdAt: "2026-10-26T10:00:00Z",
 };
@@ -261,6 +262,22 @@ test("a failed run shows its problem", () => {
 test("a restarted run says so", () => {
   expect(renderRun({ state: "queued", restarted: true })).toContain("The engine restarted, so this run started over.");
   expect(renderRun({ state: "queued" })).not.toContain("started over");
+});
+
+test("the log shows a separator, in the interface's words, where the engine's output began again", () => {
+  const html = renderRun(
+    { state: "queued", restarted: true },
+    { lines: ["old one", "old two", "new one"], lineCount: 3, restartedAtLine: 2 },
+  );
+  expect(html).toContain("old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one");
+  // A run that did not restart has no separator.
+  expect(renderRun({ state: "processing" }, { restartedAtLine: null })).not.toContain("restarted here");
+  expect(
+    untranslatedText(html, [
+      "Barn engine",
+      "old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one",
+    ]),
+  ).toEqual([]);
 });
 
 test("a completed run offers the results", () => {

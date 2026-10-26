@@ -14,6 +14,8 @@ export const caps: CapsView = {
 export const fresh: LocalEngineView = {
   installed: null,
   engineId: null,
+  enabled: true,
+  startAgain: false,
   state: "not_installed",
   install: null,
   plan: null,
@@ -22,6 +24,7 @@ export const fresh: LocalEngineView = {
   warnings: [],
   forceCpu: false,
   problem: null,
+  restarts: null,
 };
 
 /** Test data: the install of the engine alone, as on Linux. */

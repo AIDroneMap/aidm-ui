@@ -311,3 +311,21 @@ test("an open log with no lines yet says so", () => {
   const html = renderList([local], { log: { open: true, lines: [], onToggle: () => {} } });
   expect(html).toContain("The engine has not written anything yet.");
 });
+
+test("the local engine shows its state without a Disabled badge when it is switched off", () => {
+  const off: EngineView = { ...local, enabled: false, state: "stopped" };
+  const html = renderList([off]);
+  expect(html).toContain("State: Stopped");
+  expect(html).not.toContain("Last known state");
+  expect(html).not.toContain("Disabled");
+  // A remote engine that is disabled keeps both.
+  const remote = renderList([{ ...engine, enabled: false }]);
+  expect(remote).toContain("Last known state: Ready");
+  expect(remote).toContain("Disabled");
+});
+
+test("the switch of the local engine is shown in the local entry only", () => {
+  const html = renderList([engine, local], { localSwitch: <p>the switch</p> });
+  expect(html.split('<li class="engine">')[2]).toContain("the switch");
+  expect(html.split('<li class="engine">')[1]).not.toContain("the switch");
+});

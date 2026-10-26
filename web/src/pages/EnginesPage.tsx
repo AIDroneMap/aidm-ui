@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { EngineLog } from "../components/EngineLog.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { LocalAdvanced } from "../components/LocalAdvanced.tsx";
+import { LocalSwitch } from "../components/LocalSwitch.tsx";
 import { formatCount, formatMemory, parseEngineList, sameAddress, stateChanges } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
 import { useEngineLog, useLocalEngine } from "../localEngine.ts";
@@ -106,6 +107,8 @@ export interface EngineListProps {
   onKeep: (engine: EngineView) => void;
   /** The engine log of the local engine, when the page has it. */
   log?: { open: boolean; lines: string[]; onToggle: () => void };
+  /** The switch of the local engine, when the page has it. */
+  localSwitch?: ReactNode;
 }
 
 const LOG_ID = "engine-log";
@@ -127,9 +130,11 @@ export function EngineList(props: EngineListProps) {
           </p>
           <p>
             <span className="state">
-              {t(engine.enabled ? "engines.state" : "engines.state_last_known", { state: t(`engine.state.${engine.state}`) })}
+              {t(engine.enabled || engine.kind === "local" ? "engines.state" : "engines.state_last_known", {
+                state: t(`engine.state.${engine.state}`),
+              })}
             </span>
-            {!engine.enabled && <span className="badge">{t("engines.disabled")}</span>}
+            {!engine.enabled && engine.kind === "remote" && <span className="badge">{t("engines.disabled")}</span>}
           </p>
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
           {engine.problem && <EngineNote error={engine.problem} kind="problem" />}
@@ -137,6 +142,7 @@ export function EngineList(props: EngineListProps) {
           {engine.kind === "local" ? (
             <>
               {/* The local engine is turned on and off by its own switch, not by enabling it like a remote one. */}
+              {props.localSwitch}
               <div className="actions">
                 {props.log && (
                   <button type="button" className="secondary" aria-controls={LOG_ID} onClick={props.log.onToggle}>
@@ -479,6 +485,11 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
           onConfirmRemove={(engine) => void remove(engine)}
           onKeep={() => setAskingToRemove(null)}
           log={{ open: logOpen, lines: logLines, onToggle: () => setLogOpen((open) => !open) }}
+          localSwitch={
+            local.view?.installed ? (
+              <LocalSwitch view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} />
+            ) : undefined
+          }
         />
       )}
       {local.view && (local.view.installed !== null || local.view.runtime.available.length > 0) && (

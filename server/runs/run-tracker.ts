@@ -46,6 +46,10 @@ interface Following {
   notFoundPolls: number;
   unknownCodes: Set<string>;
   busy: boolean;
+  /** True from the moment the task was seen processing until it is seen in any other state. Survives polls that got no answer. */
+  wasProcessing: boolean;
+  /** The task's processing time when it was last seen processing, to notice it going back. */
+  processingTime: number | null;
 }
 
 /** Follows the tasks of runs on their engines, saves what they report, and tells whoever listens. */
@@ -110,6 +114,8 @@ export class RunTracker {
       notFoundPolls: 0,
       unknownCodes: new Set(),
       busy: false,
+      wasProcessing: run.state === "processing",
+      processingTime: null,
     });
     if (this.started) void this.pollOnce(runId);
   }
@@ -123,7 +129,7 @@ export class RunTracker {
   log(runId: number, from: number): RunLogView {
     const start = Math.max(0, Math.min(from, this.lineCount(runId)));
     const lines = this.readLines(runId, start, LOG_PAGE_LINES);
-    return { lines, next: start + lines.length };
+    return { lines, next: start + lines.length, restartedAtLine: this.runs.get(runId)?.restartedAtLine ?? null };
   }
 
   /** The newest saved lines, and the line number of the first one. What a listener gets when it joins. */
@@ -203,6 +209,7 @@ export class RunTracker {
       engineMessage: run.engineMessage,
       problem: run.problem,
       restarted: run.restarted,
+      restartedAtLine: run.restartedAtLine,
       resultsAvailable: run.state === "completed" && run.taskUuid !== null,
       createdAt: run.createdAt,
     };
@@ -220,6 +227,16 @@ export class RunTracker {
 
   private logPath(runId: number): string {
     return join(this.dataFolder, "runs", String(runId), "log.txt");
+  }
+
+  /** The engine started the task over, so its output begins again from its line 0, at the end of what we hold. */
+  private markRestart(runId: number): void {
+    this.update(runId, { restarted: true, restartedAtLine: this.lineCount(runId) });
+  }
+
+  /** How many lines of the engine's latest start we hold. The engine counts its own lines from that start. */
+  private heldLines(runId: number): number {
+    return this.lineCount(runId) - (this.runs.get(runId)?.restartedAtLine ?? 0);
   }
 
   /** How many lines the run has saved. The file is read for this only the first time. */
@@ -321,24 +338,59 @@ export class RunTracker {
       if (this.current(runId, following) !== null) this.pollFailed(runId, following, info.failure);
       return;
     }
+    if (this.current(runId, following) === null) return;
+    const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
+    const processingTime = info.value.processingTime;
+    // The engine started the task over, and its log starts again too. The run's own state cannot tell:
+    // polls that got no answer may have turned it into engine_unreachable in between.
+    // A processing time that went down is a restart. Queued again after processing is only a hint,
+    // since the memory of "processing" may be stale (from before a restart of aidm-ui): it counts
+    // only when the engine's output is shorter than the lines of its latest start that we hold.
+    const queuedAgain = state === "queued" && following.wasProcessing;
+    const timeWentBack =
+      state === "processing" && processingTime !== null && following.processingTime !== null && processingTime < following.processingTime;
+    if (timeWentBack) this.markRestart(runId);
+    if (state !== "unknown") {
+      following.wasProcessing = state === "processing";
+      following.processingTime = state === "processing" ? processingTime : null;
+    }
+
     // The output comes before the state, so a finished run's last lines are saved before the run shows as finished.
-    const output = await client.taskOutput(run.taskUuid, this.lineCount(runId));
+    // One line already held is asked for again (all of them when a restart is suspected): an engine that answers
+    // with fewer lines than we got started over without us seeing it.
+    let held = this.heldLines(runId);
+    let output = await client.taskOutput(run.taskUuid, queuedAgain ? 0 : Math.max(0, held - 1));
+    const shorter = output.ok && held > 0 && (queuedAgain ? output.value.length < held : output.value.length === 0);
+    if (shorter) {
+      this.markRestart(runId);
+      following.wasProcessing = false;
+      following.processingTime = null;
+      held = 0;
+      if (!queuedAgain) output = await client.taskOutput(run.taskUuid, 0);
+    } else if (queuedAgain && held === 0) {
+      // Nothing of the new start was held yet, so where its output begins does not move.
+      this.markRestart(runId);
+    }
+    if (queuedAgain && !shorter && output.ok && held > 0) {
+      // The whole output was asked for; keep only what follows the last line held, as on any other poll.
+      output = { ok: true, value: output.value.slice(held - 1) };
+    }
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
       this.pollFailed(runId, following, output.failure);
       return;
     }
+    const newLines = held > 0 ? output.value.slice(1) : output.value;
 
     following.failedPolls = 0;
     following.notFoundPolls = 0;
-    if (output.value.length > 0) {
+    if (newLines.length > 0) {
       const from = this.lineCount(runId);
-      this.saveLines(runId, output.value);
-      this.emit(runId, { type: "log", lines: output.value, from });
+      this.saveLines(runId, newLines);
+      this.emit(runId, { type: "log", lines: newLines, from });
     }
 
-    const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
     if (state === "unknown") {
       const raw = JSON.stringify(info.value.statusCode) ?? String(info.value.statusCode);
       if (!following.unknownCodes.has(raw)) {

@@ -27,6 +27,7 @@ export function isRunView(value: unknown): value is RunView {
     (value["engineMessage"] === null || typeof value["engineMessage"] === "string") &&
     (value["problem"] === null || isRecord(value["problem"])) &&
     typeof value["restarted"] === "boolean" &&
+    (value["restartedAtLine"] === null || typeof value["restartedAtLine"] === "number") &&
     typeof value["resultsAvailable"] === "boolean"
   );
 }
@@ -64,6 +65,19 @@ export function mergeLog(log: LogLines, from: number, incoming: string[]): LogLi
     lines: [...log.lines, ...fresh].slice(-MAX_LOG_LINES),
     count: log.count + fresh.length,
   };
+}
+
+/**
+ * The lines to show, with the page's own separator where the engine's output
+ * began again after a restart. The server writes no text of its own into the
+ * log, so this is the only place the separator exists. No separator is drawn
+ * when nothing came before it, or when the lines before it are no longer held.
+ */
+export function linesWithRestart(log: LogLines, restartedAtLine: number | null, separator: string): string[] {
+  if (restartedAtLine === null || restartedAtLine <= 0) return log.lines;
+  const at = restartedAtLine - (log.count - log.lines.length);
+  if (at < 0 || at > log.lines.length) return log.lines;
+  return [...log.lines.slice(0, at), separator, ...log.lines.slice(at)];
 }
 
 /** Reads the data of one "log" server-sent event. Returns null when it is not a block of lines. */

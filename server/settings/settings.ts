@@ -30,6 +30,8 @@ export interface SettingValues {
   "engine.dataFolder": string | null;
   /** The local engine's package; null until one is installed. */
   "local.package": InstalledPackage | null;
+  /** The switch for the local engine. Off: the manager keeps it stopped, also when aidm-ui starts. */
+  "local.enabled": boolean;
   /** The caps the operator lowered, used from the next start; null means the most the computer allows. */
   "local.memoryBytes": number | null;
   "local.cpus": number | null;
@@ -60,6 +62,7 @@ const DEFAULTS: SettingValues = {
   "runtime.preferred": null,
   "engine.dataFolder": null,
   "local.package": null,
+  "local.enabled": true,
   "local.memoryBytes": null,
   "local.cpus": null,
   "local.applied": null,

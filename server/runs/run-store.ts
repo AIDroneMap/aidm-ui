@@ -15,6 +15,8 @@ export interface RunRecord {
   engineMessage: string | null;
   problem: ApiError | null;
   restarted: boolean;
+  /** Where in the log the engine's latest restart begins, or null. */
+  restartedAtLine: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,6 +32,7 @@ interface RunRow {
   engine_message: string | null;
   problem: string | null;
   restarted: number;
+  restarted_at_line: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +43,10 @@ export interface RunPatch {
   progress?: number | null;
   engineMessage?: string | null;
   problem?: ApiError | null;
+  /** Set when the engine started the task over. */
+  restarted?: boolean;
+  /** Where in the log the engine's latest restart begins. */
+  restartedAtLine?: number | null;
 }
 
 function parseJson<T>(text: string | null, fallback: T): T {
@@ -63,6 +70,7 @@ function toRecord(row: RunRow): RunRecord {
     engineMessage: row.engine_message,
     problem: parseJson<ApiError | null>(row.problem, null),
     restarted: row.restarted === 1,
+    restartedAtLine: row.restarted_at_line,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -116,10 +124,12 @@ export class RunStore {
       progress: patch.progress === undefined ? current.progress : patch.progress,
       engineMessage: patch.engineMessage === undefined ? current.engineMessage : patch.engineMessage,
       problem: patch.problem === undefined ? current.problem : patch.problem,
+      restarted: patch.restarted ?? current.restarted,
+      restartedAtLine: patch.restartedAtLine === undefined ? current.restartedAtLine : patch.restartedAtLine,
     };
     this.db
       .query(
-        `UPDATE runs SET task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, updated_at = ?
+        `UPDATE runs SET task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, restarted = ?, restarted_at_line = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -128,6 +138,8 @@ export class RunStore {
         next.progress,
         next.engineMessage,
         next.problem === null ? null : JSON.stringify(next.problem),
+        next.restarted ? 1 : 0,
+        next.restartedAtLine,
         new Date().toISOString(),
         id,
       );
