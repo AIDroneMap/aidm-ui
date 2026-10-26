@@ -132,8 +132,8 @@ function mac(
     },
     {
       argv: START,
-      result: (argv) => {
-        const result = typeof startResult === "function" ? startResult(argv) : startResult;
+      result: async (argv) => {
+        const result = typeof startResult === "function" ? await startResult(argv) : startResult;
         if (result.exitCode === 0) ready();
         return result;
       },

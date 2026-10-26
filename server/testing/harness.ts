@@ -17,7 +17,6 @@ import { EventStreams } from "../http/event-streams.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { ManifestService, type ManifestServiceDeps } from "../manifest/manifest-service.ts";
 import { MachineChecks } from "../machine/machine-checks.ts";
-import type { CommandRunner } from "../process/command-runner.ts";
 import { RuntimeSetup, type PrivilegedRunner } from "../runtimes/podman-setup.ts";
 import { OS_RELEASE_FILE, type SystemFiles } from "../runtimes/setup-command.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";

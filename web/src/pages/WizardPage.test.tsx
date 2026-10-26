@@ -640,6 +640,17 @@ test("the way out is busy while the end of the wizard is being saved", () => {
   expect(html).toMatch(/aria-disabled="true"[^>]*>Add a remote engine</);
 });
 
+test("a failed Podman setup and a refused install offer the way to a remote engine once, not twice", () => {
+  const both = renderInstall(builtIn, {
+    local: noRuntime,
+    setup: setupView("failed", { code: "setup.dismissed", data: {} }),
+    installFailure: new ApiFailure(409, "setup.already_running", {}),
+  });
+  expect(both.match(/>Add a remote engine<\/button>/g)).toHaveLength(1);
+  const installOnly = renderInstall(builtIn, { local: fresh, installFailure: new ApiFailure(409, "install.no_runtime", {}) });
+  expect(installOnly.match(/>Add a remote engine<\/button>/g)).toHaveLength(1);
+});
+
 test("the setup text never uses the system's own words", () => {
   for (const [key, text] of Object.entries(en)) {
     if (!key.startsWith("setup.")) continue;
