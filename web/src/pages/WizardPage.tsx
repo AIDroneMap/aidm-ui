@@ -228,9 +228,10 @@ export interface InstallScreenProps {
   onInstallLocal: () => void;
   /** The setup of Podman as the server last said it, or null before one began. */
   setup: RuntimeSetupView | null;
+  /** Leaves the wizard for the engines page, where a remote engine is added. */
+  onRemote: () => void;
   /** True while the end of the wizard is being saved, for the way out to a remote engine. */
   remoteBusy: boolean;
-  onRemote: () => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -295,6 +296,7 @@ function Offer({ packages }: { packages: PackagesView }) {
 function InstallButton(props: Pick<InstallScreenProps, "local" | "setup" | "installBusy" | "onInstallLocal">) {
   const status = installStatus(props.local).kind;
   const underWay =
+    status === "preparing" ||
     status === "downloading" ||
     status === "checking_gpu" ||
     status === "removing_gpu_package" ||
@@ -322,6 +324,10 @@ export function InstallScreen(props: InstallScreenProps) {
   const button = (
     <InstallButton local={props.local} setup={props.setup} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
   );
+  // Whatever went wrong, the operator is never left without a way on: an engine elsewhere needs nothing from this computer.
+  // A failed Podman setup already offers that way in its own panel, so it is not offered twice.
+  const failed =
+    (props.installFailure !== null || installStatus(props.local).kind === "failed") && props.setup?.phase !== "failed";
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
@@ -337,6 +343,14 @@ export function InstallScreen(props: InstallScreenProps) {
         ))}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
       <LocalInstallStatus view={props.local} />
+      {failed && (
+        <div className="choice">
+          <p>{t("local.install.remote_offer")}</p>
+          <BusyButton className="secondary" busy={props.remoteBusy} onClick={props.onRemote}>
+            {t("local.install.remote_button")}
+          </BusyButton>
+        </div>
+      )}
       {packages && (packages.updateCheck === null || props.answeredHere) && (
         <UpdateCheckQuestion
           idPrefix="wizard"
@@ -586,8 +600,8 @@ export function WizardPage({
           installFailure={installFailure}
           onInstallLocal={() => void installLocal()}
           setup={local.setup}
-          remoteBusy={finishing}
           onRemote={() => void finish("#/engines")}
+          remoteBusy={finishing}
           onBack={back}
           onNext={next}
         />

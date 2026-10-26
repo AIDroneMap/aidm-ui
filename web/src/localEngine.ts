@@ -6,6 +6,8 @@ import {
   type CapsRequest,
   type CapsView,
   type EnginePackageOffer,
+  type InstallStepId,
+  type InstallStepView,
   type LocalEngineView,
   type RuntimeSetupView,
 } from "../../shared/api-types.ts";
@@ -73,6 +75,8 @@ export function appendLogLines(existing: string[], incoming: string[], max: numb
 
 export type InstallStatus =
   | { kind: "none" }
+  /** A Mac setting up Apple's container tool: the step, its size when it has one, and the bytes received so far. */
+  | { kind: "preparing"; step: InstallStepId; size: number | null; received: number | null }
   | {
       kind: "downloading";
       /** True for the graphics card package. */
@@ -94,6 +98,10 @@ export type InstallStatus =
 export function installStatus(view: LocalEngineView | null): InstallStatus {
   if (!view) return { kind: "none" };
   const { install } = view;
+  if (install?.phase === "preparing") {
+    const size = install.steps.find((candidate) => candidate.id === install.step)?.size ?? null;
+    return { kind: "preparing", step: install.step, size, received: install.stepReceived };
+  }
   if (install?.phase === "pulling") {
     return {
       kind: "downloading",
@@ -113,6 +121,27 @@ export function installStatus(view: LocalEngineView | null): InstallStatus {
   if (install?.phase === "done") return { kind: "starting" };
   if (view.installed) return { kind: "state" };
   return { kind: "none" };
+}
+
+export type StepState = "done" | "current" | "pending" | "failed";
+
+/**
+ * The steps of an install with where each stands. They are listed only when
+ * there is more than the engine to do, and before the click from the plan.
+ */
+export function installSteps(view: LocalEngineView | null): Array<InstallStepView & { state: StepState }> {
+  const install = view?.install ?? null;
+  const steps = install?.steps ?? view?.plan ?? [];
+  if (steps.length < 2) return [];
+  const current = install === null ? -1 : steps.findIndex((candidate) => candidate.id === install.step);
+  return steps.map((step, index) => {
+    let state: StepState = "pending";
+    if (install !== null) {
+      if (install.phase === "done" || index < current) state = "done";
+      else if (index === current) state = install.phase === "failed" ? "failed" : "current";
+    }
+    return { ...step, state };
+  });
 }
 
 /** True when the install button should be offered: nothing is installed and no install is under way. */
