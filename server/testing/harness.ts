@@ -1,11 +1,19 @@
 import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { currentAuth } from "../auth/current.ts";
 import { Sessions } from "../auth/sessions.ts";
+import { openDatabase } from "../db/database.ts";
 import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineMonitor, type EngineMonitorDeps } from "../engines/engine-monitor.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { EventStreams } from "../http/event-streams.ts";
+import type { FreeBytes } from "../machine/disk.ts";
+import { RunStore } from "../runs/run-store.ts";
+import { RunTracker } from "../runs/run-tracker.ts";
+import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
+import { SampleJob } from "../sample/sample-job.ts";
 import { listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
@@ -23,6 +31,11 @@ export interface Harness {
   sessions: Sessions;
   engines: EngineMonitor;
   engineStore: EngineStore;
+  runs: RunStore;
+  tracker: RunTracker;
+  sample: SampleJob;
+  /** Where downloads and run logs go. */
+  dataFolder: string;
   /** Milliseconds the throttle sees as now; move it to move time. */
   clock: { now: number };
   /** Every line the server wrote to its log. */
@@ -48,9 +61,25 @@ export function openHarness(
     resolve?: EngineMonitorDeps["resolve"];
     /** Swaps the way the monitor reaches an engine, for names that only the test knows. */
     clientFor?: EngineMonitorDeps["clientFor"];
+    /** How often the runs are polled. */
+    runPollMs?: number;
+    /** The sample dataset entry; tests point it at a fake file server. */
+    sampleDataset?: SampleDatasetEntry;
+    freeBytes?: FreeBytes;
+    /** process.arch of the computer, for the reference time. */
+    architecture?: string;
+    /**
+     * A data folder to keep, with a database file in it, so that a second
+     * harness on the same folder is a restart. Default: a folder of its own,
+     * removed on stop, with a database in memory.
+     */
+    dataFolder?: string;
   } = {},
 ): Harness {
-  const db = new Database(":memory:", { strict: true });
+  const ownFolder = options.dataFolder === undefined ? mkdtempSync(join(os.tmpdir(), "aidm-ui-test-")) : undefined;
+  const dataFolder = options.dataFolder ?? (ownFolder as string);
+  const db = options.dataFolder === undefined ? new Database(":memory:", { strict: true }) : openDatabase(dataFolder);
+  db.run("PRAGMA foreign_keys = ON");
   applyMigrations(db, migrations);
   const settings = new Settings(db);
   const sessions = new Sessions();
@@ -67,6 +96,25 @@ export function openHarness(
     resolve: options.resolve,
     clientFor: options.clientFor,
   });
+  const runs = new RunStore(db);
+  const tracker = new RunTracker({
+    runs,
+    engines: engineStore,
+    dataFolder,
+    intervalMs: options.runPollMs ?? 50,
+    log,
+  });
+  const sample = new SampleJob({
+    dataset: options.sampleDataset ?? SAMPLE_DATASET,
+    dataFolder,
+    runs,
+    tracker,
+    engines,
+    engineStore,
+    architecture: options.architecture ?? process.arch,
+    log,
+    freeBytes: options.freeBytes,
+  });
 
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
@@ -76,6 +124,8 @@ export function openHarness(
     engines,
     engineStore,
     streams: new EventStreams(sessions),
+    tracker,
+    sample,
     auth: () => currentAuth(settings, sessions),
     listeningPort: () => listener?.port ?? 0,
     rebind: async (hostname) => {
@@ -92,6 +142,7 @@ export function openHarness(
     fetch: fallbackFetch(),
   });
   engines.start();
+  tracker.start();
 
   return {
     base: `http://${LOOPBACK}:${listener.port}`,
@@ -101,13 +152,20 @@ export function openHarness(
     sessions,
     engines,
     engineStore,
+    runs,
+    tracker,
+    sample,
+    dataFolder,
     clock,
     logs,
     rebinds,
     async stop() {
+      await sample.stop();
+      await tracker.stop();
       await engines.stop();
       await listener?.stop();
       db.close();
+      if (ownFolder !== undefined) rmSync(ownFolder, { recursive: true, force: true });
     },
   };
 }
