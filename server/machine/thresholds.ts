@@ -31,8 +31,10 @@ export const DOWNLOAD_FREE_DISK_MARGIN = 0.2;
  * (12 cores, 24 threads), 60 GiB of RAM, Ubuntu 24.04, Docker 29.
  *
  * The value is the container cgroup's memory.peak, the larger of two runs:
- * 7,222,665,216 and 7,360,806,912 bytes. memory.peak includes page cache. In
+ * 7,222,665,216 and 7,360,806,912 bytes. memory.peak includes page cache.
+ * That is deliberate and on the safe side: page cache counts against the
+ * container's memory limit, so the bar leaves room for it. For reference, in
  * the second run the anonymous memory, sampled every second, peaked at
- * 6,247,743,488 bytes.
+ * 6,247,743,488 bytes (6.25 GB).
  */
 export const SAMPLE_JOB_PEAK_MEMORY = 7_360_806_912;
