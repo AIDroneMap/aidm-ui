@@ -1463,7 +1463,14 @@ export class LocalEngineManager {
       applied = { memoryBytes: this.systemd === true ? caps.memoryBytes : null, cpus: null };
     } else {
       await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-      const detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      let detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      // After a reboot the service of Apple's tool is stopped. It is started, without the kernel option, before the engine.
+      if (detection?.problem?.code === "runtime.apple_not_started" && this.deps.macSetup !== undefined) {
+        const woken = await this.deps.macSetup.startStoppedService(this.abort.signal);
+        if (!woken.ok) return this.failStart(engine.id, woken.error);
+        await this.lookAtRuntimesAgain();
+        detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      }
       applied = {
         memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
         cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,

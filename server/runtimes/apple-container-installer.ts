@@ -236,6 +236,16 @@ export class MacSetup {
     return { ok: true };
   }
 
+  /**
+   * Starts the tool's service for an engine that is installed already: a
+   * reboot stops it. Always with --disable-kernel-install, so it never asks
+   * for or downloads a kernel; the one the engine ran on is still there.
+   */
+  startStoppedService(signal?: AbortSignal): Promise<MacSetupResult> {
+    const need: MacNeed = { tool: false, service: true, kernel: false, init: null, pinned: true };
+    return this.startService(need, { signal, onStep: () => {}, onReceived: () => {} });
+  }
+
   // Inside ------------------------------------------------------------------
 
   private hasKernel(): boolean {

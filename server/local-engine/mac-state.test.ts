@@ -166,3 +166,22 @@ test("an engine install left failed in that data folder is retried from the inte
   expect(applyMigrations(db, migrations)).toEqual([]);
   db.close();
 });
+
+test("after a reboot the installed engine starts again: the service is started without the kernel option, then the engine", async () => {
+  const dataFolder = macDataFolder();
+  const first = theMac("running", dataFolder);
+  expect((await install(first.h)).status).toBe(202);
+  await eventually(async () => (await localView(first.h)).state === "ready", 5000);
+  const pinned = "ghcr.io/aidronemap/aidm-api@sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd";
+  await first.h.stop();
+  harnesses.splice(harnesses.indexOf(first.h), 1);
+
+  // The Mac rebooted: the service is stopped, and the engine image is still in the tool.
+  const second = theMac("stopped", dataFolder);
+  second.apple.holdImage(pinned);
+  await eventually(async () => (await localView(second.h)).state === "ready", 5000);
+  expect(second.runner.calls.filter((argv) => argv.join(" ").startsWith(`${TOOL} system start`))).toEqual([START]);
+  expectToolLeftAlone(second.runner);
+  expect(second.h.images.downloads).toEqual([]);
+  expect(second.apple.starts.at(-1)?.spec.image).toBe(pinned);
+});
