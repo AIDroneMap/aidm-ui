@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { capsRequest, gibDraft, memoryInputMax } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
 import { BusyButton } from "./BusyButton.tsx";
+import { LocalUpdate } from "./LocalUpdate.tsx";
 import type { ForceCpuRequest, LocalEngineView, RuntimeChoiceRequest, RuntimeId } from "../../../shared/api-types.ts";
 
 /** The words for a refusal. The server sends memory limits in bytes; the operator reads GiB. */
@@ -51,6 +52,8 @@ export interface AdvancedFormProps {
   forceCpuSaved: boolean;
   forceCpuFailure: ApiFailure | null;
   onForceCpuChange: (forceCpu: boolean) => void;
+  /** The engine update block, when there is one to show. */
+  update?: ReactNode;
 }
 
 const MIN_MEMORY_GIB = 1;
@@ -181,6 +184,7 @@ export function AdvancedForm(props: AdvancedFormProps) {
           <p role="status">{props.runtimeSaved ? t("local.runtime.saved") : ""}</p>
         </fieldset>
       )}
+      {props.update}
     </section>
   );
 }
@@ -293,6 +297,7 @@ export function LocalAdvanced(props: {
       forceCpuSaved={forceCpuSaved}
       forceCpuFailure={forceCpuFailure}
       onForceCpuChange={(forceCpu) => void chooseForceCpu(forceCpu)}
+      update={<LocalUpdate view={view} onView={props.onView} onAuthRequired={props.onAuthRequired} />}
     />
   );
 }

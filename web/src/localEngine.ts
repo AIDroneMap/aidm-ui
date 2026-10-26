@@ -6,6 +6,7 @@ import {
   type CapsRequest,
   type CapsView,
   type EnginePackageOffer,
+  type InstallProgressView,
   type InstallStepId,
   type InstallStepView,
   type LocalEngineView,
@@ -30,11 +31,12 @@ export function parseLocalEngine(data: string): LocalEngineView | null {
     return null;
   }
   if (!isRecord(parsed)) return null;
-  const { caps, runtime, warnings } = parsed;
+  const { caps, runtime, warnings, update } = parsed;
   if (!(ENGINE_STATES as readonly unknown[]).includes(parsed["state"])) return null;
   if (!isRecord(caps) || typeof caps["memoryBytes"] !== "number" || typeof caps["cpus"] !== "number") return null;
   if (!isRecord(runtime) || !Array.isArray(runtime["available"])) return null;
   if (!Array.isArray(warnings)) return null;
+  if (!isRecord(update)) return null;
   return parsed as unknown as LocalEngineView;
 }
 
@@ -98,24 +100,8 @@ export type InstallStatus =
 export function installStatus(view: LocalEngineView | null): InstallStatus {
   if (!view) return { kind: "none" };
   const { install } = view;
-  if (install?.phase === "preparing") {
-    const size = install.steps.find((candidate) => candidate.id === install.step)?.size ?? null;
-    return { kind: "preparing", step: install.step, size, received: install.stepReceived };
-  }
-  if (install?.phase === "pulling") {
-    return {
-      kind: "downloading",
-      graphics: install.variant.endsWith("-gpu"),
-      size: install.size,
-      done: install.layersDone,
-      total: install.layersTotal,
-      attempt: install.attempt,
-      maxAttempts: install.maxAttempts,
-    };
-  }
-  if (install?.phase === "checking_gpu") return { kind: "checking_gpu" };
-  if (install?.phase === "removing_gpu_package") return { kind: "removing_gpu_package", size: install.size };
-  if (install?.phase === "starting") return { kind: "starting" };
+  const stepped = progressStatus(install);
+  if (stepped.kind !== "none") return stepped;
   if (view.state === "ready" || view.state === "busy") return { kind: "ready" };
   if (install?.phase === "failed" || view.state === "failed") return { kind: "failed" };
   if (install?.phase === "done") return { kind: "starting" };
@@ -142,6 +128,29 @@ export function installSteps(view: LocalEngineView | null): Array<InstallStepVie
     }
     return { ...step, state };
   });
+}
+
+/** Where a pull stands, in the same words for an install and an update: the step, the parts, the try and the graphics card's test run. */
+export function progressStatus(progress: InstallProgressView | null): InstallStatus {
+  if (progress?.phase === "preparing") {
+    const size = progress.steps.find((candidate) => candidate.id === progress.step)?.size ?? null;
+    return { kind: "preparing", step: progress.step, size, received: progress.stepReceived };
+  }
+  if (progress?.phase === "pulling") {
+    return {
+      kind: "downloading",
+      graphics: progress.variant.endsWith("-gpu"),
+      size: progress.size,
+      done: progress.layersDone,
+      total: progress.layersTotal,
+      attempt: progress.attempt,
+      maxAttempts: progress.maxAttempts,
+    };
+  }
+  if (progress?.phase === "checking_gpu") return { kind: "checking_gpu" };
+  if (progress?.phase === "removing_gpu_package") return { kind: "removing_gpu_package", size: progress.size };
+  if (progress?.phase === "starting") return { kind: "starting" };
+  return { kind: "none" };
 }
 
 /** True when the install button should be offered: nothing is installed and no install is under way. */

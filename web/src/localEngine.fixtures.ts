@@ -25,6 +25,7 @@ export const fresh: LocalEngineView = {
   forceCpu: false,
   problem: null,
   restarts: null,
+  update: { available: null, previous: null, blockedBy: null, applying: null },
 };
 
 /** Test data: the install of the engine alone, as on Linux. */
