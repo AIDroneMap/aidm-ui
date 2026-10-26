@@ -142,7 +142,7 @@ test("the version its task API reports comes from the image, when a function say
   const runtime = fake({ versionOf: (image) => (image === IMAGE ? "2.6.0" : "2.5.0") });
   await started(runtime);
   const engine = runtime.engine(NAME)!;
-  expect(await (await fetch(`${engine.address}/info?token=run-token`)).json()).toMatchObject({ version: "2.6.0" });
+  expect(await (await fetch(`${engine.address}/info?token=fake-token`)).json()).toMatchObject({ version: "2.6.0" });
 });
 
 test("a silent image starts a container whose engine never answers", async () => {
