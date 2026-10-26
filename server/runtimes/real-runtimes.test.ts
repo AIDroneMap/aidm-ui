@@ -56,9 +56,18 @@ for (const id of ["podman", "docker"]) {
 
     test("it is available", async () => {
       const detection = await runtime.detect();
+      if (!detection.available) {
+        // Show the tool's own answers, so a failure on a runner can be read from the log.
+        for (const argv of [[id, "version", "--format", "json"], [id, "info", "--format", "json"]]) {
+          const answer = await systemRunner().run(argv, { timeoutMs: 120_000 });
+          console.log(`${argv.join(" ")} exited ${answer.exitCode}`);
+          console.log(answer.stdout.slice(0, 4000));
+          console.log(answer.stderr.slice(0, 4000));
+        }
+      }
       expect(detection.problem).toBeNull();
       expect(detection.available).toBe(true);
-    });
+    }, SLOW);
 
     test("it pulls the image by digest and reports progress", async () => {
       const steps: unknown[] = [];
