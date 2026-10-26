@@ -112,6 +112,11 @@ export const MESSAGE_CODES = [
   "gpu.in_image_failed",
   "gpu.forced_cpu",
   "gpu.package_not_removed",
+  "update.run_in_progress",
+  "update.engine_off",
+  "update.no_previous",
+  "update.failed_rolled_back",
+  "update.rollback_failed",
 ] as const;
 
 export type MessageCode = (typeof MESSAGE_CODES)[number];

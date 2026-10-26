@@ -27,6 +27,7 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
     "/api/local-engine": {
       GET: async () => {
         await localEngine.refreshRuntimes(DETECTION_MAX_AGE_MS);
+        await localEngine.refreshUpdateOffer();
         return Response.json(localEngine.view());
       },
     },
@@ -45,6 +46,7 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
           if (setup !== null) sendSetup(setup);
           // The runtimes may have changed since the last look. The listener hears about it if they did.
           void localEngine.refreshRuntimes(DETECTION_MAX_AGE_MS);
+          void localEngine.refreshUpdateOffer();
           return () => {
             unsubscribe();
             unsubscribeSetup();
@@ -87,6 +89,22 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
       POST: () => {
         localEngine.stopWaitingForApproval();
         return Response.json(localEngine.view());
+      },
+    },
+
+    // Both answer once the work has started. The page follows it through the live view.
+    "/api/local-engine/update": {
+      POST: async () => {
+        const outcome = await localEngine.update();
+        if (!outcome.ok) return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
+        return Response.json(localEngine.view(), { status: 202 });
+      },
+    },
+    "/api/local-engine/rollback": {
+      POST: async () => {
+        const outcome = await localEngine.rollback();
+        if (!outcome.ok) return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
+        return Response.json(localEngine.view(), { status: 202 });
       },
     },
 

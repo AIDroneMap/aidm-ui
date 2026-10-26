@@ -15,6 +15,7 @@ import type {
 } from "../../shared/api-types.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
+import { compareVersions } from "../engines/versions.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
@@ -23,6 +24,7 @@ import type { CommandRunner } from "../process/command-runner.ts";
 import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts";
+import type { RunStore } from "../runs/run-store.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
 import type { InstalledPackage, Settings } from "../settings/settings.ts";
@@ -76,6 +78,23 @@ interface MacPlan {
   setup: MacSetup;
 }
 
+/** How long a new version may take to answer the info route before the update is undone. */
+export const UPDATE_READY_TIMEOUT_MS = 120_000;
+/** How often the info route is asked while waiting for a new version. */
+const READY_POLL_MS = 250;
+
+/** A newer package the installed variant could be updated to. */
+interface UpdateOffer {
+  packageVersion: string;
+  size: number;
+  variant: ContainerVariant;
+}
+
+/** The image a package pins, the way the runtimes know it. */
+function imageOf(installed: InstalledPackage): string {
+  return `${installed.container.image}@${installed.container.digest}`;
+}
+
 export type InstallOutcome = { ok: true } | { ok: false; status: number; error: ApiError };
 
 export interface LocalEngineDeps {
@@ -83,6 +102,8 @@ export interface LocalEngineDeps {
   engineStore: EngineStore;
   monitor: EngineMonitor;
   manifests: ManifestService;
+  /** Where the unfinished runs are, so no update starts under one. */
+  runs: Pick<RunStore, "listUnfinished">;
   /** Null for a runtime this version cannot drive yet. */
   runtimes: (id: RuntimeId) => ContainerRuntime | null;
   detectRuntimes: () => Promise<RuntimeDetection[]>;
@@ -108,6 +129,8 @@ export interface LocalEngineDeps {
   /** The clock for the time of the next restart and for how long the engine has answered. */
   now?: () => number;
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
+  /** How long a new version may take to answer before an update or a rollback is undone; default 120 seconds. */
+  updateReadyTimeoutMs?: number;
 }
 
 function randomToken(): string {
@@ -167,6 +190,11 @@ export class LocalEngineManager {
   private precheck: { at: number; runtime: RuntimeId | null; value: Promise<GpuPrecheck> } | undefined;
   /** Set when the graphics card package failed its test run and could not be deleted. Cleared by the next install. */
   private packageLeft: ApiError | null = null;
+  /** The update or the way back under way, shown like an install. */
+  private updateProgress: InstallProgressView | null = null;
+  private offer: UpdateOffer | null = null;
+  private offerLookup: Promise<void> = Promise.resolve();
+  private readonly unsubscribeManifests: () => void;
   private readonly restart: Restart = {
     attempts: 0,
     nextAt: null,
@@ -187,6 +215,9 @@ export class LocalEngineManager {
       this.publish();
       this.watch(views);
     });
+    // A newer manifest that arrives while the page is open is offered at once.
+    this.unsubscribeManifests = deps.manifests.subscribe(() => void this.refreshUpdateOffer());
+    void this.refreshUpdateOffer();
   }
 
   /** The log of the engine, for the logs route. */
@@ -198,6 +229,7 @@ export class LocalEngineManager {
 
   view(): LocalEngineView {
     const installedPackage = this.settings.get("local.package");
+    const previous = installedPackage === null ? null : this.settings.get("local.previous");
     const engine = this.store.local();
     const caps = this.capsNow();
     const limits = this.limits();
@@ -257,6 +289,12 @@ export class LocalEngineManager {
       warnings,
       forceCpu: this.settings.get("local.forceCpu"),
       problem,
+      update: {
+        available: this.offer === null || installedPackage === null ? null : { packageVersion: this.offer.packageVersion, size: this.offer.size },
+        previous: previous === null ? null : { packageVersion: previous.packageVersion },
+        blockedBy: installedPackage === null ? null : this.updateBlock(),
+        applying: this.updateProgress,
+      },
       restarts:
         this.restart.attempts > 0 && !this.restart.gaveUp && (this.restart.task !== undefined || state === "starting")
           ? {
@@ -405,7 +443,7 @@ export class LocalEngineManager {
 
   /** Answers once the install has started; the work goes on in the background. */
   async install(): Promise<InstallOutcome> {
-    // An install over a running engine would pull a package next to it and swap tokens under it. Updates come with ticket #14.
+    // An install over a running engine would pull a package next to it and swap tokens under it. Updating goes through update().
     // This comes first, so a restart in progress is never answered with "already being installed".
     if (this.settings.get("local.package") !== null) return refusal(409, "install.already_installed");
     if (this.busy) return refusal(409, "install.already_running");
@@ -509,6 +547,272 @@ export class LocalEngineManager {
     if (this.installing && this.progress?.step === "approve") this.stopWaiting?.abort();
   }
 
+  // Updates ---------------------------------------------------------------
+
+  /** Looks at the newest manifest again and keeps what it says about an update. */
+  refreshUpdateOffer(): Promise<void> {
+    // Looks one after the other, so the last one to start has the last word.
+    this.offerLookup = this.offerLookup.then(() => this.lookForUpdate());
+    return this.offerLookup;
+  }
+
+  private async lookForUpdate(): Promise<void> {
+    if (this.closed) return;
+    try {
+      const installed = this.settings.get("local.package");
+      let next: UpdateOffer | null = null;
+      if (installed !== null) {
+        const release = await this.deps.manifests.releaseFor(installed.variant);
+        if (
+          release !== null &&
+          release.variant.kind === "container" &&
+          compareVersions(release.packageVersion, installed.packageVersion) > 0
+        ) {
+          next = { packageVersion: release.packageVersion, size: release.variant.size, variant: release.variant };
+        }
+      }
+      if (this.closed) return;
+      this.offer = next;
+    } catch (error) {
+      this.deps.log(`Looking for an engine update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.publish();
+  }
+
+  /** Why an update or a rollback is refused right now, or null when it may go on. */
+  private updateBlock(): ApiError | null {
+    const engine = this.store.local();
+    if (engine !== null && this.deps.runs.listUnfinished().some((run) => run.engineId === engine.id)) {
+      return { code: "update.run_in_progress", data: {} };
+    }
+    // The new version is judged by its answer, so the engine has to be running.
+    if (!this.isEnabled()) return { code: "update.engine_off", data: {} };
+    return null;
+  }
+
+  /**
+   * Answers once the update has started; the work goes on in the background.
+   * The new package is pulled next to the old one, the engine is stopped, and
+   * the new version is started on the same data folder. Only an answer from
+   * the new version to the info route makes it current. Otherwise the old
+   * version is started again.
+   */
+  async update(): Promise<InstallOutcome> {
+    const installed = this.settings.get("local.package");
+    if (installed === null) return refusal(409, "local.not_installed");
+    const blocked = this.updateBlock();
+    if (blocked !== null) return { ok: false, status: 409, error: blocked };
+    const claimed = await this.claim();
+    if (!claimed.ok) return { ok: false, status: 409, error: claimed.error };
+    let started = false;
+    try {
+      // A run may have started while a restart let go.
+      const again = this.updateBlock();
+      if (again !== null) return { ok: false, status: 409, error: again };
+      await this.refreshUpdateOffer();
+      const offer = this.offer;
+      if (offer === null) return refusal(409, "install.not_offered", { reason: null });
+      const driver = this.deps.runtimes(installed.runtime);
+      if (driver === null) return refusal(409, "runtime.not_available", { runtime: installed.runtime });
+
+      await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
+      const target: InstalledPackage = {
+        packageVersion: offer.packageVersion,
+        variant: installed.variant,
+        runtime: installed.runtime,
+        container: offer.variant,
+      };
+      const space = await this.packageFor(target)?.preflight();
+      if (space !== undefined && !space.ok) return { ok: false, status: 409, error: space.error };
+
+      this.failure = null;
+      this.updateProgress = {
+        phase: "pulling",
+        variant: installed.variant,
+        steps: [{ id: "engine", size: offer.size }],
+        step: "engine",
+        stepReceived: null,
+        size: offer.size,
+        layersDone: null,
+        layersTotal: null,
+        attempt: 1,
+        maxAttempts: PULL_ATTEMPTS,
+      };
+      started = true;
+      this.background = this.runSwitch("update", installed, target)
+        .catch((error: unknown) => this.switchCrashed(error))
+        .finally(() => {
+          this.busy = false;
+        });
+      this.publish();
+      return { ok: true };
+    } finally {
+      if (!started) this.busy = false;
+    }
+  }
+
+  /** Goes back to the previous version while it exists. Answers once it has started, like update. */
+  async rollback(): Promise<InstallOutcome> {
+    const installed = this.settings.get("local.package");
+    if (installed === null) return refusal(409, "local.not_installed");
+    const blocked = this.updateBlock();
+    if (blocked !== null) return { ok: false, status: 409, error: blocked };
+    const claimed = await this.claim();
+    if (!claimed.ok) return { ok: false, status: 409, error: claimed.error };
+    let started = false;
+    try {
+      const again = this.updateBlock();
+      if (again !== null) return { ok: false, status: 409, error: again };
+      const previous = this.settings.get("local.previous");
+      if (previous === null) return refusal(409, "update.no_previous");
+      this.failure = null;
+      this.updateProgress = {
+        phase: "starting",
+        variant: previous.variant,
+        steps: [{ id: "engine", size: previous.container.size }],
+        step: "engine",
+        stepReceived: null,
+        size: previous.container.size,
+        layersDone: null,
+        layersTotal: null,
+        attempt: 1,
+        maxAttempts: PULL_ATTEMPTS,
+      };
+      started = true;
+      this.background = this.runSwitch("rollback", installed, previous)
+        .catch((error: unknown) => this.switchCrashed(error))
+        .finally(() => {
+          this.busy = false;
+        });
+      this.publish();
+      return { ok: true };
+    } finally {
+      if (!started) this.busy = false;
+    }
+  }
+
+  private switchCrashed(error: unknown): void {
+    this.deps.log(`Switching the engine version failed: ${error instanceof Error ? error.message : String(error)}`);
+    this.endSwitch({ code: "server.internal_error", data: {} });
+  }
+
+  private endSwitch(failure: ApiError | null): void {
+    this.updateProgress = null;
+    if (failure !== null) this.failure = failure;
+    this.publish();
+  }
+
+  /**
+   * Moves the engine from `from` to `to`. Settings name `to` as current only
+   * after the new engine has answered with its version. When it does not, the
+   * container of `to` is removed and `from` runs again.
+   */
+  private async runSwitch(kind: "update" | "rollback", from: InstalledPackage, to: InstalledPackage): Promise<void> {
+    const engine = this.store.local();
+    const oldPkg = this.packageFor(from);
+    const newPkg = this.packageFor(to);
+    if (engine === null || oldPkg === null || newPkg === null) {
+      return this.endSwitch({ code: "runtime.not_available", data: { runtime: from.runtime } });
+    }
+
+    if (kind === "update") {
+      const pulled = await newPkg.install({
+        signal: this.abort.signal,
+        onProgress: (progress) => {
+          this.updateProgress = progress;
+          this.publish();
+        },
+      });
+      if (!pulled.ok) return this.endSwitch(pulled.error);
+      // The pull takes minutes. A run may have started in the meantime.
+      if (this.updateBlock()?.code === "update.run_in_progress") {
+        await this.dropImage(to, [from]);
+        return this.endSwitch({ code: "update.run_in_progress", data: {} });
+      }
+    }
+
+    if (this.updateProgress !== null) this.updateProgress = { ...this.updateProgress, phase: "starting" };
+    this.publish();
+    const stopped = await oldPkg.stop();
+    if (!stopped.ok) {
+      if (kind === "update") await this.dropImage(to, [from]);
+      return this.endSwitch(stopped.error);
+    }
+
+    const started = await this.startEngine(to);
+    const ready = started.ok && (await this.waitForVersion(engine.id, to.packageVersion, newPkg));
+    if (ready) {
+      const droppable = this.settings.get("local.previous");
+      this.settings.set("local.package", to);
+      this.settings.set("local.previous", from);
+      this.store.setInstalledVersion(engine.id, "container", to.packageVersion);
+      // Exactly one previous version is kept. The one before it goes, unless it is one of the two that stay.
+      if (droppable !== null) await this.dropImage(droppable, [to, from]);
+      this.updateProgress = null;
+      this.publish();
+      await this.refreshUpdateOffer();
+      return;
+    }
+
+    if (this.closed) {
+      this.deps.log("aidm-ui is closing while the engine changes version. The engine is left as it is.");
+      return this.endSwitch(null);
+    }
+    this.deps.log(`The engine ${to.packageVersion} did not become ready. Starting ${from.packageVersion} again.`);
+    await this.discard(newPkg);
+    if (kind === "update") await this.dropImage(to, [from]);
+    const restored = await this.startEngine(from);
+    // A start that failed has its own failure, and the engine shows failed with the way to start it again.
+    const failure: ApiError = {
+      code: kind === "update" ? "update.failed_rolled_back" : "update.rollback_failed",
+      data: { version: to.packageVersion },
+    };
+    this.endSwitch(restored.ok ? failure : null);
+  }
+
+  /** Waits for the engine to answer the info route with the version of the new package. */
+  private async waitForVersion(engineId: number, version: string, pkg: EnginePackage): Promise<boolean> {
+    const deadline = Date.now() + (this.deps.updateReadyTimeoutMs ?? UPDATE_READY_TIMEOUT_MS);
+    for (;;) {
+      if (this.closed) return false;
+      await this.monitor.pollNow(engineId);
+      const seen = this.monitor.views().find((candidate) => candidate.id === engineId);
+      if ((seen?.state === "ready" || seen?.state === "busy") && seen.info?.version === version) return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      // A container that is gone will not answer, so there is no use in waiting out the time.
+      const status = await pkg.status();
+      if (status.ok && status.value.state !== "running") return false;
+      await this.waitMs(Math.min(READY_POLL_MS, remaining));
+    }
+  }
+
+  private waitMs(ms: number): Promise<void> {
+    if (this.abort.signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const end = () => {
+        clearTimeout(timer);
+        this.abort.signal.removeEventListener("abort", end);
+        resolve();
+      };
+      const timer = setTimeout(end, ms);
+      this.abort.signal.addEventListener("abort", end, { once: true });
+    });
+  }
+
+  /** Removes the image of a version, unless it is also the image of one that stays. A failure is logged, since nothing depends on it. */
+  private async dropImage(version: InstalledPackage, keep: InstalledPackage[]): Promise<void> {
+    const image = imageOf(version);
+    if (keep.some((other) => imageOf(other) === image)) return;
+    try {
+      const runtime = this.deps.runtimes(version.runtime);
+      const removed = await runtime?.removeImage(image);
+      if (removed !== undefined && !removed.ok) this.deps.log(`An old engine image could not be removed (${removed.error.code}).`);
+    } catch (error) {
+      this.deps.log(`Removing an old engine image failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /** The switch on the engines page. Turning it on while it is on changes nothing, unless the manager gave up. */
   async setEnabled(enabled: boolean): Promise<PackageResult<void>> {
     if (this.settings.get("local.package") === null) return fail("local.not_installed");
@@ -599,8 +903,10 @@ export class LocalEngineManager {
     this.closed = true;
     this.abort.abort();
     this.unsubscribeMonitor();
+    this.unsubscribeManifests();
     this.listeners.clear();
     await this.background.catch(() => {});
+    await this.offerLookup;
     await this.restart.task?.catch(() => {});
     await this.engineLog.stop();
   }
@@ -669,8 +975,10 @@ export class LocalEngineManager {
       this.store.setInstalledVersion(engine.id, "container", installed.packageVersion);
     }
     this.settings.set("local.package", installed);
+    this.settings.set("local.previous", null);
     this.installing = false;
     await this.startEngine();
+    await this.refreshUpdateOffer();
   }
 
   private pull(plan: InstallPlan, steps: InstallStepView[]): Promise<PackageResult<void>> {
@@ -858,8 +1166,9 @@ export class LocalEngineManager {
     return { ok: false, error };
   }
 
-  private async startEngine(): Promise<PackageResult<void>> {
-    const installed = this.settings.get("local.package");
+  /** Starts the engine of `target`, or of the installed package. An update starts its new version before it is marked current. */
+  private async startEngine(target?: InstalledPackage): Promise<PackageResult<void>> {
+    const installed = target ?? this.settings.get("local.package");
     const engine = this.store.local();
     if (installed === null || engine === null) return fail("local.not_installed");
 

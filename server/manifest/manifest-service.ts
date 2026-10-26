@@ -130,6 +130,7 @@ export class ManifestService {
   /** The stored text that was verified, and what came of it. A changed text is verified again. */
   private verifiedStored: { raw: string; held: Promise<HeldManifest | null> } | undefined;
   private running: Promise<RefreshResult> | undefined;
+  private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: ManifestServiceDeps) {
     this.releasesUrl = (deps.releasesUrl ?? RELEASES_URL).replace(/\/+$/, "");
@@ -183,6 +184,14 @@ export class ManifestService {
     return (await this.candidates())[0] as HeldManifest;
   }
 
+  /** The listener is called after a refresh stored a newer manifest. It returns the way to stop listening. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   /**
    * Asks GitHub Releases for the latest manifest. Two calls at once share one
    * run, and the signal of the call that started it cancels every request.
@@ -211,6 +220,15 @@ export class ManifestService {
     const at = new Date(this.deps.now()).toISOString();
     this.deps.settings.set("updates.lastCheck", { at, problem: result.ok ? null : result.error });
     if (result.ok) this.deps.settings.set("updates.lastSuccess", at);
+    if (result.ok && result.replaced) {
+      for (const listener of [...this.listeners]) {
+        try {
+          listener();
+        } catch (error) {
+          this.deps.log(`A manifest listener failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
     return result;
   }
 
@@ -315,17 +333,7 @@ export class ManifestService {
       };
     }
 
-    const candidates = await this.candidates();
-    const newest = candidates[0] as HeldManifest;
-    const running = this.deps.uiVersion;
-    // An interface whose version cannot be read cannot show that it meets any minimum, so it installs nothing.
-    const runnable = (held: HeldManifest) =>
-      isReadableVersion(running) && compareVersions(held.manifest.minimumUiVersion, running) <= 0;
-    const usable = candidates.find(runnable);
-    const waiting: ApiError | null =
-      usable === newest
-        ? null
-        : { code: "manifest.update_interface", data: { minimum: newest.manifest.minimumUiVersion, running } };
+    const { usable, waiting } = await this.usableManifest();
     if (usable === undefined) {
       return { view: { ...base, offer: null, gpu: noGpu, reason: waiting }, variant: null, processor: null };
     }
@@ -361,5 +369,35 @@ export class ManifestService {
       inImageFailed: gpuFailedBefore(manifest, facts),
     });
     return { view: { ...base, offer, gpu, reason: waiting }, variant: chosen.variant, processor };
+  }
+
+  /**
+   * The newest manifest this interface can run, and the error that says a newer
+   * one is waiting for a newer interface, when there is one.
+   */
+  private async usableManifest(): Promise<{ usable: HeldManifest | undefined; waiting: ApiError | null }> {
+    const candidates = await this.candidates();
+    const newest = candidates[0] as HeldManifest;
+    const running = this.deps.uiVersion;
+    // An interface whose version cannot be read cannot show that it meets any minimum, so it installs nothing.
+    const runnable = (held: HeldManifest) =>
+      isReadableVersion(running) && compareVersions(held.manifest.minimumUiVersion, running) <= 0;
+    const usable = candidates.find(runnable);
+    const waiting: ApiError | null =
+      usable === newest
+        ? null
+        : { code: "manifest.update_interface", data: { minimum: newest.manifest.minimumUiVersion, running } };
+    return { usable, waiting };
+  }
+
+  /**
+   * The release of the installed variant in the newest manifest this interface
+   * can run, for an update. The caller decides whether it is newer than what is installed.
+   */
+  async releaseFor(variant: VariantId): Promise<{ packageVersion: string; variant: ManifestVariant } | null> {
+    const { usable } = await this.usableManifest();
+    const entry = usable?.manifest.variants[variant];
+    if (usable === undefined || entry === undefined) return null;
+    return { packageVersion: usable.manifest.packageVersion, variant: entry };
   }
 }

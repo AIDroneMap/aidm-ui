@@ -151,6 +151,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engineStore,
       monitor: engines,
       manifests,
+      runs: runStore,
       runtimes: (id) => containerRuntime(id, runner, options.log),
       detectRuntimes: () => Promise.all(allRuntimes(runner, process.platform).map((runtime) => runtime.detect())),
       runner,

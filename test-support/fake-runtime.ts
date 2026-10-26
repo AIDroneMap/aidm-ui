@@ -83,6 +83,10 @@ export class FakeRuntime implements ContainerRuntime {
   readonly stops: string[] = [];
   readonly removals: string[] = [];
   readonly removedImages: string[] = [];
+  /** The task API version the engine of an image reports; default: whatever the fake task API says. */
+  versionOf: ((image: string) => string) | undefined;
+  /** True for an image whose engine starts but never answers. */
+  silent: (image: string) => boolean;
 
   private readonly pullOutput: PullProgress[];
   private failingPulls = 0;
@@ -97,8 +101,18 @@ export class FakeRuntime implements ContainerRuntime {
   private readonly containers = new Map<string, FakeContainer>();
   private nextContainer = 1;
 
-  constructor(options: { id?: RuntimeId; detection?: Partial<RuntimeDetection>; pullOutput?: PullProgress[] } = {}) {
+  constructor(
+    options: {
+      id?: RuntimeId;
+      detection?: Partial<RuntimeDetection>;
+      pullOutput?: PullProgress[];
+      versionOf?: (image: string) => string;
+      silent?: (image: string) => boolean;
+    } = {},
+  ) {
     this.id = options.id ?? "podman";
+    this.versionOf = options.versionOf;
+    this.silent = options.silent ?? (() => false);
     this.detection = {
       id: this.id,
       available: true,
@@ -192,8 +206,13 @@ export class FakeRuntime implements ContainerRuntime {
     // The real task API exits with status 1 when it cannot read its config file.
     // The fake does the same: the container is created and is already stopped.
     const config = readConfigToken(spec);
-    const api = new FakeTaskApi({ token: config === undefined ? "fake-token" : (config ?? "") });
-    if (config !== null) {
+    const version = this.versionOf?.(spec.image);
+    const api = new FakeTaskApi({
+      token: config === undefined ? "fake-token" : (config ?? ""),
+      info: version === undefined ? undefined : { version },
+    });
+    // A silent engine runs but listens on nothing, so every call to it is refused.
+    if (config !== null && !this.silent(spec.image)) {
       try {
         await api.start(spec.publish.hostPort);
       } catch {
