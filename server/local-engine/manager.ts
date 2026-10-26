@@ -119,6 +119,8 @@ export class LocalEngineManager {
   private detections: RuntimeDetection[] = [];
   private detectedAt = 0;
   private detecting: Promise<void> | undefined;
+  /** Ends the wait for the password of macOS, at the operator's request. Set while an install sets up a Mac. */
+  private stopWaiting: AbortController | null = null;
   /** One install, start or stop at a time. */
   private busy = false;
   private installing = false;
@@ -238,19 +240,45 @@ export class LocalEngineManager {
   async refreshRuntimes(maxAgeMs = 0): Promise<void> {
     if (this.detecting !== undefined) return this.detecting;
     if (Date.now() - this.detectedAt < maxAgeMs) return;
+    await this.lookAtRuntimes();
+  }
+
+  /**
+   * Asks the runtimes now. Returns whether they answered. Each failure has a
+   * line of its own in the log: the look at the runtimes, and then the work of
+   * finding out what an install would take.
+   */
+  private lookAtRuntimes(): Promise<boolean> {
+    let answered = false;
     this.detecting = (async () => {
       try {
         this.detections = await this.deps.detectRuntimes();
         this.detectedAt = Date.now();
-        await this.refreshPlan();
+        answered = true;
       } catch (error) {
         this.deps.log(`Looking for container runtimes failed: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      try {
+        await this.refreshPlan();
+      } catch (error) {
+        this.deps.log(`Working out the install steps failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     })().finally(() => {
       this.detecting = undefined;
       this.publish();
     });
-    return this.detecting;
+    return this.detecting.then(() => answered);
+  }
+
+  /**
+   * A look at the runtimes that begins now. One that is under way began
+   * earlier, so its answer may be older than a change the caller just made:
+   * it is waited for, and then a new one is made.
+   */
+  private async lookAtRuntimesAgain(): Promise<boolean> {
+    while (this.detecting !== undefined) await this.detecting;
+    return this.lookAtRuntimes();
   }
 
   /** The operator's choice of runtime; null for automatic. One that does not work is refused. */
@@ -419,6 +447,14 @@ export class LocalEngineManager {
     } finally {
       if (!started) this.busy = false;
     }
+  }
+
+  /**
+   * Ends the wait for the password of macOS. The install stops at that step
+   * with mac.install_not_finished. Does nothing when no install waits for it.
+   */
+  stopWaitingForApproval(): void {
+    if (this.installing && this.progress?.step === "approve") this.stopWaiting?.abort();
   }
 
   /** Starts the installed engine, or starts it again after a stop. */
@@ -653,35 +689,51 @@ export class LocalEngineManager {
 
   /** The Mac steps before the engine. Returns false when one failed; the failure is already recorded. */
   private async setUpMac({ need, setup }: MacPlan): Promise<boolean> {
-    const base = this.progress as InstallProgressView;
+    const steps = this.progress?.steps ?? [];
     const show = (change: Partial<InstallProgressView>) => {
-      this.progress = { ...(this.progress as InstallProgressView), ...change };
+      if (this.progress === null) return;
+      this.progress = { ...this.progress, ...change };
       this.publish();
     };
-    const result = await setup.run(need, {
-      signal: this.abort.signal,
-      onStep: (step) => {
-        this.publishedReceived = 0;
-        show({ step, stepReceived: null });
-      },
-      onReceived: (received) => {
-        const size = base.steps.find((candidate) => candidate.id === "installer")?.size ?? 0;
-        // About two hundred events for the whole download.
-        if (received < size && received - this.publishedReceived < size / 200) return;
-        this.publishedReceived = received;
-        show({ stepReceived: received });
-      },
-    });
+    const stopWaiting = new AbortController();
+    this.stopWaiting = stopWaiting;
+    let result: Awaited<ReturnType<MacSetup["run"]>>;
+    try {
+      result = await setup.run(need, {
+        signal: this.abort.signal,
+        stopWaiting: stopWaiting.signal,
+        onStep: (step) => {
+          this.publishedReceived = 0;
+          show({ step, stepReceived: null });
+        },
+        onReceived: (received) => {
+          const size = steps.find((candidate) => candidate.id === "installer")?.size ?? 0;
+          // About two hundred events for the whole download.
+          if (received < size && received - this.publishedReceived < size / 200) return;
+          this.publishedReceived = received;
+          show({ stepReceived: received });
+        },
+      });
+    } finally {
+      this.stopWaiting = null;
+    }
     if (!result.ok) {
       show({ step: result.step });
       this.failInstall(result.error);
       return false;
     }
-    // The tool answers now, so the runtime list is asked again before the engine is pulled.
-    await this.refreshRuntimes();
+    // The service started just now, so what the runtimes said before it is out of date. The look is made anew, after any that was under way.
+    const answered = await this.lookAtRuntimesAgain();
+    const failedAt = this.progress?.step ?? "init";
+    if (!answered) {
+      this.deps.log("Apple's container tool was started, but it could not be looked at again after it started. The engine was not pulled.");
+      this.failInstall({ code: "mac.start_failed", data: { step: failedAt } });
+      return false;
+    }
     const found = this.drivable().find((detection) => detection.id === "apple-container");
     if (found === undefined || !found.available) {
-      this.failInstall({ code: "mac.start_failed", data: { step: this.progress?.step ?? "init" } });
+      this.deps.log("Apple's container tool was started, but it does not answer as running. The engine was not pulled.");
+      this.failInstall({ code: "mac.start_failed", data: { step: failedAt } });
       return false;
     }
     show({ phase: "pulling", step: "engine", stepReceived: null });

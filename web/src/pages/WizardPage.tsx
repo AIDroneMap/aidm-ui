@@ -232,6 +232,10 @@ export interface InstallScreenProps {
   onRemote: () => void;
   /** True while the end of the wizard is being saved, for the way out to a remote engine. */
   remoteBusy: boolean;
+  /** Stops waiting for the password of macOS. */
+  onStopWaiting: () => void;
+  /** True while the request to stop waiting is on its way. */
+  stopWaitingBusy: boolean;
   onBack: () => void;
   onNext: () => void;
 }
@@ -325,9 +329,11 @@ export function InstallScreen(props: InstallScreenProps) {
     <InstallButton local={props.local} setup={props.setup} installBusy={props.installBusy} onInstallLocal={props.onInstallLocal} />
   );
   // Whatever went wrong, the operator is never left without a way on: an engine elsewhere needs nothing from this computer.
+  const status = installStatus(props.local);
   // A failed Podman setup already offers that way in its own panel, so it is not offered twice.
-  const failed =
-    (props.installFailure !== null || installStatus(props.local).kind === "failed") && props.setup?.phase !== "failed";
+  const failed = (props.installFailure !== null || status.kind === "failed") && props.setup?.phase !== "failed";
+  // The password prompt may be hidden or ignored for as long as the operator likes, so the way on is offered while it is awaited.
+  const waiting = status.kind === "preparing" && status.step === "approve";
   return (
     <>
       <Heading>{t("wizard.install.title")}</Heading>
@@ -343,12 +349,19 @@ export function InstallScreen(props: InstallScreenProps) {
         ))}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
       <LocalInstallStatus view={props.local} />
-      {failed && (
+      {(failed || waiting) && (
         <div className="choice">
           <p>{t("local.install.remote_offer")}</p>
-          <BusyButton className="secondary" busy={props.remoteBusy} onClick={props.onRemote}>
-            {t("local.install.remote_button")}
-          </BusyButton>
+          <div className="actions">
+            <BusyButton className="secondary" busy={props.remoteBusy} onClick={props.onRemote}>
+              {t("local.install.remote_button")}
+            </BusyButton>
+            {waiting && (
+              <BusyButton className="secondary" busy={props.stopWaitingBusy} onClick={props.onStopWaiting}>
+                {props.stopWaitingBusy ? t("local.install.stop_waiting_busy") : t("local.install.stop_waiting")}
+              </BusyButton>
+            )}
+          </div>
         </div>
       )}
       {packages && (packages.updateCheck === null || props.answeredHere) && (
@@ -451,6 +464,7 @@ export function WizardPage({
   const [answeredHere, setAnsweredHere] = useState(false);
   const [updateAnnouncement, setUpdateAnnouncement] = useState("");
   const [installBusy, setInstallBusy] = useState(false);
+  const [stopWaitingBusy, setStopWaitingBusy] = useState(false);
   const [installFailure, setInstallFailure] = useState<ApiFailure | null>(null);
 
   const fail = (error: unknown): ApiFailure => {
@@ -544,6 +558,18 @@ export function WizardPage({
     }
   };
 
+  const stopWaiting = async () => {
+    setStopWaitingBusy(true);
+    setInstallFailure(null);
+    try {
+      local.setView(await api<LocalEngineView>("POST", "/api/local-engine/install/cancel"));
+    } catch (error) {
+      setInstallFailure(fail(error));
+    } finally {
+      setStopWaitingBusy(false);
+    }
+  };
+
   const finish = async (destination: "#/" | "#/engines") => {
     setFinishing(true);
     setFinishFailure(null);
@@ -602,6 +628,8 @@ export function WizardPage({
           setup={local.setup}
           onRemote={() => void finish("#/engines")}
           remoteBusy={finishing}
+          onStopWaiting={() => void stopWaiting()}
+          stopWaitingBusy={stopWaitingBusy}
           onBack={back}
           onNext={next}
         />

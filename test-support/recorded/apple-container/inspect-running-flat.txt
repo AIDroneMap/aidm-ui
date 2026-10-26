@@ -1,9 +1,0 @@
-[
-  {
-    "configuration": {
-      "id": "aidm-engine"
-    },
-    "id": "aidm-engine",
-    "status": "running"
-  }
-]

@@ -51,6 +51,13 @@ export const macPlan: InstallProgressView["steps"] = [
   { id: "engine", size: 622_710_197 },
 ];
 
+/** Test data: the steps on a Mac whose tool is there but never ran. The kernel's size is measured for one release, so it is not sent. */
+export const macStoppedPlan: InstallProgressView["steps"] = [
+  { id: "kernel", size: null },
+  { id: "init", size: null },
+  { id: "engine", size: 622_710_197 },
+];
+
 /** Test data: an install on that Mac, at the given step. */
 export function macInstall(step: InstallProgressView["step"], overrides: Partial<InstallProgressView> = {}): InstallProgressView {
   return engineInstall({

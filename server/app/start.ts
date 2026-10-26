@@ -20,7 +20,7 @@ import { EngineStore } from "../engines/engine-store.ts";
 import { LocalEngineManager } from "../local-engine/manager.ts";
 import { freeBytes } from "../machine/disk.ts";
 import { systemRunner } from "../process/command-runner.ts";
-import { addToolFolderToPath, MacSetup } from "../runtimes/apple-container-installer.ts";
+import { MacSetup } from "../runtimes/apple-container-installer.ts";
 import { RuntimeSetup, pkexecRunner } from "../runtimes/podman-setup.ts";
 import { allRuntimes, containerRuntime } from "../runtimes/registry.ts";
 import { runSetupFromCommandLine, SETUP_EXIT, systemFiles } from "../runtimes/setup-command.ts";
@@ -135,7 +135,6 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const machine = systemMachine(dataFolder);
     const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
     const onMac = process.platform === "darwin";
-    if (onMac) addToolFolderToPath();
     const localEngine = new LocalEngineManager({
       settings,
       engineStore,

@@ -6,7 +6,6 @@ import type { InstallStepId } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { ScriptedRunner, recorded, type ScriptedRule } from "../../test-support/scripted-runner.ts";
 import {
-  addToolFolderToPath,
   APPLE_CONTAINER_INSTALLER,
   INSTALLER_POLL_MS,
   INSTALLER_WAIT_MS,
@@ -17,8 +16,11 @@ import {
   type MacSetupDeps,
 } from "./apple-container-installer.ts";
 
-const START = ["container", "system", "start", "--enable-kernel-install"];
-const VERSION = ["container", "--version"];
+/** Spelled out here on purpose: the installer puts the tool at this path, and it is the only one ever run. */
+const TOOL = "/usr/local/bin/container";
+const START = [TOOL, "system", "start", "--enable-kernel-install"];
+const VERSION = [TOOL, "--version"];
+const VERSION_LINE = "container CLI version 1.6.1 (build: release, commit: 804209b)\n";
 
 let scratch: string;
 let files: FakeFileServer;
@@ -70,14 +72,13 @@ function setup(rules: ScriptedRule[], overrides: Partial<MacSetupDeps> = {}) {
     backoffMs: () => 0,
     sleep: time.sleep,
     now: time.now,
-    toolExists: () => false,
     log: (line) => log.push(line),
     ...overrides,
   });
   const steps: InstallStepId[] = [];
   const received: number[] = [];
-  const run = (need: "tool_missing" | "service_stopped" = "tool_missing", signal?: AbortSignal) =>
-    service.run(need, { signal, onStep: (step) => steps.push(step), onReceived: (bytes) => received.push(bytes) });
+  const run = (need: "tool_missing" | "service_stopped" = "tool_missing", signal?: AbortSignal, stopWaiting?: AbortSignal) =>
+    service.run(need, { signal, stopWaiting, onStep: (step) => steps.push(step), onReceived: (bytes) => received.push(bytes) });
   return { runner, time, steps, received, run, service, log };
 }
 
@@ -88,7 +89,7 @@ function toolAppearsAfter(polls: number): ScriptedRule {
     argv: VERSION,
     result: () =>
       ++asked > polls
-        ? { exitCode: 0, stdout: "container CLI version 1.6.1 (build: release, commit: 804209b)\n", stderr: "" }
+        ? { exitCode: 0, stdout: VERSION_LINE, stderr: "" }
         : { exitCode: 127, stdout: "", stderr: "not found" },
   };
 }
@@ -112,8 +113,12 @@ test("a Mac without the tool gets four steps with their sizes, the kernel's from
   ]);
 });
 
-test("a Mac whose tool never ran gets only the kernel and the startup files", () => {
-  expect(macSteps("service_stopped").map((step) => step.id)).toEqual(["kernel", "init"]);
+test("a Mac whose tool never ran gets only the kernel and the startup files, and the kernel's size is not known", () => {
+  // 696573576 bytes was measured for release 1.6.1, which is the release this install puts on the Mac. A tool that was there before may be another one.
+  expect(macSteps("service_stopped")).toEqual([
+    { id: "kernel", size: null },
+    { id: "init", size: null },
+  ]);
 });
 
 // Criterion: the install flow verifies the installer checksum before opening it, and refuses a mismatch with a message code.
@@ -126,7 +131,7 @@ test("a corrupted installer is refused with download.checksum_mismatch and nothi
 
   expect(await run()).toEqual({ ok: false, step: "installer", error: { code: "download.checksum_mismatch", data: {} } });
   expect(runner.calls.some((call) => call[0] === "open")).toBe(false);
-  expect(runner.calls.some((call) => call[0] === "container")).toBe(false);
+  expect(runner.calls.some((call) => call[0] === TOOL)).toBe(false);
   expect(steps).toEqual(["installer"]);
   // The wrong file is not left where the next run would find it.
   expect(existsSync(installerPath())).toBe(false);
@@ -191,23 +196,35 @@ test("the approval opens the package once and then polls every 2 seconds until t
   expect(steps).toEqual(["installer", "approve", "kernel", "init"]);
 });
 
-test("the tool's file showing up is enough, even if the command does not answer yet", async () => {
-  let there = false;
-  const { run, runner } = setup(
-    [
-      {
-        argv: openArgv(),
-        result: () => {
-          there = true;
-          return { exitCode: 0, stdout: "", stderr: "" };
-        },
-      },
-      { argv: START, result: recorded("apple-container", "system-start") },
-    ],
-    { toolExists: () => there },
-  );
+test("a tool that appears means --version exits 0 and prints the version line, not that a file exists", async () => {
+  // A file that is there but does not answer yet (still being written, not allowed to run, printing something else) keeps the wait going.
+  const answers = [
+    { exitCode: 126, stdout: "", stderr: "permission denied" },
+    { exitCode: 0, stdout: "", stderr: "" },
+    { exitCode: 0, stdout: "usage: container\n", stderr: "" },
+    { exitCode: 1, stdout: VERSION_LINE, stderr: "" },
+    { exitCode: 0, stdout: VERSION_LINE, stderr: "" },
+  ];
+  let asked = 0;
+  const { run, runner, time } = setup([
+    { argv: openArgv(), result: { exitCode: 0, stdout: "", stderr: "" } },
+    { argv: VERSION, result: () => answers[Math.min(asked++, answers.length - 1)] as { exitCode: number; stdout: string; stderr: string } },
+    { argv: START, result: recorded("apple-container", "system-start") },
+  ]);
   expect(await run()).toEqual({ ok: true });
-  expect(runner.calls.filter((call) => call.join(" ") === VERSION.join(" "))).toHaveLength(0);
+  expect(runner.calls.filter((call) => call.join(" ") === VERSION.join(" "))).toHaveLength(5);
+  expect(time.state.sleeps).toEqual([INSTALLER_POLL_MS, INSTALLER_POLL_MS, INSTALLER_POLL_MS, INSTALLER_POLL_MS]);
+});
+
+test("a container tool elsewhere on the search path is never run, so the wait ends in a timeout", async () => {
+  const { run, runner } = setup([
+    { argv: openArgv(), result: { exitCode: 0, stdout: "", stderr: "" } },
+    { argv: ["container", "--version"], result: { exitCode: 0, stdout: VERSION_LINE, stderr: "" } },
+    { argv: ["container", "system", "start", "--enable-kernel-install"], result: recorded("apple-container", "system-start") },
+  ]);
+  expect(await run()).toMatchObject({ ok: false, step: "approve", error: { data: { reason: "timeout" } } });
+  expect(runner.calls.filter((call) => call[0] !== "open").every((call) => call[0] === TOOL)).toBe(true);
+  expect(runner.calls.some((call) => call[0] === "container")).toBe(false);
 });
 
 test("a prompt nobody approves ends after 10 minutes with mac.install_not_finished", async () => {
@@ -245,6 +262,35 @@ test("the wait and the poll can be set, and the operator can cancel it", async (
   });
 });
 
+test("the operator can stop waiting for the approval: the step ends in mac.install_not_finished with the reason cancelled", async () => {
+  const stop = new AbortController();
+  const { run, runner } = setup([
+    { argv: openArgv(), result: { exitCode: 0, stdout: "", stderr: "" } },
+    { argv: VERSION, result: () => (stop.abort(), { exitCode: 127, stdout: "", stderr: "not found" }) },
+  ]);
+  expect(await run("tool_missing", undefined, stop.signal)).toEqual({
+    ok: false,
+    step: "approve",
+    error: { code: "mac.install_not_finished", data: { reason: "cancelled" } },
+  });
+  expect(runner.calls.some((call) => call.includes("start"))).toBe(false);
+});
+
+test("stopping the wait does not wait for the next poll", async () => {
+  const stop = new AbortController();
+  // A sleep that never ends, as if the poll were an hour long: only the stop can end the wait.
+  const { run } = setup([{ argv: openArgv(), result: { exitCode: 0, stdout: "", stderr: "" } }], {
+    sleep: () => {
+      stop.abort();
+      return new Promise<void>(() => {});
+    },
+  });
+  expect(await run("tool_missing", undefined, stop.signal)).toMatchObject({
+    ok: false,
+    error: { code: "mac.install_not_finished", data: { reason: "cancelled" } },
+  });
+});
+
 // The system service.
 
 test("the system service starts with the kernel flag, never without it, and the kernel and startup files show as steps", async () => {
@@ -275,14 +321,4 @@ test("a tool that never announces the startup files stays on the kernel step and
   const { run, steps } = setup([{ argv: START, result: { exitCode: 0, stdout: "Launching container-apiserver...\n", stderr: "" } }]);
   expect(await run("service_stopped")).toEqual({ ok: true });
   expect(steps).toEqual(["kernel"]);
-});
-
-test("the folder the installer uses is added to the search path once", () => {
-  const env: Record<string, string | undefined> = { PATH: "/usr/bin:/bin" };
-  addToolFolderToPath(env);
-  addToolFolderToPath(env);
-  expect(env.PATH).toBe("/usr/bin:/bin:/usr/local/bin");
-  const empty: Record<string, string | undefined> = {};
-  addToolFolderToPath(empty);
-  expect(empty.PATH).toBe("/usr/local/bin");
 });

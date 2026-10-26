@@ -251,6 +251,8 @@ function renderInstall(
       setup={null}
       onRemote={() => {}}
       remoteBusy={false}
+      onStopWaiting={() => {}}
+      stopWaitingBusy={false}
       onBack={() => {}}
       onNext={() => {}}
       {...overrides}
@@ -797,6 +799,35 @@ test("a failed Mac step shows its message and a button to add a remote engine", 
   expect(html).toContain("You can use an engine on another computer instead.");
   expect(html).toContain(">Add a remote engine</button>");
   expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("while the page waits for the password, it offers a remote engine and a Stop waiting button", () => {
+  const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall("approve") } });
+  expect(html).toContain("You can use an engine on another computer instead.");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(html).toMatch(/<button type="button"[^>]*>Stop waiting<\/button>/);
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("Stop waiting is shown only while the approval is awaited", () => {
+  for (const step of ["installer", "kernel", "init", "engine"] as const) {
+    const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall(step) } });
+    expect(html, step).not.toContain("Stop waiting");
+    expect(html, step).not.toContain("Add a remote engine");
+  }
+  const failed = renderInstall(builtIn, {
+    local: { ...fresh, state: "failed", plan: macPlan, install: macInstall("approve", { phase: "failed" }), problem: { code: "mac.install_not_finished", data: { reason: "cancelled" } } },
+  });
+  expect(failed).not.toContain("Stop waiting");
+  expect(failed).toContain(">Add a remote engine</button>");
+});
+
+test("Stop waiting is busy, with keyboard focus kept, while the request is on its way", () => {
+  const html = renderInstall(builtIn, {
+    local: { ...fresh, state: "installing", plan: macPlan, install: macInstall("approve") },
+    stopWaitingBusy: true,
+  });
+  expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Stopping\.\.\.<\/button>/);
 });
 
 test("a refusal of the install, such as an Intel Mac, also offers the remote engine", () => {

@@ -59,11 +59,11 @@ export function macInputs(version: "26" | "15", overrides: Partial<MachineInputs
 export function appleRules(started: boolean): ScriptedRule[] {
   return [
     {
-      argv: ["container", "system", "version", "--format", "json"],
-      result: recorded("apple-container", started ? "system-version" : "system-version-not-started"),
+      argv: ["/usr/local/bin/container", "--version"],
+      result: recorded("apple-container", "cli-version"),
     },
     {
-      argv: ["container", "system", "status", "--format", "json"],
+      argv: ["/usr/local/bin/container", "system", "status", "--format", "json"],
       result: recorded("apple-container", started ? "system-status-running" : "system-status-not-running"),
     },
   ];

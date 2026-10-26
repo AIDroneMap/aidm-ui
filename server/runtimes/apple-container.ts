@@ -20,7 +20,23 @@ import {
 
 const MIB = 1024 ** 2;
 
-/** Apple's tool runs Linux on Apple silicon only. */
+/**
+ * Where Apple's installer puts the tool (section C of the runtime facts). It is
+ * always called by this path and never found through PATH, so a program of the
+ * same name elsewhere is never run, and a Mac app started from Finder, whose
+ * PATH is short, finds it too.
+ */
+export const APPLE_TOOL = "/usr/local/bin/container";
+
+/** The first line `container --version` prints: "container CLI version 1.6.1 (build: release, commit: 804209b)". */
+const VERSION_LINE = /^container CLI version (\S+) \(build: [^,)]+, commit: [0-9a-f]+\)\s*$/;
+
+/** The version in the tool's `--version` output, or null when the output is not the tool's version line. */
+export function parseToolVersion(stdout: string): string | null {
+  return VERSION_LINE.exec(stdout.split("\n")[0] ?? "")?.[1] ?? null;
+}
+
+/** Apple's tool runs Linux on Apple silicon only. The image is pulled for this platform, and run uses that copy. */
 const PLATFORM = "linux/arm64";
 
 const START_TIMEOUT_MS = 60_000;
@@ -30,12 +46,17 @@ const PULL_OUTPUT_LINES = 1000;
 
 /** Any call fails like this when the tool's system service is off. */
 const SERVICE_DOWN = /container system service has been started/i;
-/** "container not found: <id>" from inspect and "container with ID <id> not found" from the service. */
-const NO_SUCH_CONTAINER = /container not found|container with ID .* not found/i;
-const MISSING_CONTAINER_LINE = /^(error: )?(notFound: )?"?container (not found|with ID .* not found)/i;
-const NOT_RUNNING = /container .* is not running/i;
-const NO_SUCH_IMAGE = /image not found|image .* not found/i;
-const NOT_AT_REGISTRY = /manifest unknown|not ?found|denied|unauthorized|no such (repository|manifest)/i;
+// Only whole phrases are matched. A bare "not found" or "denied" says nothing
+// about what was not found or denied (a kernel, a folder), so it is not taken
+// to mean a missing container or image.
+/** "container not found: <id>" from inspect and "container with ID <id> not found" from the service (section C4). */
+const NO_SUCH_CONTAINER = /container not found:|container with ID \S+ not found/i;
+const MISSING_CONTAINER_LINE = /^(error: )?(notFound: )?"?container (not found:|with ID \S+ not found)/i;
+const NOT_RUNNING = /container \S+ is not running/i;
+// Section C has no text for a missing image. These two come from the recorded
+// answers of the tool: its own message, and the registry's standard one.
+const NO_SUCH_IMAGE = /image not found:/i;
+const NOT_AT_REGISTRY = /manifest unknown/i;
 const NAME_IN_USE = /container already exists/i;
 const PORT_IN_USE = /address already in use|port .* (is )?(already )?(in use|allocated)|EADDRINUSE/i;
 
@@ -44,21 +65,19 @@ const PORT_IN_USE = /address already in use|port .* (is )?(already )?(in use|all
  * always sent: the tool's VM gets only 1 GiB when the flag is missing, which
  * is too little for the engine. A cap the spec leaves out is filled from
  * `defaults`, the same numbers the engine manager would give. The tool has no
- * restart policy, so there is no restart flag, and it makes the VM it needs
- * for a Linux arm64 image by itself. It is always "enforced", so the
- * detection is not read.
+ * restart policy, so there is no restart flag. The tool's list of flags for
+ * `run` has no platform flag, so none is sent: `spec.platform` is not used,
+ * and the image is the arm64 copy that the pull stored.
  */
-export function runArgv(spec: ContainerSpec, _detection: RuntimeDetection, defaults: Caps = hostDefaults()): string[] {
+export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): string[] {
   const { hostAddress, hostPort, containerPort } = spec.publish;
   const memoryMib = Math.max(1, Math.ceil((spec.memoryBytes ?? defaults.memoryBytes) / MIB));
   return [
-    "container",
+    APPLE_TOOL,
     "run",
     "-d",
     "--name",
     spec.name,
-    "--platform",
-    spec.platform ?? PLATFORM,
     "--memory",
     `${memoryMib}M`,
     "--cpus",
@@ -71,17 +90,6 @@ export function runArgv(spec: ContainerSpec, _detection: RuntimeDetection, defau
   ];
 }
 
-/** What the tool is taken to be when a start does not ask it again: caps are always enforced. */
-const ASSUMED: RuntimeDetection = {
-  id: "apple-container",
-  available: true,
-  version: null,
-  memoryCapEnforced: true,
-  cpuCapEnforced: true,
-  storagePath: null,
-  problem: null,
-};
-
 function hostDefaults(): Caps {
   return defaultCaps(os.totalmem(), os.availableParallelism());
 }
@@ -90,8 +98,10 @@ function hostDefaults(): Caps {
  * Turns the plain progress lines of `container image pull` into progress.
  * Plain output has one line per render, such as
  * "[1/2] Fetching image 31% (2 of 7 blobs, ...)" and then
- * "[2/2] Unpacking image 52% (214 of 412 entries)". The blob counts are the
- * layer counts; unpacking is the writing phase.
+ * "[2/2] Unpacking image 52% (214 of 412 entries)". Those lines do not say
+ * which blobs are layers and which are the image's config and manifests, so
+ * the counts are reported as they are and the page calls them parts.
+ * Unpacking is the writing phase.
  */
 export function applePullParser(): (line: string) => PullProgress | null {
   let layersDone: number | null = null;
@@ -144,30 +154,30 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
   }
 
   async function detect(): Promise<RuntimeDetection> {
-    // The command line half answers even when the system service is off.
-    const version = await runner.run(["container", "system", "version", "--format", "json"]);
+    // `--version` is the safest question: it needs no service and no network, so
+    // it tells that the tool is installed even when its service never started.
+    const version = await runner.run([APPLE_TOOL, "--version"]);
     if (version.exitCode === EXIT_NOT_FOUND) return notInstalled("apple-container");
-    const rows = parseJson(version.stdout);
-    const cli = Array.isArray(rows) ? rows.map(asRecord).find((row) => row?.appName === "container") : undefined;
-    if (version.exitCode !== 0 || typeof cli?.version !== "string") return unusable("apple-container");
+    const installed = version.exitCode === 0 ? parseToolVersion(version.stdout) : null;
+    if (installed === null) return unusable("apple-container");
 
-    // Not running prints its status and exits 1, so the answer is read from
-    // the text and not from the exit code alone.
-    const status = await runner.run(["container", "system", "status", "--format", "json"]);
+    // The status output is reconstructed from the tool's source and was not
+    // captured. When the service is not running it prints its status and exits
+    // 1. So only a plain "running" with exit 0 counts as running, and any other
+    // answer from a tool that answered `--version` means the service is not up,
+    // which the Mac flow fixes by starting it. It is never "unusable".
+    const status = await runner.run([APPLE_TOOL, "system", "status", "--format", "json"]);
     const state = asRecord(parseJson(status.stdout))?.status;
     if (status.exitCode !== 0 || state !== "running") {
-      if (state === "not running" || state === "unregistered") {
-        return {
-          ...unavailable("apple-container", { code: "runtime.apple_not_started", data: {} }),
-          version: cli.version,
-        };
-      }
-      return unusable("apple-container");
+      return {
+        ...unavailable("apple-container", { code: "runtime.apple_not_started", data: {} }),
+        version: installed,
+      };
     }
     return {
       id: "apple-container",
       available: true,
-      version: cli.version,
+      version: installed,
       memoryCapEnforced: true,
       cpuCapEnforced: true,
       storagePath: null,
@@ -180,7 +190,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     detect,
 
     async pull(image, pullOptions = {}) {
-      const argv = ["container", "image", "pull", "--platform", pullOptions.platform ?? PLATFORM, "--progress", "plain", image];
+      const argv = [APPLE_TOOL, "image", "pull", "--platform", pullOptions.platform ?? PLATFORM, "--progress", "plain", image];
       log(describeCommand(argv));
       const parse = applePullParser();
       const kept: string[] = [];
@@ -201,22 +211,24 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     },
 
     async start(spec) {
-      const result = await run(runArgv(spec, ASSUMED, defaults()), START_TIMEOUT_MS);
+      const result = await run(runArgv(spec, defaults()), START_TIMEOUT_MS);
       if (result.exitCode === 0) {
         // The ID the tool prints is the name.
         const containerId = result.stdout.split("\n").find((line) => line.trim() !== "")?.trim();
         if (containerId !== undefined) return ok({ containerId });
-        // No ID is no proof that nothing was made, and the name is ours.
-        await run(["container", "delete", "--force", spec.name], REMOVE_TIMEOUT_MS);
+        // Exit 0 means this call made the container: a name that was taken
+        // fails with "container already exists". With no ID printed it cannot
+        // be used, so the one this call made is removed.
+        await run([APPLE_TOOL, "delete", "--force", spec.name], REMOVE_TIMEOUT_MS);
         return fail("runtime.start_failed", { exitCode: 0 });
       }
+      // A failed run is never followed by a delete. Nothing in its output shows
+      // that this call made a container, and a container under the name may be
+      // someone else's. The engine manager clears a leftover of its own before it starts.
       const down = serviceDown(result);
       if (down !== null) return down;
       const output = text(result);
-      // A name that is in use belongs to someone else's container: leave it.
       if (NAME_IN_USE.test(output)) return fail("runtime.name_in_use", { name: spec.name });
-      // Any other failure may have left a half-made container under our name.
-      await run(["container", "delete", "--force", spec.name], REMOVE_TIMEOUT_MS);
       if (PORT_IN_USE.test(output)) return fail("runtime.port_in_use", { port: spec.publish.hostPort });
       if (NO_SUCH_IMAGE.test(output) || NOT_AT_REGISTRY.test(output)) return fail("runtime.image_not_found");
       return fail("runtime.start_failed", { exitCode: result.exitCode });
@@ -224,7 +236,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
 
     async stop(name, timeoutSeconds) {
       // The tool waits 5 seconds by default. A caller that names a time gets it.
-      const argv = ["container", "stop", ...(timeoutSeconds === undefined ? [] : ["-t", String(timeoutSeconds)]), name];
+      const argv = [APPLE_TOOL, "stop", ...(timeoutSeconds === undefined ? [] : ["-t", String(timeoutSeconds)]), name];
       const result = await run(argv, ((timeoutSeconds ?? DEFAULT_STOP_TIMEOUT_SECONDS) + 30) * 1000);
       if (result.exitCode === 0) return ok(undefined);
       // With the service off no VM runs, which is what the caller wanted.
@@ -235,7 +247,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     },
 
     async status(name) {
-      const result = await run(["container", "inspect", name]);
+      const result = await run([APPLE_TOOL, "inspect", name]);
       if (result.exitCode !== 0) {
         const down = serviceDown(result);
         if (down !== null) return down;
@@ -250,7 +262,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
 
     async logs(name, logOptions) {
       const argv = [
-        "container",
+        APPLE_TOOL,
         "logs",
         ...(logOptions.follow ? ["-f"] : []),
         ...(logOptions.tail === undefined ? [] : ["-n", String(logOptions.tail)]),
@@ -275,7 +287,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     },
 
     async remove(name) {
-      const result = await run(["container", "delete", "--force", name], REMOVE_TIMEOUT_MS);
+      const result = await run([APPLE_TOOL, "delete", "--force", name], REMOVE_TIMEOUT_MS);
       if (result.exitCode === 0) return ok(undefined);
       const down = serviceDown(result);
       if (down !== null) return down;
@@ -284,7 +296,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     },
 
     async removeImage(image) {
-      const result = await run(["container", "image", "delete", image], REMOVE_TIMEOUT_MS);
+      const result = await run([APPLE_TOOL, "image", "delete", image], REMOVE_TIMEOUT_MS);
       if (result.exitCode === 0) return ok(undefined);
       const down = serviceDown(result);
       if (down !== null) return down;
@@ -295,19 +307,17 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
 }
 
 /**
- * Reads one object of `container inspect`. The state sits in `status.state`;
- * a plain string in `status` is read too. "stopping" counts as stopped, and
- * so does "unknown": the manager then removes the container and starts anew,
- * which is also what a VM in an unknown state needs.
+ * Reads one object of `container inspect`. The state sits in `status.state`
+ * and is one of running, stopped, stopping or unknown (section C5). "stopping"
+ * counts as stopped, and so does "unknown": the manager then removes the
+ * container and starts anew, which is also what a VM in an unknown state
+ * needs. The output has no exit code of the container.
  */
 function readStatus(entry: unknown, exitCode: number): RuntimeResult<ContainerStatus> {
-  const object = asRecord(entry);
-  const status = object?.status;
-  const state = typeof status === "string" ? status : asRecord(status)?.state;
+  const state = asRecord(asRecord(entry)?.status)?.state;
   if (state === "running") return ok({ state: "running", exitCode: null, oomKilled: null });
   if (state === "stopped" || state === "stopping" || state === "unknown") {
-    const code = asRecord(status)?.exitCode;
-    return ok({ state: "stopped", exitCode: typeof code === "number" ? code : null, oomKilled: null });
+    return ok({ state: "stopped", exitCode: null, oomKilled: null });
   }
   return fail("runtime.command_failed", { operation: "status", exitCode });
 }

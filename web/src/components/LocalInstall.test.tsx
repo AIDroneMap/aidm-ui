@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { LocalEngineView } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
-import { engineInstall, fresh, macInstall, macPlan } from "../localEngine.fixtures.ts";
+import { engineInstall, fresh, macInstall, macPlan, macStoppedPlan } from "../localEngine.fixtures.ts";
 import { untranslatedText } from "../test-helpers.ts";
 import { LocalInstallStatus } from "./LocalInstall.tsx";
 
@@ -176,6 +176,20 @@ test("the kernel step says its size and that it cannot resume, with a bar that h
   expect(html).toContain("Downloading the kernel: 665 MiB. If it stops, it starts again from the beginning.");
   expect(html).toContain('<progress id="install-progress"></progress>');
   expect(html.match(/Done<\/span>/g)).toHaveLength(2);
+});
+
+test("when the tool was there already, the kernel step says its size is not known and makes none up", () => {
+  const plan = render({ ...fresh, plan: macStoppedPlan });
+  expect(plan).toContain("<span>Kernel, size not known, no resume</span>");
+  expect(plan).not.toContain("665 MiB");
+  expect(plan).not.toContain("0 B");
+
+  const html = render(mac("kernel", { install: macInstall("kernel", { steps: macStoppedPlan }) }));
+  expect(html).toContain("Downloading the kernel. If it stops, it starts again from the beginning.");
+  expect(html).not.toContain("0 B");
+  expect(html).not.toContain("665 MiB");
+  expect(html).toContain('<progress id="install-progress"></progress>');
+  expect(untranslatedText(html)).toEqual([]);
 });
 
 test("the startup files step does not make up a size", () => {

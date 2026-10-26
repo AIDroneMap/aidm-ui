@@ -77,11 +77,10 @@ them (see the table above).
 
 No Mac was available. These are rebuilt from the output formats in the Apple
 `container` source (release 1.6.1: `SystemStatus.swift` for the status JSON,
-`docs/command-reference.md` for the version JSON) and from the sample lines in
+`ReleaseVersion.swift` for the version line) and from the sample lines in
 the runtime research notes. They have not been checked against a real run.
 
 - `docker/run-image-not-found.*` (exit 125, `No such image`, which is what `docker run --pull=never` says for an image that is not stored; from the Docker CLI and daemon sources)
-- `apple-container/system-version.txt`, `system-version-not-started.txt`
 - `apple-container/system-status-running.txt`, `system-status-not-running.*`,
   `system-status-unregistered.*` (exit 1, as the source does)
 - Every other file in `apple-container/`, for the operations of the adapter. None was captured; each is built from
@@ -95,10 +94,9 @@ the runtime research notes. They have not been checked against a real run.
     rewritten service error of `Application.swift`.
   - `run.txt` (the ID is the name), `run-name-in-use.*` (`container already exists: <id>`, from the source),
     `run-service-down.*`. `run-port-in-use.*` and `run-image-not-found.*` are guesses: the research notes found no
-    port conflict message and no image message for a run. The adapter matches short phrases for that reason.
+    port conflict message and no image message for a run. The adapter matches whole phrases only, and a failed run is never followed by a delete.
   - `inspect-running.txt`, `inspect-stopped.txt`, `inspect-stopping.txt`, `inspect-unknown.txt`: the shape of the
-    documentation sample, with the state in `status.state`. `inspect-running-flat.txt` has `status` as a plain
-    string, in case a release prints it that way; the adapter reads both. No exit code is in any of them, because
+    documentation sample, with the state in `status.state`. No exit code is in any of them, because
     the research notes found none. `inspect-missing.*` is `container not found: <id>`, from the source.
   - `logs.txt`, `logs-missing.*`, `stop.txt`, `stop-not-running.*` (`container <id> is not running`, from the
     source), `stop-missing.*`, `delete.txt`, `delete-missing.*`. A real `delete --force` of a missing container may

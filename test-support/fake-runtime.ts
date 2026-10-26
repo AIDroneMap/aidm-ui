@@ -201,10 +201,10 @@ export class FakeRuntime implements ContainerRuntime {
       }
     }
 
-    const argv = (this.id === "docker" ? dockerRunArgv : this.id === "apple-container" ? appleRunArgv : podmanRunArgv)(
-      spec,
-      this.detection,
-    );
+    const argv =
+      this.id === "apple-container"
+        ? appleRunArgv(spec)
+        : (this.id === "docker" ? dockerRunArgv : podmanRunArgv)(spec, this.detection);
     this.starts.push({ spec, argv });
     const containerId = String(this.nextContainer++).padStart(64, "0");
     this.containers.set(spec.name, {

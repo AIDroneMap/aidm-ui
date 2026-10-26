@@ -337,7 +337,7 @@ export interface InstallProgressView {
   stepReceived: number | null;
   /** Bytes of that package, from the manifest. */
   size: number;
-  /** Image layers finished and in all, when the runtime's output says so. */
+  /** Parts of the image finished and in all, when the runtime's output says so. Not always layers: the page calls them parts. */
   layersDone: number | null;
   layersTotal: number | null;
   /** The current try of the pull, from 1. */

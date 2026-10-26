@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallStepId, InstallStepView } from "../../shared/api-types.ts";
 import { downloadVerified, type DownloadOptions } from "../downloads/downloader.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { describeCommand, type CommandRunner } from "../process/command-runner.ts";
+import { APPLE_TOOL, parseToolVersion } from "./apple-container.ts";
 
 export interface InstallerPin {
   version: string;
@@ -24,16 +24,17 @@ export const APPLE_CONTAINER_INSTALLER: InstallerPin = {
 
 /**
  * The kernel the tool downloads when its system service starts, in bytes: the
- * content length of the kernel archive named in the tool's source (release
- * 1.6.1), measured with a HEAD request. The download has no resume.
+ * content length of the kernel archive named in the tool's source, measured
+ * with a HEAD request for release 1.6.1 only. Another release may name another
+ * kernel, so the size is shown only for an install of that release. The
+ * download has no resume.
  */
 export const KERNEL_DOWNLOAD_SIZE = 696_573_576;
+/** The release the kernel size above was measured for. A pin for another release shows no kernel size until it is measured again. */
+const KERNEL_SIZE_RELEASE = "1.6.1";
 
 export const INSTALLER_POLL_MS = 2000;
 export const INSTALLER_WAIT_MS = 10 * 60 * 1000;
-
-/** Where the installer puts the tool. */
-const TOOL_PATH = "/usr/local/bin/container";
 
 /**
  * What the Mac lacks. "tool_missing": Apple's container tool is not there, so
@@ -44,8 +45,11 @@ export type MacNeed = "tool_missing" | "service_stopped";
 
 /** The steps before the engine's own download, each with the size it will download. */
 export function macSteps(need: MacNeed, installer: InstallerPin = APPLE_CONTAINER_INSTALLER): InstallStepView[] {
+  // The kernel's size was measured for release 1.6.1, which is what a fresh install puts on the Mac.
+  // A tool that was there before may be another release, so its kernel size is not known.
+  const kernelSize = need === "tool_missing" && installer.version === KERNEL_SIZE_RELEASE ? KERNEL_DOWNLOAD_SIZE : null;
   const fromService: InstallStepView[] = [
-    { id: "kernel", size: KERNEL_DOWNLOAD_SIZE },
+    { id: "kernel", size: kernelSize },
     // The tool does not say how big the startup files are, and no number is made up.
     { id: "init", size: null },
   ];
@@ -72,13 +76,13 @@ export interface MacSetupDeps {
   now?: () => number;
   pollMs?: number;
   waitMs?: number;
-  /** Whether the tool's file is there. */
-  toolExists?: () => boolean;
   log: (line: string) => void;
 }
 
 export interface MacSetupRun {
   signal?: AbortSignal;
+  /** Fires when the operator stops waiting for the approval. It ends only that step, with mac.install_not_finished. */
+  stopWaiting?: AbortSignal;
   /** A step began. */
   onStep: (step: InstallStepId) => void;
   /** Bytes of the installer received so far. */
@@ -145,19 +149,39 @@ export class MacSetup {
     const deadline = this.now() + (this.deps.waitMs ?? INSTALLER_WAIT_MS);
     for (;;) {
       if (run.signal?.aborted) return { ok: false, step: "approve", error: { code: "download.cancelled", data: {} } };
-      if (await this.toolPresent()) return { ok: true };
+      if (run.stopWaiting?.aborted) return this.notFinished("cancelled");
+      if (await this.toolAnswers()) return { ok: true };
       if (this.now() >= deadline) return this.notFinished("timeout");
-      await this.sleep(this.deps.pollMs ?? INSTALLER_POLL_MS);
+      await this.pause(run.stopWaiting);
     }
   }
 
-  private notFinished(reason: "timeout" | "open_failed"): MacSetupResult {
+  private notFinished(reason: "timeout" | "open_failed" | "cancelled"): MacSetupResult {
     return { ok: false, step: "approve", error: { code: "mac.install_not_finished", data: { reason } } };
   }
 
-  private async toolPresent(): Promise<boolean> {
-    if ((this.deps.toolExists ?? (() => existsSync(TOOL_PATH)))()) return true;
-    return (await this.deps.runner.run(["container", "--version"])).exitCode === 0;
+  /** Waits for the next poll, or until the operator stops waiting. */
+  private async pause(stop: AbortSignal | undefined): Promise<void> {
+    const wait = this.sleep(this.deps.pollMs ?? INSTALLER_POLL_MS);
+    if (stop === undefined) return wait;
+    if (stop.aborted) return;
+    let onStop = (): void => {};
+    const stopped = new Promise<void>((resolve) => {
+      onStop = resolve;
+      stop.addEventListener("abort", onStop, { once: true });
+    });
+    await Promise.race([wait, stopped]);
+    stop.removeEventListener("abort", onStop);
+  }
+
+  /**
+   * The tool has appeared when it answers `--version` with its version line.
+   * A file that is there but does not answer yet does not count. Only the
+   * installer's own path is asked, never a tool of the same name found through PATH.
+   */
+  private async toolAnswers(): Promise<boolean> {
+    const answer = await this.deps.runner.run([APPLE_TOOL, "--version"]);
+    return answer.exitCode === 0 && parseToolVersion(answer.stdout) !== null;
   }
 
   /**
@@ -166,7 +190,7 @@ export class MacSetup {
    * always there. The step is told from the tool's own lines.
    */
   private async startService(run: MacSetupRun): Promise<MacSetupResult> {
-    const argv = ["container", "system", "start", "--enable-kernel-install"];
+    const argv = [APPLE_TOOL, "system", "start", "--enable-kernel-install"];
     this.deps.log(describeCommand(argv));
     let step: InstallStepId = "kernel";
     run.onStep(step);
@@ -185,14 +209,4 @@ export class MacSetup {
     if (run.signal?.aborted) return { ok: false, step, error: { code: "download.cancelled", data: {} } };
     return { ok: false, step, error: { code: "mac.start_failed", data: { step, exitCode: result.exitCode } } };
   }
-}
-
-/**
- * Programs started from Finder get a short PATH without the folder the
- * installer uses. The tool is looked up by name everywhere, so the folder is
- * added once, at start.
- */
-export function addToolFolderToPath(env: Record<string, string | undefined> = process.env): void {
-  const folders = (env.PATH ?? "").split(":").filter((folder) => folder !== "");
-  if (!folders.includes("/usr/local/bin")) env.PATH = [...folders, "/usr/local/bin"].join(":");
 }

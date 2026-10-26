@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ScriptedRunner, recorded, recordedText, type ScriptedRule } from "../../test-support/scripted-runner.ts";
 import { applePullParser, appleContainerRuntime, runArgv } from "./apple-container.ts";
-import type { ContainerSpec, PullProgress, RuntimeDetection } from "./runtime.ts";
+import type { ContainerSpec, PullProgress } from "./runtime.ts";
 
 const IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd";
 const NAME = "aidm-engine";
@@ -10,15 +10,8 @@ const MIB = 1024 ** 2;
 /** What the engine manager would give on a computer with 32 GiB and 8 cores. */
 const DEFAULTS = { memoryBytes: 25 * GIB, cpus: 8 };
 
-const detection: RuntimeDetection = {
-  id: "apple-container",
-  available: true,
-  version: "1.6.1",
-  memoryCapEnforced: true,
-  cpuCapEnforced: true,
-  storagePath: null,
-  problem: null,
-};
+/** Spelled out here on purpose: the tool is always called by this path (section C of the runtime facts). */
+const TOOL = "/usr/local/bin/container";
 
 function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
   return {
@@ -38,13 +31,15 @@ function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
 const rec = (name: string) => recorded("apple-container", name);
 
 const argv = {
-  run: runArgv(spec(), detection, DEFAULTS),
-  pull: ["container", "image", "pull", "--platform", "linux/arm64", "--progress", "plain", IMAGE],
-  inspect: ["container", "inspect", NAME],
-  stop: ["container", "stop", NAME],
-  delete: ["container", "delete", "--force", NAME],
-  imageDelete: ["container", "image", "delete", IMAGE],
-  logs: ["container", "logs", NAME],
+  run: runArgv(spec(), DEFAULTS),
+  pull: [TOOL, "image", "pull", "--platform", "linux/arm64", "--progress", "plain", IMAGE],
+  inspect: [TOOL, "inspect", NAME],
+  stop: [TOOL, "stop", NAME],
+  delete: [TOOL, "delete", "--force", NAME],
+  imageDelete: [TOOL, "image", "delete", IMAGE],
+  logs: [TOOL, "logs", NAME],
+  version: [TOOL, "--version"],
+  status: [TOOL, "system", "status", "--format", "json"],
 };
 
 function make(rules: ScriptedRule[]) {
@@ -53,10 +48,9 @@ function make(rules: ScriptedRule[]) {
 }
 
 describe("the command line that starts the container", () => {
-  test("it carries the fixed name, the platform, the memory and CPU caps, the loopback publish, the bind mount and the arguments after the image", () => {
-    expect(runArgv(spec(), detection, DEFAULTS)).toEqual([
-      "container", "run", "-d", "--name", NAME,
-      "--platform", "linux/arm64",
+  test("it carries the tool's path, the fixed name, the memory and CPU caps, the loopback publish, the bind mount and the arguments after the image", () => {
+    expect(runArgv(spec(), DEFAULTS)).toEqual([
+      TOOL, "run", "-d", "--name", NAME,
       "--memory", "8192M", "--cpus", "4",
       "-p", "127.0.0.1:41823:3000",
       "-v", "/Users/operator/engine-data:/var/www/data",
@@ -65,38 +59,110 @@ describe("the command line that starts the container", () => {
   });
 
   test("a spec without caps still sends both, filled from the defaults, because the tool's own VM gets 1 GiB", () => {
-    const line = runArgv(spec({ memoryBytes: null, cpus: null }), detection, DEFAULTS);
+    const line = runArgv(spec({ memoryBytes: null, cpus: null }), DEFAULTS);
     expect(line[line.indexOf("--memory") + 1]).toBe(`${(25 * GIB) / MIB}M`);
     expect(line[line.indexOf("--cpus") + 1]).toBe("8");
   });
 
-  test("the caps are sent even if a detection says they would not be enforced", () => {
-    const line = runArgv(spec(), { ...detection, memoryCapEnforced: false, cpuCapEnforced: false }, DEFAULTS);
-    expect(line).toContain("--memory");
-    expect(line).toContain("--cpus");
-  });
-
   test("the memory is whole MiB, rounded up", () => {
-    const line = runArgv(spec({ memoryBytes: 3 * GIB + 1 }), detection, DEFAULTS);
+    const line = runArgv(spec({ memoryBytes: 3 * GIB + 1 }), DEFAULTS);
     expect(line[line.indexOf("--memory") + 1]).toBe("3073M");
   });
 
   test("there is no restart flag, no pull flag, and the publish is on loopback once", () => {
-    const line = runArgv(spec({ gpu: true }), detection, DEFAULTS);
+    const line = runArgv(spec({ gpu: true }), DEFAULTS);
     expect(line.some((part) => part.startsWith("--restart") || part === "--pull=never")).toBe(false);
     expect(line.filter((part) => part === "-p")).toEqual(["-p"]);
     expect(line[line.indexOf("-p") + 1]?.startsWith("127.0.0.1:")).toBe(true);
   });
 
-  test("every mount is a -v and the platform of the spec wins when it names one", () => {
-    const line = runArgv(
-      spec({ platform: "linux/arm64/v8", mounts: [{ hostPath: "/a", containerPath: "/x" }, { hostPath: "/b", containerPath: "/y" }] }),
-      detection,
-      DEFAULTS,
-    );
+  test("every mount is a -v", () => {
+    const line = runArgv(spec({ mounts: [{ hostPath: "/a", containerPath: "/x" }, { hostPath: "/b", containerPath: "/y" }] }), DEFAULTS);
     expect(line).toContain("/a:/x");
     expect(line).toContain("/b:/y");
-    expect(line[line.indexOf("--platform") + 1]).toBe("linux/arm64/v8");
+  });
+
+  // The flags the tool lists for run name no platform: the image is pulled for linux/arm64, and run uses that copy.
+  test("run has no platform flag, even when the spec names a platform", () => {
+    expect(runArgv(spec(), DEFAULTS)).not.toContain("--platform");
+    expect(runArgv(spec({ platform: "linux/arm64/v8" }), DEFAULTS)).not.toContain("--platform");
+  });
+});
+
+describe("detect", () => {
+  const versionRule = (): ScriptedRule => ({ argv: argv.version, result: rec("cli-version") });
+  const statusRule = (name: string): ScriptedRule => ({ argv: argv.status, result: rec(name) });
+
+  test("the tool is asked by its path with --version first, and then for the state of its service", async () => {
+    const { runtime, runner } = make([versionRule(), statusRule("system-status-running")]);
+    expect(await runtime.detect()).toEqual({
+      id: "apple-container",
+      available: true,
+      version: "1.6.1",
+      memoryCapEnforced: true,
+      cpuCapEnforced: true,
+      storagePath: null,
+      problem: null,
+    });
+    expect(runner.calls).toEqual([argv.version, argv.status]);
+  });
+
+  // The status output is reconstructed from the tool's source, not captured, so the answer leans on --version.
+  test("a tool that answers --version while its service is not running is apple_not_started, with its version", async () => {
+    for (const status of ["system-status-not-running", "system-status-unregistered"]) {
+      const { runtime } = make([versionRule(), statusRule(status)]);
+      const found = await runtime.detect();
+      expect(found.available, status).toBe(false);
+      expect(found.version, status).toBe("1.6.1");
+      expect(found.problem, status).toEqual({ code: "runtime.apple_not_started", data: {} });
+    }
+  });
+
+  test("a status the code cannot read, from a tool that answered --version, is still apple_not_started and never unusable", async () => {
+    for (const result of [
+      { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "something new\n", stderr: "" },
+      { exitCode: 124, stdout: "", stderr: "" },
+    ]) {
+      const { runtime } = make([versionRule(), { argv: argv.status, result }]);
+      expect((await runtime.detect()).problem).toEqual({ code: "runtime.apple_not_started", data: {} });
+    }
+  });
+
+  test("no tool at the path is runtime.not_installed, and no status is asked", async () => {
+    const { runtime, runner } = make([]);
+    expect((await runtime.detect()).problem).toEqual({ code: "runtime.not_installed", data: { runtime: "apple-container" } });
+    expect(runner.calls).toEqual([argv.version]);
+  });
+
+  test("a file that does not run, or prints something other than the version line, is runtime.unusable", async () => {
+    for (const result of [
+      { exitCode: 126, stdout: "", stderr: "permission denied" },
+      { exitCode: 0, stdout: "hello\n", stderr: "" },
+      { exitCode: 1, stdout: "container CLI version 1.6.1 (build: release, commit: 804209b)\n", stderr: "" },
+    ]) {
+      const { runtime } = make([{ argv: argv.version, result }]);
+      expect((await runtime.detect()).problem, JSON.stringify(result)).toEqual({ code: "runtime.unusable", data: { runtime: "apple-container" } });
+    }
+  });
+
+  test("a container tool elsewhere on the search path is never run", async () => {
+    const { runtime, runner } = make([
+      { argv: ["container", "--version"], result: rec("cli-version") },
+      { argv: ["container", "system", "status", "--format", "json"], result: rec("system-status-running") },
+      { argv: ["container", "image", "pull", "--platform", "linux/arm64", "--progress", "plain", IMAGE], result: rec("pull") },
+      { argv: ["container", "inspect", NAME], result: rec("inspect-running") },
+    ]);
+    expect((await runtime.detect()).problem?.code).toBe("runtime.not_installed");
+    expect((await runtime.pull(IMAGE)).ok).toBe(false);
+    expect((await runtime.status(NAME)).ok).toBe(false);
+    await runtime.start(spec());
+    await runtime.stop(NAME);
+    await runtime.remove(NAME);
+    await runtime.removeImage(IMAGE);
+    await runtime.logs(NAME, { follow: false, onLine: () => {} });
+    expect(runner.calls.length).toBeGreaterThan(0);
+    expect(runner.calls.every((call) => call[0] === TOOL)).toBe(true);
   });
 });
 
@@ -113,21 +179,33 @@ describe("start", () => {
     expect(runner.calls).not.toContainEqual(argv.delete);
   });
 
-  test("a port that is in use gives runtime.port_in_use and clears the half-made container", async () => {
-    const { runtime, runner } = make([
-      { argv: argv.run, result: rec("run-port-in-use") },
-      { argv: argv.delete, result: rec("delete") },
-    ]);
+  // A failed run says nothing that shows it made the container, so start never deletes one it cannot be sure it made.
+  test("a port that is in use gives runtime.port_in_use and deletes nothing", async () => {
+    const { runtime, runner } = make([{ argv: argv.run, result: rec("run-port-in-use") }]);
     expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.port_in_use", data: { port: 41823 } } });
-    expect(runner.calls).toContainEqual(argv.delete);
+    expect(runner.calls.some((call) => call.includes("delete"))).toBe(false);
   });
 
   test("an image that is not stored gives runtime.image_not_found", async () => {
-    const { runtime } = make([
-      { argv: argv.run, result: rec("run-image-not-found") },
-      { argv: argv.delete, result: rec("delete") },
-    ]);
+    const { runtime, runner } = make([{ argv: argv.run, result: rec("run-image-not-found") }]);
     expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
+    expect(runner.calls.some((call) => call.includes("delete"))).toBe(false);
+  });
+
+  // The text is made up for the test: only the shape matters, a not-found error that is not about the image.
+  test("a missing kernel is not a missing image: it gives runtime.start_failed with the exit code", async () => {
+    const { runtime, runner } = make([
+      { argv: argv.run, result: { exitCode: 1, stdout: "", stderr: 'Error: notFound: "default kernel not found"\n' } },
+    ]);
+    expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { exitCode: 1 } } });
+    expect(runner.calls.some((call) => call.includes("delete"))).toBe(false);
+  });
+
+  test("an access error that does not name the image is runtime.start_failed too", async () => {
+    const { runtime } = make([
+      { argv: argv.run, result: { exitCode: 1, stdout: "", stderr: 'Error: internalError: "permission denied on the mounted folder"\n' } },
+    ]);
+    expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { exitCode: 1 } } });
   });
 
   test("a system service that is off gives runtime.apple_not_started", async () => {
@@ -135,16 +213,14 @@ describe("start", () => {
     expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.apple_not_started", data: {} } });
   });
 
-  test("any other failure gives runtime.start_failed with the exit code and clears the container", async () => {
-    const { runtime, runner } = make([
-      { argv: argv.run, result: { exitCode: 3, stdout: "", stderr: "Error: something odd\n" } },
-      { argv: argv.delete, result: rec("delete") },
-    ]);
+  test("any other failure gives runtime.start_failed with the exit code and deletes nothing", async () => {
+    const { runtime, runner } = make([{ argv: argv.run, result: { exitCode: 3, stdout: "", stderr: "Error: something odd\n" } }]);
     expect(await runtime.start(spec())).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { exitCode: 3 } } });
-    expect(runner.calls).toContainEqual(argv.delete);
+    expect(runner.calls).toEqual([argv.run]);
   });
 
-  test("a success that prints no ID counts as failed and clears the container", async () => {
+  // Exit 0 means the tool made the container in this call (a taken name fails with "container already exists"), so it is ours to remove.
+  test("a success that prints no ID counts as failed and clears the container this call made", async () => {
     const { runtime, runner } = make([
       { argv: argv.run, result: { exitCode: 0, stdout: "", stderr: "" } },
       { argv: argv.delete, result: rec("delete") },
@@ -154,7 +230,7 @@ describe("start", () => {
   });
 
   test("it asks for the defaults of the manager when the spec has no caps", async () => {
-    const wanted = runArgv(spec({ memoryBytes: null, cpus: null }), detection, DEFAULTS);
+    const wanted = runArgv(spec({ memoryBytes: null, cpus: null }), DEFAULTS);
     const { runtime, runner } = make([{ argv: wanted, result: rec("run") }]);
     expect((await runtime.start(spec({ memoryBytes: null, cpus: null }))).ok).toBe(true);
     expect(runner.calls[0]).toContain("--memory");
@@ -163,7 +239,7 @@ describe("start", () => {
 });
 
 describe("pull", () => {
-  test("the recorded plain output gives layer counts, then the writing phase", async () => {
+  test("the recorded plain output gives part counts, then the writing phase", async () => {
     const { runtime, runner } = make([{ argv: argv.pull, result: rec("pull") }]);
     const progress: PullProgress[] = [];
     expect(await runtime.pull(IMAGE, { onProgress: (step) => progress.push(step) })).toEqual({ ok: true, value: undefined });
@@ -178,7 +254,7 @@ describe("pull", () => {
   });
 
   test("the platform of the call replaces the default", async () => {
-    const other = ["container", "image", "pull", "--platform", "linux/arm64/v8", "--progress", "plain", IMAGE];
+    const other = [TOOL, "image", "pull", "--platform", "linux/arm64/v8", "--progress", "plain", IMAGE];
     const { runtime, runner } = make([{ argv: other, result: rec("pull") }]);
     await runtime.pull(IMAGE, { platform: "linux/arm64/v8" });
     expect(runner.calls).toEqual([other]);
@@ -187,6 +263,18 @@ describe("pull", () => {
   test("an image that is not at the registry gives runtime.image_not_found", async () => {
     const { runtime } = make([{ argv: argv.pull, result: rec("pull-not-found") }]);
     expect(await runtime.pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
+  });
+
+  // The texts are made up for the test: a bare "denied" or "notFound" is not proof that the image is missing.
+  test("an access refusal, or a not-found error about something else, is runtime.pull_failed", async () => {
+    for (const stderr of [
+      "Error: internalError: \"denied: requested access to the resource is denied\"\n",
+      "Error: notFound: \"default kernel not found\"\n",
+      "Error: unauthorized: authentication required\n",
+    ]) {
+      const { runtime } = make([{ argv: argv.pull, result: { exitCode: 1, stdout: "", stderr } }]);
+      expect(await runtime.pull(IMAGE), stderr).toEqual({ ok: false, error: { code: "runtime.pull_failed", data: { exitCode: 1 } } });
+    }
   });
 
   test("a system service that is off gives runtime.apple_not_started", async () => {
@@ -221,7 +309,6 @@ describe("status", () => {
     ["inspect-stopped", { state: "stopped", exitCode: null, oomKilled: null }],
     ["inspect-stopping", { state: "stopped", exitCode: null, oomKilled: null }],
     ["inspect-unknown", { state: "stopped", exitCode: null, oomKilled: null }],
-    ["inspect-running-flat", { state: "running", exitCode: null, oomKilled: null }],
   ] as const;
   for (const [recording, expected] of states) {
     test(`${recording} reads as ${expected.state}`, async () => {
@@ -230,10 +317,24 @@ describe("status", () => {
     });
   }
 
-  test("a stopped container reports an exit code when the tool gives one", async () => {
-    const text = recordedText("apple-container", "inspect-stopped").replace('"state": "stopped"', '"state": "stopped",\n      "exitCode": 137');
-    const { runtime } = make([{ argv: argv.inspect, result: { exitCode: 0, stdout: text, stderr: "" } }]);
-    expect(await runtime.status(NAME)).toEqual({ ok: true, value: { state: "stopped", exitCode: 137, oomKilled: null } });
+  test("a plain string in status is not a state the tool prints, so it is runtime.command_failed", async () => {
+    const flat = '[{"id":"aidm-engine","status":"running"}]';
+    const { runtime } = make([{ argv: argv.inspect, result: { exitCode: 0, stdout: flat, stderr: "" } }]);
+    expect(await runtime.status(NAME)).toEqual({
+      ok: false,
+      error: { code: "runtime.command_failed", data: { operation: "status", exitCode: 0 } },
+    });
+  });
+
+  // The text is made up for the test.
+  test("a not-found error about something else is not a missing container", async () => {
+    const { runtime } = make([
+      { argv: argv.inspect, result: { exitCode: 1, stdout: "", stderr: 'Error: notFound: "default kernel not found"\n' } },
+    ]);
+    expect(await runtime.status(NAME)).toEqual({
+      ok: false,
+      error: { code: "runtime.command_failed", data: { operation: "status", exitCode: 1 } },
+    });
   });
 
   test("a container that is not found is missing, not an error", async () => {
@@ -267,7 +368,7 @@ describe("status", () => {
 
 describe("logs", () => {
   test("the recorded lines reach the caller, with -f and -n when asked", async () => {
-    const followed = ["container", "logs", "-f", "-n", "50", NAME];
+    const followed = [TOOL, "logs", "-f", "-n", "50", NAME];
     const { runtime, runner } = make([{ argv: followed, result: rec("logs") }]);
     const lines: string[] = [];
     expect(await runtime.logs(NAME, { follow: true, tail: 50, onLine: (line) => lines.push(line) })).toEqual({ ok: true, value: undefined });
@@ -299,7 +400,7 @@ describe("logs", () => {
 
 describe("stop, remove and removeImage", () => {
   test("stop gives the container the time asked for, and the tool's default otherwise", async () => {
-    const timed = ["container", "stop", "-t", "30", NAME];
+    const timed = [TOOL, "stop", "-t", "30", NAME];
     const { runtime, runner } = make([
       { argv: argv.stop, result: rec("stop") },
       { argv: timed, result: rec("stop") },

@@ -15,9 +15,11 @@ function InstallSteps({ view }: { view: LocalEngineView | null }) {
       {steps.map((step) => (
         <li key={step.id} aria-current={step.state === "current" ? "step" : undefined} className={`install-step-${step.state}`}>
           <span>
-            {step.size === null
-              ? t(`local.install.item.${step.id}`)
-              : t(`local.install.item.${step.id}`, { size: formatBytes(step.size, step.id === "kernel" ? "up" : "nearest") })}
+            {step.size !== null
+              ? t(`local.install.item.${step.id}`, { size: formatBytes(step.size, step.id === "kernel" ? "up" : "nearest") })
+              : step.id === "kernel"
+                ? t("local.install.item.kernel_unknown")
+                : t(`local.install.item.${step.id}`)}
           </span>
           <span className="install-step-state">{t(`local.install.item_state.${step.state}`)}</span>
         </li>
@@ -52,6 +54,9 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
           <p>
             {status.step === "approve" || status.step === "init" ? (
               t(`local.install.step.${status.step}`)
+            ) : status.step === "kernel" && status.size === null ? (
+              // A kernel whose size is not known: the step says so and the bar has no value.
+              <label htmlFor={progressId}>{t("local.install.step.kernel_unknown")}</label>
             ) : (
               <label htmlFor={progressId}>
                 {t(`local.install.step.${status.step}`, {

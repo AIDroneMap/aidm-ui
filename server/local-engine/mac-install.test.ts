@@ -17,7 +17,9 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 const GiB = 1024 ** 3;
 const ENGINE_SIZE = 622_710_197;
 const KERNEL_SIZE = 696_573_576;
-const START = ["container", "system", "start", "--enable-kernel-install"];
+/** Spelled out here on purpose: the tool is always called by this path. */
+const TOOL = "/usr/local/bin/container";
+const START = [TOOL, "system", "start", "--enable-kernel-install"];
 
 const open: Harness[] = [];
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -48,8 +50,16 @@ beforeEach(async () => {
 
 /** The package sits in the harness's own data folder, so `open` is matched by its program and the path is left out. */
 class MacRunner extends ScriptedRunner {
+  /** Runs just before the system start, for a test that needs something to happen around it. */
+  beforeStart: (() => Promise<void>) | undefined;
+
   override run(argv: string[]) {
     return super.run(argv[0] === "open" ? ["open", "<installer>"] : argv);
+  }
+
+  override async stream(argv: string[], options: Parameters<ScriptedRunner["stream"]>[1]) {
+    if (argv.join(" ") === START.join(" ")) await this.beforeStart?.();
+    return super.stream(argv, options);
   }
 }
 
@@ -91,6 +101,9 @@ function mac(
     start?: ScriptedRule["result"];
     open?: ScriptedRule["result"];
     appears?: boolean;
+    /** Replaces the wait between two polls, which by default only moves the clock. */
+    sleep?: (ms: number) => Promise<void>;
+    beforeStart?: () => Promise<void>;
     sampleDataset?: NonNullable<Parameters<typeof openHarness>[0]>["sampleDataset"];
   } = {},
 ): Mac {
@@ -111,7 +124,7 @@ function mac(
       },
     },
     {
-      argv: ["container", "--version"],
+      argv: [TOOL, "--version"],
       result: () =>
         opened && options.appears !== false && ++polls > 2
           ? { exitCode: 0, stdout: "container CLI version 1.6.1 (build: release, commit: 804209b)\n", stderr: "" }
@@ -127,6 +140,7 @@ function mac(
     },
   ];
   const runner = new MacRunner(rules);
+  runner.beforeStart = options.beforeStart;
   const h = openHarness({
     enginePollMs: 50,
     runPollMs: 30,
@@ -137,11 +151,12 @@ function mac(
     macSetup: {
       runner,
       installer: pin,
-      sleep: async (ms) => {
-        clock.now += ms;
-      },
+      sleep:
+        options.sleep ??
+        (async (ms) => {
+          clock.now += ms;
+        }),
       now: () => clock.now,
-      toolExists: () => false,
       backoffMs: () => 0,
     },
   });
@@ -221,7 +236,12 @@ test("before any click the view already holds the plan of a Mac without the tool
     { id: "init", size: null },
     { id: "engine", size: ENGINE_SIZE },
   ]);
-  expect((await localView(mac("stopped").h)).plan?.map((step) => step.id)).toEqual(["kernel", "init", "engine"]);
+  // A tool that was there before may not be release 1.6.1, so the size measured for that release is not shown.
+  expect((await localView(mac("stopped").h)).plan).toEqual([
+    { id: "kernel", size: null },
+    { id: "init", size: null },
+    { id: "engine", size: ENGINE_SIZE },
+  ]);
   expect((await localView(mac("running").h)).plan).toBeNull();
 });
 
@@ -256,11 +276,11 @@ test("the step list is complete, with the kernel's size and no size for the star
   expect(installViews.some((install) => install?.step === "installer" && install.stepReceived === pin.size)).toBe(true);
 });
 
-test("a Mac whose tool never ran shows only the kernel, the startup files and the engine, and downloads no installer", async () => {
+test("a Mac whose tool never ran shows only the kernel, the startup files and the engine, with no kernel size, and downloads no installer", async () => {
   const { h, runner } = mac("stopped");
   const accepted = (await (await send(h, "POST", "/api/local-engine/install")).json()) as LocalEngineView;
   expect(accepted.install?.steps).toEqual([
-    { id: "kernel", size: KERNEL_SIZE },
+    { id: "kernel", size: null },
     { id: "init", size: null },
     { id: "engine", size: ENGINE_SIZE },
   ]);
@@ -349,18 +369,124 @@ test("without enough disk the install refuses before downloading anything, count
   expect(files.requests).toEqual([]);
 });
 
+// The wait for the approval can be ended by the operator.
+
+/** A wait between polls that really waits a moment and does not move the clock, so the 10 minutes never run out in a test. */
+const holdOn = (): Promise<void> => Bun.sleep(5);
+const cancelWaiting = (h: Harness) => send(h, "POST", "/api/local-engine/install/cancel");
+
+test("while the page waits for the password, Stop waiting ends the step with mac.install_not_finished and the reason cancelled", async () => {
+  const { h, runner } = mac("missing", { appears: false, sleep: holdOn });
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).install?.step === "approve");
+
+  const response = await cancelWaiting(h);
+  expect(response.status).toBe(200);
+  await eventually(async () => (await localView(h)).state === "failed");
+
+  const view = await localView(h);
+  expect(view.problem).toEqual({ code: "mac.install_not_finished", data: { reason: "cancelled" } });
+  expect(view.install).toMatchObject({ phase: "failed", step: "approve" });
+  expect(view.installed).toBeNull();
+  // Nothing after the approval ran, and a new try is allowed.
+  expect(runner.calls.some((call) => call.includes("system"))).toBe(false);
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+});
+
+test("Stop waiting when nothing waits for an approval changes nothing", async () => {
+  const idle = mac("missing");
+  const answer = await cancelWaiting(idle.h);
+  expect(answer.status).toBe(200);
+  expect((await answer.json() as LocalEngineView).install).toBeNull();
+  expect(idle.runner.calls).toEqual([]);
+
+  // A click that comes after the approval does not stop the later steps.
+  const { h } = mac("missing");
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).state === "ready");
+  expect((await cancelWaiting(h)).status).toBe(200);
+  expect((await localView(h)).state).toBe("ready");
+});
+
+// The look at the tool after the system service started.
+
+test("the engine is pulled after a look at the tool that began after the service started, not one that began before it", async () => {
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let late: Promise<Response> | undefined;
+  const { h, apple } = mac("stopped", {
+    beforeStart: async () => {
+      // A look at the tools begins while the service is still off, and it ends after the service started.
+      const original = apple.detect.bind(apple);
+      let entered = (): void => {};
+      const seen = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let held = false;
+      apple.detect = async () => {
+        const snapshot = await original();
+        if (!held) {
+          held = true;
+          entered();
+          await gate;
+        }
+        return snapshot;
+      };
+      late = fetch(`${h.base}/api/settings/runtime`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runtime: null }),
+      });
+      await seen;
+      setTimeout(release, 50);
+    },
+  });
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).state === "ready");
+  expect(apple.pulls).toHaveLength(1);
+  await late;
+});
+
+test("a look at the tool that fails after the start is a failed start with a line of its own in the log", async () => {
+  const { h, apple } = mac("stopped", {
+    beforeStart: async () => {
+      apple.detect = async () => {
+        throw new Error("the tool did not answer");
+      };
+    },
+  });
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).state === "failed");
+  expect((await localView(h)).problem?.code).toBe("mac.start_failed");
+  expect(apple.pulls).toEqual([]);
+  expect(h.logs.some((line) => line.startsWith("Looking for container runtimes failed: the tool did not answer"))).toBe(true);
+  expect(h.logs.some((line) => line.includes("could not be looked at again after it started"))).toBe(true);
+});
+
+test("a failure while working out the install steps is logged as that, and not as a failed look at the runtimes", async () => {
+  const { h } = mac("stopped");
+  h.manifests.offerWithVariant = async () => {
+    throw new Error("the manifest broke");
+  };
+  await localView(h);
+  expect(h.logs.some((line) => line.includes("Working out the install steps failed: the manifest broke"))).toBe(true);
+  expect(h.logs.some((line) => line.startsWith("Looking for container runtimes failed"))).toBe(false);
+});
+
 // Criterion: the recorded start command always carries the memory and CPU flags and the rest.
 
-test("the container starts with the caps, the loopback publish, the bind mount, the fixed name and the platform, and no restart flag", async () => {
+test("the container starts with the caps, the loopback publish, the bind mount and the fixed name, and no restart flag and no platform flag", async () => {
   const { h, apple } = mac("missing");
   await send(h, "POST", "/api/local-engine/install");
   await eventually(async () => (await localView(h)).state === "ready");
 
   const [started] = apple.starts;
   const argv = started?.argv ?? [];
-  expect(argv.slice(0, 4)).toEqual(["container", "run", "-d", "--name"]);
+  expect(argv.slice(0, 4)).toEqual([TOOL, "run", "-d", "--name"]);
   expect(argv[argv.indexOf("--name") + 1]).toBe(CONTAINER_NAME);
-  expect(argv[argv.indexOf("--platform") + 1]).toBe("linux/arm64");
+  expect(argv).not.toContain("--platform");
   expect(argv).toContain("--memory");
   expect(argv).toContain("--cpus");
   expect(argv[argv.indexOf("-p") + 1]).toMatch(/^127\.0\.0\.1:\d+:3000$/);
