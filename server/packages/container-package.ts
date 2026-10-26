@@ -1,10 +1,10 @@
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { InstallProgressView } from "../../shared/api-types.ts";
+import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
 import type { FreeBytes } from "../machine/disk.ts";
-import { IN_IMAGE_CHECK_TIMEOUT_MS, NVIDIA_TOOLKIT_GUIDE_URL, parseGpuListing } from "../machine/gpu.ts";
+import { IN_IMAGE_CHECK_TIMEOUT_MS, inImageFailed, parseGpuListing } from "../machine/gpu.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
 import type { ContainerRuntime, ContainerSpec, OneOffSpec } from "../runtimes/runtime.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
@@ -36,6 +36,8 @@ export type ContainerVariant = Extract<ManifestVariant, { kind: "container" }>;
 export interface ContainerPackageDeps {
   runtime: ContainerRuntime;
   variant: ContainerVariant;
+  /** Which entry of the manifest the variant is, for the progress. */
+  variantId: VariantId;
   freeBytes: FreeBytes;
   /** Where the runtime keeps images, when it says; the pull lands there. */
   storagePath: string | null;
@@ -79,6 +81,7 @@ export class ContainerPackage implements EnginePackage {
       attempts = attempt;
       const view = (layers: { done: number | null; total: number | null }): InstallProgressView => ({
         phase: "pulling",
+        variant: this.deps.variantId,
         size: variant.size,
         layersDone: layers.done,
         layersTotal: layers.total,
@@ -105,25 +108,20 @@ export class ContainerPackage implements EnginePackage {
    * Check c: the driver's listing, run once inside the pulled image with the
    * graphics card passed through. It never pulls, so it is for after install().
    */
-  async confirmGpu(): Promise<PackageResult<void>> {
+  async confirmGpu(signal?: AbortSignal): Promise<PackageResult<void>> {
     const spec: OneOffSpec = {
       name: `${CONTAINER_NAME}-gpu-check`,
       image: this.image,
       platform: null,
-      publish: { hostAddress: "127.0.0.1", hostPort: 0, containerPort: ENGINE_PORT },
-      mounts: [],
-      memoryBytes: null,
-      cpus: null,
       gpu: true,
       entrypoint: "nvidia-smi",
       args: ["-L"],
     };
-    const ran = await this.deps.runtime.runOnce(spec, IN_IMAGE_CHECK_TIMEOUT_MS);
-    const data = { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL };
-    if (!ran.ok) return fail("gpu.in_image_failed", data);
+    const ran = await this.deps.runtime.runOnce(spec, IN_IMAGE_CHECK_TIMEOUT_MS, signal);
+    if (!ran.ok) return { ok: false, error: inImageFailed() };
     const { exitCode, stdout } = ran.value;
     if (exitCode === 0 && parseGpuListing(stdout).length > 0) return ok(undefined);
-    return fail("gpu.in_image_failed", { ...data, exitCode });
+    return { ok: false, error: inImageFailed(exitCode) };
   }
 
   async start(options: PackageStartOptions): Promise<PackageResult<{ address: string }>> {

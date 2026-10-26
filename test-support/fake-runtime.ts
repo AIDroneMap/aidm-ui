@@ -78,13 +78,16 @@ export class FakeRuntime implements ContainerRuntime {
   readonly pulls: string[] = [];
   readonly starts: Array<{ spec: ContainerSpec; argv: string[] }> = [];
   /** Every one-off run, with the command line the real adapter would use. */
-  readonly oneOffs: Array<{ spec: OneOffSpec; argv: string[] }> = [];
+  readonly oneOffs: Array<{ spec: OneOffSpec; argv: string[]; signal: AbortSignal | undefined }> = [];
   readonly stops: string[] = [];
   readonly removals: string[] = [];
   readonly removedImages: string[] = [];
 
   private readonly pullOutput: PullProgress[];
   private failingPulls = 0;
+  private imageRemovalRefused = false;
+  /** While set, a one-off run waits for this to resolve or for its signal to fire. */
+  private oneOffHold: Promise<void> | undefined;
   private oneOffAnswer: RuntimeResult<CommandResult> = ok({
     exitCode: 0,
     stdout: recordedText("nvidia", "smi-l"),
@@ -142,12 +145,36 @@ export class FakeRuntime implements ContainerRuntime {
     this.oneOffAnswer = answer;
   }
 
-  async runOnce(spec: OneOffSpec): Promise<RuntimeResult<CommandResult>> {
+  /** Makes the next one-off runs wait, as a hung command does. The returned function lets them finish. */
+  holdOneOffs(): () => void {
+    let release = () => {};
+    this.oneOffHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** From now on removing an image fails and the image stays. */
+  refuseImageRemoval(): void {
+    this.imageRemovalRefused = true;
+  }
+
+  async runOnce(spec: OneOffSpec, _timeoutMs?: number, signal?: AbortSignal): Promise<RuntimeResult<CommandResult>> {
     const flags = this.id === "docker" ? DOCKER_GPU_FLAGS : PODMAN_GPU_FLAGS;
-    this.oneOffs.push({ spec, argv: oneOffArgv(this.id, spec, flags) });
-    // Like the real tools, it never pulls.
-    if (!this.images.has(spec.image)) return ok({ exitCode: 125, stdout: "", stderr: "Error: image not known" });
-    return this.oneOffAnswer;
+    this.oneOffs.push({ spec, argv: oneOffArgv(this.id, spec, flags), signal });
+    if (this.oneOffHold !== undefined) {
+      const aborted = new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+      await Promise.race([this.oneOffHold, aborted]);
+    }
+    // Like the real adapter, a run that did not end well leaves nothing behind.
+    const answer = signal?.aborted
+      ? ok<CommandResult>({ exitCode: 137, stdout: "", stderr: "" })
+      : !this.images.has(spec.image)
+        ? // Like the real tools, it never pulls.
+          ok<CommandResult>({ exitCode: 125, stdout: "", stderr: "Error: image not known" })
+        : this.oneOffAnswer;
+    if (!answer.ok || answer.value.exitCode !== 0) this.removals.push(spec.name);
+    return answer;
   }
 
   async start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>> {
@@ -208,6 +235,7 @@ export class FakeRuntime implements ContainerRuntime {
 
   async removeImage(image: string): Promise<RuntimeResult<void>> {
     this.removedImages.push(image);
+    if (this.imageRemovalRefused) return fail("runtime.command_failed", { operation: "removeImage", exitCode: 1 });
     this.images.delete(image);
     return ok(undefined);
   }

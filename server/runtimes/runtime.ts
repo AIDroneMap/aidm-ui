@@ -48,11 +48,17 @@ export interface ContainerSpec {
   args: string[];
 }
 
-/** A container that runs one command and is removed: the name, ports and mounts are not used. */
-export type OneOffSpec = ContainerSpec & {
+/** A container that runs one command and is removed. It has no ports, mounts or caps. */
+export interface OneOffSpec {
+  /** Fixed, so a run that hangs or is cut short can be found and removed. */
+  name: string;
+  image: string;
+  platform: string | null;
+  gpu: boolean;
   /** Replaces the image's own entry point. */
   entrypoint?: string;
-};
+  args: string[];
+}
 
 export type ContainerState = "running" | "stopped" | "missing";
 
@@ -79,11 +85,11 @@ export interface ContainerRuntime extends RuntimeProbe {
   /** Detached. */
   start(spec: ContainerSpec): Promise<RuntimeResult<{ containerId: string }>>;
   /**
-   * Runs one command in a new container that is removed afterwards, and waits
-   * for it. Never pulls. The result is ok whatever the command's exit code
-   * was; it fails only when the runtime cannot run containers like this.
+   * Runs one command in a new container and waits for it. Never pulls. The
+   * result is ok whatever the command's exit code was. The container is
+   * removed by `--rm`, and by name when the run fails, times out or is aborted.
    */
-  runOnce(spec: OneOffSpec, timeoutMs: number): Promise<RuntimeResult<CommandResult>>;
+  runOnce(spec: OneOffSpec, timeoutMs: number, signal?: AbortSignal): Promise<RuntimeResult<CommandResult>>;
   stop(name: string, timeoutSeconds?: number): Promise<RuntimeResult<void>>;
   status(name: string): Promise<RuntimeResult<ContainerStatus>>;
   /** Resolves when the log stream ends (container gone, follow false, or signal). */

@@ -12,7 +12,7 @@ import {
   type RuntimeDetection,
 } from "./runtime.ts";
 
-/** Needs the NVIDIA Container Toolkit set up for Docker (an "nvidia" runtime). */
+/** Needs the NVIDIA toolkit set up as a Docker runtime. */
 export const GPU_FLAGS = ["--gpus", "all"] as const;
 
 /** The command line that starts the container. Docker adds no SELinux label, so a mount has no option unless it is read-only (":ro"). */

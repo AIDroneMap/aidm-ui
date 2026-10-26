@@ -12,7 +12,7 @@ const GIB = 1024 ** 3;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: { phase: "pulling", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
+  install: { phase: "pulling", variant: "linux-amd64-cpu", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
 };
 
 const render = (view: LocalEngineView | null) => renderToStaticMarkup(<LocalInstallStatus view={view} />);
@@ -85,4 +85,41 @@ test("the warning that the test run could not use the graphics card carries a pl
   expect(html).toContain(en["gpu.in_image_failed"]);
   expect(html).toContain(`<a href="${guideUrl}" target="_blank" rel="noreferrer noopener">`);
   expect(untranslatedText(html, ["2.5.0"])).toEqual([]);
+});
+
+const gpuPulling: LocalEngineView = {
+  ...pulling,
+  install: { phase: "pulling", variant: "linux-amd64-gpu", size: 5_678_958_647, layersDone: null, layersTotal: null, attempt: 1, maxAttempts: 5 },
+};
+
+test("the download of the graphics card package says so, with its size", () => {
+  const html = render(gpuPulling);
+  expect(html).toContain("Downloading the graphics card package: 5.3 GiB");
+  expect(html).not.toContain("Downloading the engine");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("the test run inside the package has its own line in the status region, without a progress bar", () => {
+  const html = render({ ...gpuPulling, install: { ...gpuPulling.install!, phase: "checking_gpu" } });
+  expect(html).toContain(en["local.install.checking_gpu"]);
+  expect(/<div role="status">(.*?)<\/div>/.exec(html)?.[1]).toContain(en["local.install.checking_gpu"]);
+  expect(html).not.toContain("<progress");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("when the package is being deleted the line gives its size", () => {
+  const html = render({ ...gpuPulling, install: { ...gpuPulling.install!, phase: "removing_gpu_package" } });
+  expect(html).toContain("The test run failed. Deleting the graphics card package (5.3 GiB) and downloading the processor package instead.");
+  expect(html).not.toContain("<progress");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("a graphics card package that could not be deleted is a warning with the space it takes", () => {
+  const html = render({
+    ...pulling,
+    warnings: [{ code: "gpu.package_not_removed", data: { size: 5_678_958_647 } }],
+  });
+  expect(html).toContain('class="warning"');
+  expect(html).toContain("takes 5.3 GiB");
+  expect(untranslatedText(html)).toEqual([]);
 });

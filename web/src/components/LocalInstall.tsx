@@ -30,8 +30,14 @@ export function LocalInstallStatus({ view }: { view: LocalEngineView | null }) {
       <div role="status">
         {status.kind === "downloading" ? (
           <p>
-            <label htmlFor={progressId}>{t("local.install.downloading", { size: formatBytes(status.size) })}</label>
+            <label htmlFor={progressId}>
+              {t(status.graphics ? "local.install.downloading_gpu" : "local.install.downloading", { size: formatBytes(status.size) })}
+            </label>
           </p>
+        ) : status.kind === "checking_gpu" ? (
+          <p>{t("local.install.checking_gpu")}</p>
+        ) : status.kind === "removing_gpu_package" ? (
+          <p>{t("local.install.removing_gpu_package", { size: formatBytes(status.size) })}</p>
         ) : status.kind === "starting" ? (
           <p>{t("local.install.starting")}</p>
         ) : status.kind === "ready" ? (

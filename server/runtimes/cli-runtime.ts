@@ -117,8 +117,21 @@ export function cliRuntime(
       return fail("runtime.start_failed", { exitCode: result.exitCode });
     },
 
-    async runOnce(spec, timeoutMs) {
-      return ok(await run(oneOffArgv(binary, spec, tool.gpuFlags), timeoutMs));
+    async runOnce(spec, timeoutMs, signal) {
+      const argv = oneOffArgv(binary, spec, tool.gpuFlags);
+      // A check container left by a crash would make this one fail on its name.
+      await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
+      log(describeCommand(argv));
+      const out: string[] = [];
+      const err: string[] = [];
+      const result = await runner.stream(argv, {
+        signal,
+        timeoutMs,
+        onLine: (line, from) => (from === "stdout" ? out : err).push(`${line}\n`),
+      });
+      // Killing the tool's client can leave the container behind, so it is removed by name.
+      if (result.exitCode !== 0 || signal?.aborted) await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
+      return ok({ exitCode: result.exitCode, stdout: out.join(""), stderr: err.join("") });
     },
 
     async stop(name, timeoutSeconds = DEFAULT_STOP_TIMEOUT_SECONDS) {
@@ -231,6 +244,8 @@ export function oneOffArgv(binary: string, spec: OneOffSpec, gpuFlags: readonly 
     binary,
     "run",
     "--rm",
+    "--name",
+    spec.name,
     "--pull=never",
     ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
     ...(spec.gpu ? gpuFlags : []),

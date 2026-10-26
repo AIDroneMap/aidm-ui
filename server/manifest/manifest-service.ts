@@ -2,7 +2,7 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { EnginePackageOffer, PackagesView, RefreshResult, VariantId } from "../../shared/api-types.ts";
 import { base64ToBytes, bytesToBase64 } from "../../shared/base64.ts";
 import { compareVersions, isReadableVersion } from "../engines/versions.ts";
-import { describeGpu, mayUseGpuPackage, type GpuPrecheck } from "../machine/gpu.ts";
+import { describeGpu, gpuApplies, mayUseGpuPackage, type GpuPrecheck } from "../machine/gpu.ts";
 import type { Settings } from "../settings/settings.ts";
 import { verifyBuiltinManifest } from "./builtin.ts";
 import { ACCEPTED_KEYS, type AcceptedKey } from "./keys.ts";
@@ -86,17 +86,29 @@ export interface OfferFacts {
   gpu?: GpuPrecheck;
   /** The operator chose the processor only. */
   forceCpu?: boolean;
+  /** The digest of a graphics card package whose test run failed. That package is not offered again. */
+  gpuFailedDigest?: string | null;
 }
 
-function variantFor(manifest: Manifest, facts: OfferFacts): { id: VariantId; variant: ManifestVariant } | null {
-  const pick = (id: VariantId) => {
-    const variant = manifest.variants[id];
-    return variant === undefined ? null : { id, variant };
-  };
-  if (facts.platform === "linux" && facts.arch === "x64") {
+export type ChosenVariant = { id: VariantId; variant: ManifestVariant };
+
+function pickVariant(manifest: Manifest, id: VariantId): ChosenVariant | null {
+  const variant = manifest.variants[id];
+  return variant === undefined ? null : { id, variant };
+}
+
+/** Whether the test run inside the manifest's graphics card package failed before. */
+function gpuFailedBefore(manifest: Manifest, facts: OfferFacts): boolean {
+  const variant = manifest.variants["linux-amd64-gpu"];
+  return variant?.kind === "container" && variant.digest === facts.gpuFailedDigest;
+}
+
+function variantFor(manifest: Manifest, facts: OfferFacts): ChosenVariant | null {
+  const pick = (id: VariantId) => pickVariant(manifest, id);
+  if (gpuApplies(facts)) {
     // Check c, inside the pulled image, comes after this choice and can still turn it back to the processor package.
-    const graphics = mayUseGpuPackage(facts.gpu, facts.forceCpu === true) ? pick("linux-amd64-gpu") : null;
-    return graphics ?? pick("linux-amd64-cpu");
+    const wanted = mayUseGpuPackage(facts.gpu, facts.forceCpu === true) && !gpuFailedBefore(manifest, facts);
+    return (wanted ? pick("linux-amd64-gpu") : null) ?? pick("linux-amd64-cpu");
   }
   if (facts.platform === "linux" && facts.arch === "arm64") return pick("linux-arm64-cpu");
   if (facts.platform === "darwin" && facts.arch === "arm64") {
@@ -279,8 +291,16 @@ export class ManifestService {
     return (await this.offerWithVariant(facts)).view;
   }
 
-  /** The offer, and the manifest's own entry for it, which holds the image and its digest. */
-  async offerWithVariant(facts: OfferFacts): Promise<{ view: PackagesView; variant: ManifestVariant | null }> {
+  /**
+   * The offer, and the manifest's own entry for it, which holds the image and
+   * its digest. For the graphics card package, `processor` is the entry of the
+   * same manifest that replaces it if the test run fails.
+   */
+  async offerWithVariant(facts: OfferFacts): Promise<{
+    view: PackagesView;
+    variant: ManifestVariant | null;
+    processor: ChosenVariant | null;
+  }> {
     const noGpu = describeGpu(undefined, { forceCpu: false, manifestHasGpuPackage: false });
     const base = {
       updateCheck: this.deps.settings.get("updates.check"),
@@ -291,6 +311,7 @@ export class ManifestService {
       return {
         view: { ...base, offer: null, gpu: noGpu, reason: { code: "machine.windows_not_yet", data: {} } },
         variant: null,
+        processor: null,
       };
     }
 
@@ -305,7 +326,9 @@ export class ManifestService {
       usable === newest
         ? null
         : { code: "manifest.update_interface", data: { minimum: newest.manifest.minimumUiVersion, running } };
-    if (usable === undefined) return { view: { ...base, offer: null, gpu: noGpu, reason: waiting }, variant: null };
+    if (usable === undefined) {
+      return { view: { ...base, offer: null, gpu: noGpu, reason: waiting }, variant: null, processor: null };
+    }
 
     const { manifest, source, tag } = usable;
     const chosen = variantFor(manifest, facts);
@@ -318,21 +341,25 @@ export class ManifestService {
           reason: { code: "manifest.no_variant", data: { platform: facts.platform, arch: facts.arch } },
         },
         variant: null,
+        processor: null,
       };
     }
+    const processor = chosen.id === "linux-amd64-gpu" ? pickVariant(manifest, "linux-amd64-cpu") : null;
     const offer: EnginePackageOffer = {
       packageVersion: manifest.packageVersion,
       engineVersion: manifest.engineVersion,
       variant: chosen.id,
       kind: chosen.variant.kind,
       size: chosen.variant.size,
+      processorSize: processor?.variant.size ?? null,
       source,
       tag,
     };
     const gpu = describeGpu(facts.gpu, {
       forceCpu: facts.forceCpu === true,
       manifestHasGpuPackage: manifest.variants["linux-amd64-gpu"] !== undefined,
+      inImageFailed: gpuFailedBefore(manifest, facts),
     });
-    return { view: { ...base, offer, gpu, reason: waiting }, variant: chosen.variant };
+    return { view: { ...base, offer, gpu, reason: waiting }, variant: chosen.variant, processor };
   }
 }

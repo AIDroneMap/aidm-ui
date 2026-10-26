@@ -118,3 +118,26 @@ test("a release without a graphics card package, and checks that did not run, gi
     guideUrl: null,
   });
 });
+
+test("every command of the checks gets a 15 second limit, so a stuck driver cannot hold up the page", async () => {
+  const docker = new ScriptedRunner([smi, dockerInfo("info-nvidia-runtime")]);
+  await precheckGpu(docker, x64, "docker");
+  expect(docker.calls).toHaveLength(2);
+  expect(docker.timeouts).toEqual([15_000, 15_000]);
+  const podman = new ScriptedRunner([smi, cdiList("cdi-list")]);
+  await precheckGpu(podman, x64, "podman");
+  expect(podman.timeouts).toEqual([15_000, 15_000]);
+});
+
+test("a test run that already failed for this package is the reason, with the guide link", () => {
+  expect(describeGpu(ready, { forceCpu: false, manifestHasGpuPackage: true, inImageFailed: true })).toEqual({
+    state: "not_used",
+    reason: { code: "gpu.in_image_failed", data: { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL } },
+    guideUrl: NVIDIA_TOOLKIT_GUIDE_URL,
+  });
+  // The operator's own choice and a missing passthrough come first.
+  expect(describeGpu(ready, { forceCpu: true, manifestHasGpuPackage: true, inImageFailed: true }).reason?.code).toBe("gpu.forced_cpu");
+  expect(
+    describeGpu({ state: "no_passthrough", runtime: "docker" }, { forceCpu: false, manifestHasGpuPackage: true, inImageFailed: true }).reason?.code,
+  ).toBe("gpu.no_passthrough");
+});

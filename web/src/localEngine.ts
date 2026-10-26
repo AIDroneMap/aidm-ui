@@ -73,7 +73,18 @@ export function appendLogLines(existing: string[], incoming: string[], max: numb
 
 export type InstallStatus =
   | { kind: "none" }
-  | { kind: "downloading"; size: number; done: number | null; total: number | null; attempt: number; maxAttempts: number }
+  | {
+      kind: "downloading";
+      /** True for the graphics card package. */
+      graphics: boolean;
+      size: number;
+      done: number | null;
+      total: number | null;
+      attempt: number;
+      maxAttempts: number;
+    }
+  | { kind: "checking_gpu" }
+  | { kind: "removing_gpu_package"; size: number }
   | { kind: "starting" }
   | { kind: "ready" }
   | { kind: "failed" }
@@ -86,6 +97,7 @@ export function installStatus(view: LocalEngineView | null): InstallStatus {
   if (install?.phase === "pulling") {
     return {
       kind: "downloading",
+      graphics: install.variant.endsWith("-gpu"),
       size: install.size,
       done: install.layersDone,
       total: install.layersTotal,
@@ -93,6 +105,8 @@ export function installStatus(view: LocalEngineView | null): InstallStatus {
       maxAttempts: install.maxAttempts,
     };
   }
+  if (install?.phase === "checking_gpu") return { kind: "checking_gpu" };
+  if (install?.phase === "removing_gpu_package") return { kind: "removing_gpu_package", size: install.size };
   if (install?.phase === "starting") return { kind: "starting" };
   if (view.state === "ready" || view.state === "busy") return { kind: "ready" };
   if (install?.phase === "failed" || view.state === "failed") return { kind: "failed" };

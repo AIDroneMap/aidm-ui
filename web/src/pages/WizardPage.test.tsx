@@ -220,6 +220,7 @@ const builtIn: PackagesView = {
     variant: "linux-amd64-cpu",
     kind: "container",
     size: 682533845,
+    processorSize: null,
     source: "builtin",
     tag: null,
   },
@@ -459,7 +460,7 @@ const MIB = 1024 ** 2;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: { phase: "pulling", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
+  install: { phase: "pulling", variant: "linux-amd64-cpu", size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2, maxAttempts: 5 },
 };
 
 test("the install screen offers to install on this computer, below the package offer", () => {
@@ -702,4 +703,36 @@ test("a link that is not https is not shown", () => {
   });
   expect(html).toContain(en["gpu.in_image_failed"]);
   expect(html).not.toContain("<a ");
+});
+
+const graphicsOffer: PackagesView = {
+  ...builtIn,
+  offer: { ...builtIn.offer!, variant: "linux-amd64-gpu", size: 5_678_958_647, processorSize: 682_533_845 },
+  gpu: { state: "used", reason: null, guideUrl: null },
+};
+
+test("before the graphics card package is downloaded the screen gives its size and what happens if the test run fails", () => {
+  const html = renderInstall(graphicsOffer, { local: fresh });
+  expect(html).toContain(
+    "The download is the graphics card package, 5.3 GiB. If the test run inside it fails, AIDM UI deletes it and downloads the processor package instead, 651 MiB.",
+  );
+  expect(html.indexOf("The download is the graphics card package")).toBeLessThan(html.indexOf("Install on this computer"));
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the processor package alone gets no such sentence, and without a size the sentence stops short", () => {
+  expect(renderInstall({ ...graphicsOffer, offer: { ...builtIn.offer! }, gpu: { state: "used", reason: null, guideUrl: null } })).not.toContain(
+    "The download is the graphics card package",
+  );
+  const html = renderInstall({ ...graphicsOffer, offer: { ...graphicsOffer.offer!, processorSize: null } });
+  expect(html).toContain("downloads the processor package instead.");
+});
+
+test("the button stays busy during the test run and the deletion of the graphics card package", () => {
+  for (const phase of ["checking_gpu", "removing_gpu_package"] as const) {
+    const html = renderInstall(graphicsOffer, {
+      local: { ...pulling, install: { ...pulling.install!, phase, variant: "linux-amd64-gpu", size: 5_678_958_647 } },
+    });
+    expect(html).toContain(">Installing...</button>");
+  }
 });

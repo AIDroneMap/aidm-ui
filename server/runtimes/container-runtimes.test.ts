@@ -177,18 +177,25 @@ describe("the graphics card flag", () => {
     test(`${tool.id} runs one command with the entry point replaced, the card passed through, and removes the container`, async () => {
       const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
       const argv = [
-        tool.id, "run", "--rm", "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+        tool.id, "run", "--rm", "--name", NAME, "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
       ];
       const runner = new ScriptedRunner([{ argv, result: recorded("nvidia", "smi-l") }]);
       const result = await tool.make(runner).runOnce(oneOff, 120_000);
       expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: recordedText("nvidia", "smi-l"), stderr: "" } });
-      expect(runner.calls).toEqual([argv]);
+      expect(runner.calls).toEqual([[tool.id, "rm", "-f", NAME], argv]);
+    });
+
+    test(`${tool.id} clears a check container left by a crash before a one-off run`, async () => {
+      const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
+      const runner = new ScriptedRunner([]);
+      await tool.make(runner).runOnce(oneOff, 120_000);
+      expect(runner.calls[0]).toEqual([tool.id, "rm", "-f", NAME]);
     });
 
     test(`${tool.id} hands back the exit code and the message of a one-off run that failed`, async () => {
       const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
       const argv = [
-        tool.id, "run", "--rm", "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+        tool.id, "run", "--rm", "--name", NAME, "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
       ];
       const runner = new ScriptedRunner([{ argv, result: recorded("nvidia", "smi-l-no-driver") }]);
       const result = await tool.make(runner).runOnce(oneOff, 120_000);
@@ -196,12 +203,61 @@ describe("the graphics card flag", () => {
         ok: true,
         value: { exitCode: 9, stdout: "", stderr: expect.stringContaining("couldn't communicate with the NVIDIA driver") },
       });
+      // A run that failed leaves no container behind.
+      expect(runner.calls).toContainEqual([tool.id, "rm", "-f", NAME]);
+    });
+
+    test(`${tool.id} removes the container of a one-off run that ran out of time, and gives the time limit to the tool`, async () => {
+      const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
+      const argv = [
+        tool.id, "run", "--rm", "--name", NAME, "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+      ];
+      const runner = new ScriptedRunner([{ argv, result: { exitCode: 124, stdout: "", stderr: "timed out" } }]);
+      const result = await tool.make(runner).runOnce(oneOff, 120_000);
+      expect(result).toMatchObject({ ok: true, value: { exitCode: 124 } });
+      expect(runner.timeouts[1]).toBe(120_000);
+      expect(runner.calls).toContainEqual([tool.id, "rm", "-f", NAME]);
+    });
+
+    test(`${tool.id} stops a one-off run when the signal fires, and removes its container`, async () => {
+      const oneOff = { ...spec({ gpu: true, args: ["-L"] }), entrypoint: "nvidia-smi" };
+      const argv = [
+        tool.id, "run", "--rm", "--name", NAME, "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool.id], IMAGE, "-L",
+      ];
+      const controller = new AbortController();
+      let running = () => {};
+      const started = new Promise<void>((resolve) => (running = resolve));
+      const runner = new ScriptedRunner([
+        {
+          argv,
+          result: (_argv, signal) =>
+            new Promise((resolve) => {
+              running();
+              signal?.addEventListener("abort", () => resolve({ exitCode: 137, stdout: "", stderr: "" }), { once: true });
+            }),
+        },
+      ]);
+      const pending = tool.make(runner).runOnce(oneOff, 120_000, controller.signal);
+      await started;
+      expect(runner.calls).toEqual([[tool.id, "rm", "-f", NAME], argv]);
+      controller.abort();
+      await pending;
+      expect(runner.calls).toContainEqual([tool.id, "rm", "-f", NAME]);
+    });
+
+    test(`${tool.id} removes the container of a one-off run whose signal fired before it began`, async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const runner = new ScriptedRunner([]);
+      await tool.make(runner).runOnce(spec({ gpu: false, args: ["true"] }), 1000, controller.signal);
+      expect(runner.calls.filter((call) => call[1] === "run")).toEqual([]);
+      expect(runner.calls).toContainEqual([tool.id, "rm", "-f", NAME]);
     });
 
     test(`${tool.id} leaves the card flag out of a one-off run for the processor package`, async () => {
       const runner = new ScriptedRunner([]);
       await tool.make(runner).runOnce(spec({ gpu: false, args: ["true"] }), 1000);
-      expect(runner.calls[0]).toEqual([tool.id, "run", "--rm", "--pull=never", IMAGE, "true"]);
+      expect(runner.calls[1]).toEqual([tool.id, "run", "--rm", "--name", NAME, "--pull=never", IMAGE, "true"]);
     });
   }
 });

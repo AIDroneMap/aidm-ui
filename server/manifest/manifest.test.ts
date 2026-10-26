@@ -101,6 +101,7 @@ test("with no network, a Linux x64 computer is offered the built-in 2.5.0 amd64 
       variant: "linux-amd64-cpu",
       kind: "container",
       size: 682533845,
+      processorSize: null,
       source: "builtin",
       tag: null,
     },

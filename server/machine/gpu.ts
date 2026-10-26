@@ -1,7 +1,7 @@
 import type { ApiError } from "../../shared/api-error.ts";
 import type { GpuView, RuntimeId } from "../../shared/api-types.ts";
 import type { CommandRunner } from "../process/command-runner.ts";
-import { asRecord, DETECT_TIMEOUT_MS, parseJson } from "../runtimes/runtime.ts";
+import { asRecord, parseJson } from "../runtimes/runtime.ts";
 
 /**
  * Where the operator reads how to set up the NVIDIA Container Toolkit. It is
@@ -13,8 +13,10 @@ export const NVIDIA_TOOLKIT_GUIDE_URL =
 /** The device name that stands for every graphics card in Podman's list. */
 export const CDI_ALL_DEVICES = "nvidia.com/gpu=all";
 
-/** Seconds are not enough for the first run of a container with the toolkit's hook; the check waits this long. */
+/** The first run of a container with the toolkit's hook takes more than seconds. */
 export const IN_IMAGE_CHECK_TIMEOUT_MS = 120_000;
+/** Each driver or toolkit command of the checks before the download. A stuck driver must not hold up a page load. */
+export const GPU_PRECHECK_TIMEOUT_MS = 15_000;
 
 /** The lines of `nvidia-smi -L` that name a card. */
 export function parseGpuListing(stdout: string): string[] {
@@ -39,20 +41,20 @@ export type GpuPrecheck =
 
 export const NOT_CHECKED: GpuPrecheck = { state: "not_checked" };
 
-/** The GPU package exists for Linux on an Intel or AMD processor only. */
+/** Linux on an Intel or AMD processor (x86-64): the only computer the graphics card package exists for. */
 export function gpuApplies(facts: { platform: string; arch: string }): boolean {
   return facts.platform === "linux" && facts.arch === "x64";
 }
 
 async function dockerHasNvidiaRuntime(runner: CommandRunner): Promise<boolean> {
-  const info = await runner.run(["docker", "info", "--format", "json"], { timeoutMs: DETECT_TIMEOUT_MS });
+  const info = await runner.run(["docker", "info", "--format", "json"], { timeoutMs: GPU_PRECHECK_TIMEOUT_MS });
   if (info.exitCode !== 0) return false;
   const runtimes = asRecord(asRecord(parseJson(info.stdout))?.Runtimes);
   return runtimes !== undefined && "nvidia" in runtimes;
 }
 
 async function podmanHasCdiDevice(runner: CommandRunner): Promise<boolean> {
-  const list = await runner.run(["nvidia-ctk", "cdi", "list"]);
+  const list = await runner.run(["nvidia-ctk", "cdi", "list"], { timeoutMs: GPU_PRECHECK_TIMEOUT_MS });
   return list.exitCode === 0 && list.stdout.split("\n").some((line) => line.trim() === CDI_ALL_DEVICES);
 }
 
@@ -66,7 +68,7 @@ export async function precheckGpu(
   runtime: RuntimeId | null,
 ): Promise<GpuPrecheck> {
   if (!gpuApplies(facts) || (runtime !== "docker" && runtime !== "podman")) return NOT_CHECKED;
-  const listing = await runner.run(["nvidia-smi", "-L"]);
+  const listing = await runner.run(["nvidia-smi", "-L"], { timeoutMs: GPU_PRECHECK_TIMEOUT_MS });
   const gpus = listing.exitCode === 0 ? parseGpuListing(listing.stdout) : [];
   if (gpus.length === 0) return { state: "no_driver" };
 
@@ -80,9 +82,11 @@ export async function precheckGpu(
   };
 }
 
-/** Check c failed: the listing inside the pulled image did not work. */
-export function inImageFailed(): ApiError {
-  return { code: "gpu.in_image_failed", data: { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL } };
+/** Check c failed: the listing inside the pulled image did not work. The exit code is in the data when there was one. */
+export function inImageFailed(exitCode?: number): ApiError {
+  const data: Record<string, unknown> = { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL };
+  if (exitCode !== undefined) data.exitCode = exitCode;
+  return { code: "gpu.in_image_failed", data };
 }
 
 /**
@@ -92,7 +96,12 @@ export function inImageFailed(): ApiError {
  */
 export function describeGpu(
   precheck: GpuPrecheck | undefined,
-  options: { forceCpu: boolean; manifestHasGpuPackage: boolean },
+  options: {
+    forceCpu: boolean;
+    manifestHasGpuPackage: boolean;
+    /** The test run inside this very package failed before. */
+    inImageFailed?: boolean;
+  },
 ): GpuView {
   const none: GpuView = { state: "not_used", reason: null, guideUrl: null };
   if (precheck === undefined || precheck.state === "not_checked") return { ...none, state: "not_checked" };
@@ -106,6 +115,7 @@ export function describeGpu(
     };
   }
   if (!options.manifestHasGpuPackage) return none;
+  if (options.inImageFailed) return { state: "not_used", reason: inImageFailed(), guideUrl: NVIDIA_TOOLKIT_GUIDE_URL };
   return { state: "used", reason: null, guideUrl: null };
 }
 

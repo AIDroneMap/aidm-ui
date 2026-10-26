@@ -11,7 +11,7 @@ import {
   type RuntimeDetection,
 } from "./runtime.ts";
 
-/** A CDI device name, which needs the NVIDIA Container Toolkit's device list (`nvidia-ctk cdi generate`). */
+/** The toolkit's device for every card. Its list comes from `nvidia-ctk cdi generate`. */
 export const GPU_DEVICE = "nvidia.com/gpu=all";
 export const GPU_FLAGS = ["--device", GPU_DEVICE] as const;
 
