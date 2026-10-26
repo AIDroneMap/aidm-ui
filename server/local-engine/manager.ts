@@ -21,6 +21,7 @@ import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
+import { speedMeter } from "../downloads/speed.ts";
 import { ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
@@ -1341,6 +1342,7 @@ export class LocalEngineManager {
     };
     const stopWaiting = new AbortController();
     this.stopWaiting = stopWaiting;
+    let meter = speedMeter(this.now.bind(this));
     let result: Awaited<ReturnType<MacSetup["run"]>>;
     try {
       result = await setup.run(need, {
@@ -1348,14 +1350,17 @@ export class LocalEngineManager {
         stopWaiting: stopWaiting.signal,
         onStep: (step) => {
           this.publishedReceived = 0;
-          show({ step, stepReceived: null });
+          meter = speedMeter(this.now.bind(this));
+          show({ step, stepReceived: null, speed: null });
         },
-        onReceived: (received) => {
+        onReceived: (received, bytesPerSecond) => {
+          // Every download of the Mac steps shows its speed like the engine's: the step's own, or one measured here.
+          const measured = meter(received);
           const size = steps.find((candidate) => candidate.id === this.progress?.step)?.size ?? 0;
           // About two hundred events for the whole download.
           if (received < size && received - this.publishedReceived < size / 200) return;
           this.publishedReceived = received;
-          show({ stepReceived: received });
+          show({ stepReceived: received, speed: bytesPerSecond ?? measured });
         },
       });
     } finally {
@@ -1380,7 +1385,7 @@ export class LocalEngineManager {
       this.failInstall({ code: "mac.start_failed", data: { step: failedAt } });
       return false;
     }
-    show({ phase: "pulling", step: "engine", stepReceived: null });
+    show({ phase: "pulling", step: "engine", stepReceived: null, speed: null });
     return true;
   }
 

@@ -153,9 +153,16 @@ export class ContainerPackage implements EnginePackage {
 
     options.onProgress?.(view("loading"));
     const loaded = await runtime.load(downloaded.image, { signal: options.signal });
-    if (!loaded.ok) return fail("install.load_failed", { cause: loaded.error });
+    // Each failure has its own message: a load the tool refused, and a load whose result is not the image downloaded.
+    if (!loaded.ok) {
+      if (loaded.error.code !== "runtime.load_failed") return loaded;
+      return fail("install.load_failed", { exitCode: loaded.error.data.exitCode ?? null });
+    }
     const verified = await runtime.verifyImage(downloaded.image);
-    if (!verified.ok) return fail("install.load_failed", { cause: verified.error });
+    if (!verified.ok) {
+      if (verified.error.code !== "runtime.image_not_verified") return verified;
+      return fail("install.image_not_verified", {});
+    }
     this.runAs = verified.value;
     this.loadedRef = verified.value;
     return ok(undefined);

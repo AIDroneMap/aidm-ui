@@ -383,7 +383,7 @@ test("an update whose image the runtime cannot load changes nothing and says why
   expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
   await eventually(async () => (await localView(h)).problem?.code === "install.load_failed");
   const view = await localView(h);
-  expect(view.problem).toMatchObject({ data: { cause: { code: "runtime.load_failed" } } });
+  expect(view.problem).toEqual({ code: "install.load_failed", data: { exitCode: 1 } });
   expect(view.update.applying).toBeNull();
   expect(view.installed?.packageVersion).toBe("2.5.0");
   expect(runtime.stops).toEqual([]);

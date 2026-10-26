@@ -173,13 +173,13 @@ test("a download that fails is install.pull_failed with its cause, and nothing i
   expect(pkg.installedAs(installedRecord())).toEqual(installedRecord());
 });
 
-test("a load that fails is install.load_failed with the runtime's error, and the download stays for the next try", async () => {
+test("a load that fails is install.load_failed with the tool's exit code, and the download stays for the next try", async () => {
   const { runtime, pkg, folder } = setup();
   runtime.failNextLoads(1);
   const result = await pkg.install({});
   expect(result).toEqual({
     ok: false,
-    error: { code: "install.load_failed", data: { cause: { code: "runtime.load_failed", data: { exitCode: 1 } } } },
+    error: { code: "install.load_failed", data: { exitCode: 1 } },
   });
   expect(runtime.images.has(IMAGE)).toBe(false);
   expect(existsSync(join(folder, "index.json"))).toBe(true);
@@ -190,12 +190,12 @@ test("a load that fails is install.load_failed with the runtime's error, and the
   expect(runtime.images.has(IMAGE)).toBe(true);
 });
 
-test("an image the runtime cannot vouch for after the load is install.load_failed with the runtime's error", async () => {
+test("an image the runtime cannot vouch for after the load is install.image_not_verified, a message of its own", async () => {
   const runtime = new VerifyingRuntime();
   const cause: ApiError = { code: "runtime.image_not_verified", data: { name: localName(PINNED) } };
   runtime.verification = fail("runtime.image_not_verified", cause.data);
   const { pkg } = setup({ runtime });
-  expect(await pkg.install({})).toEqual({ ok: false, error: { code: "install.load_failed", data: { cause } } });
+  expect(await pkg.install({})).toEqual({ ok: false, error: { code: "install.image_not_verified", data: {} } });
   expect(pkg.installedAs(installedRecord())).toEqual(installedRecord());
 });
 

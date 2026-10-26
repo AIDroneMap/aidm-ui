@@ -44,6 +44,18 @@ function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" })
   );
 }
 
+/** "200 MiB of 683 MiB, 3 MiB per second": the same words for the engine and for every download of the Mac steps. */
+function ReceivedLine({ received, size, speed }: { received: number; size: number | null; speed: number | null }) {
+  if (size === null) return <p>{formatBytes(received)}</p>;
+  return (
+    <p>
+      {speed !== null && speed > 0
+        ? t("local.install.received_speed", { received: formatBytes(received), size: formatBytes(size), speed: formatBytes(speed) })
+        : t("local.install.received", { received: formatBytes(received), size: formatBytes(size) })}
+    </p>
+  );
+}
+
 /**
  * The bar, the bytes, the speed and the parts of a download, and why its
  * connection last broke. Only the line above it is announced, so a screen
@@ -60,13 +72,7 @@ export function DownloadProgress({ status, progressId }: { status: Extract<Insta
       ) : (
         <progress id={progressId}></progress>
       )}
-      {received !== null && (
-        <p>
-          {status.speed !== null && status.speed > 0
-            ? t("local.install.received_speed", { received: formatBytes(received), size: formatBytes(status.size), speed: formatBytes(status.speed) })
-            : t("local.install.received", { received: formatBytes(received), size: formatBytes(status.size) })}
-        </p>
-      )}
+      {received !== null && <ReceivedLine received={received} size={status.size} speed={status.speed} />}
       {status.done !== null && status.total !== null && (
         <p>{t("local.install.parts", { done: status.done, total: status.total })}</p>
       )}
@@ -111,6 +117,7 @@ export function LocalInstallStatus({ view, withSteps = true }: { view: LocalEngi
   if (!view) return <div role="status"></div>;
   // A download or a load that failed says why, under the general sentence.
   const cause = causeOf(view.problem);
+  const failedStep = view.install !== null && view.install.phase === "failed" && view.install.steps.length > 1 ? view.install.step : null;
   const progressId = "install-progress";
   return (
     <div className="install-status">
@@ -147,10 +154,14 @@ export function LocalInstallStatus({ view, withSteps = true }: { view: LocalEngi
         ) : status.kind === "ready" ? (
           <p>{t("local.install.ready")}</p>
         ) : status.kind === "failed" ? (
-          <p className="error">
-            {view.problem ? t(view.problem.code, messageParams(view.problem)) : t("local.install.failed")}
-            {cause !== null && ` ${t(cause.code, messageParams(cause))}`}
-          </p>
+          <>
+            <p className="error">
+              {view.problem ? t(view.problem.code, messageParams(view.problem)) : t("local.install.failed")}
+              {cause !== null && ` ${t(cause.code, messageParams(cause))}`}
+            </p>
+            {/* An install with steps says which one stopped, so each failure names its own step. */}
+            {failedStep !== null && <p>{t("local.install.failed_step", { step: t(`local.install.step_name.${failedStep}`) })}</p>}
+          </>
         ) : status.kind === "state" ? (
           <p>{t("local.install.state", { state: t(`engine.state.${view.state}`) })}</p>
         ) : null}
@@ -166,6 +177,9 @@ export function LocalInstallStatus({ view, withSteps = true }: { view: LocalEngi
         ) : (
           <progress id={progressId}></progress>
         )
+      )}
+      {status.kind === "preparing" && (status.step === "installer" || status.step === "kernel" || status.step === "init") && status.received !== null && (
+        <ReceivedLine received={status.received} size={status.size} speed={status.speed} />
       )}
       {status.kind === "downloading" && <DownloadProgress status={status} progressId={progressId} />}
       {view.warnings.map((warning) => (

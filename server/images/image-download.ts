@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import { downloadVerified, sizeOf, type DownloadOptions } from "../downloads/downloader.ts";
+import { speedMeter } from "../downloads/speed.ts";
 import { DOWNLOAD_STALL_MS } from "../machine/thresholds.ts";
 import { locate, RegistryClient } from "./registry-client.ts";
 
@@ -69,8 +70,6 @@ const DOCKER_MANIFEST = "application/vnd.docker.distribution.manifest.v2+json";
 const DIGEST = /^sha256:([0-9a-f]{64})$/;
 /** A blob that fails its check this many times in a row is not the registry's mistake of the moment. */
 const CHECKSUM_TRIES = 3;
-/** The speed is the bytes of this last stretch of time. */
-const SPEED_WINDOW_MS = 10_000;
 
 /** The name the runtimes keep an image under: the repository, with the manifest digest as its tag. */
 export function localName(pinned: PinnedImage): string {
@@ -215,14 +214,9 @@ export async function downloadImage(
   let doneBytes = 0;
   let retries = 0;
   let lastRetry: ApiError | null = null;
-  const samples: Array<{ at: number; received: number }> = [];
+  const speed = speedMeter(now);
   const report = (received: number) => {
-    const at = now();
-    samples.push({ at, received });
-    while (samples.length > 2 && at - (samples[1]?.at ?? at) >= SPEED_WINDOW_MS) samples.shift();
-    const first = samples[0];
-    const span = first === undefined ? 0 : at - first.at;
-    const bytesPerSecond = first !== undefined && span >= 1000 ? Math.round(((received - first.received) * 1000) / span) : null;
+    const bytesPerSecond = speed(received);
     options.onProgress?.({ received, total, bytesPerSecond, blobsDone: done, blobsTotal: blobs.length, retries, lastRetry });
   };
   report(0);
