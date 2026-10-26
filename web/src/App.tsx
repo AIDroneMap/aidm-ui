@@ -1,10 +1,43 @@
+import { useEffect, useState } from "react";
+import { api, ApiFailure } from "./api.ts";
+import { ErrorMessage } from "./components/ErrorMessage.tsx";
+import { Layout } from "./components/Layout.tsx";
 import { t } from "./i18n/translate.ts";
+import { HomePage } from "./pages/HomePage.tsx";
+import { LoginPage } from "./pages/LoginPage.tsx";
+import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { useRoute } from "./router.ts";
+import type { SessionView } from "../../shared/api-types.ts";
+
+type Session = "loading" | "login" | "ready";
 
 export function App() {
+  const route = useRoute();
+  const [session, setSession] = useState<Session>("loading");
+  const [failure, setFailure] = useState<ApiFailure | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    api<SessionView>("GET", "/api/auth/session").then(
+      (view) => {
+        if (current) setSession(view.passphraseRequired ? "login" : "ready");
+      },
+      (error: unknown) => {
+        if (current) setFailure(error instanceof ApiFailure ? error : new ApiFailure(0, "server.internal_error"));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  if (session === "login") return <LoginPage onSignedIn={() => setSession("ready")} />;
+  if (session === "loading") {
+    return <main>{failure ? <ErrorMessage failure={failure} /> : <p>{t("app.loading")}</p>}</main>;
+  }
   return (
-    <main>
-      <h1>{t("home.title")}</h1>
-      <p>{t("home.body")}</p>
-    </main>
+    <Layout route={route}>
+      {route === "settings" ? <SettingsPage onAuthRequired={() => setSession("login")} /> : <HomePage />}
+    </Layout>
   );
 }
