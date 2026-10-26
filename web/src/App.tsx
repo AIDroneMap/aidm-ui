@@ -3,6 +3,7 @@ import { api, asApiFailure, type ApiFailure } from "./api.ts";
 import { ErrorMessage } from "./components/ErrorMessage.tsx";
 import { Layout } from "./components/Layout.tsx";
 import { t } from "./i18n/translate.ts";
+import { EnginesPage } from "./pages/EnginesPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
@@ -37,7 +38,13 @@ export function App() {
   }
   return (
     <Layout route={route}>
-      {route === "settings" ? <SettingsPage onAuthRequired={() => setSession("login")} /> : <HomePage />}
+      {route === "settings" ? (
+        <SettingsPage onAuthRequired={() => setSession("login")} />
+      ) : route === "engines" ? (
+        <EnginesPage onAuthRequired={() => setSession("login")} />
+      ) : (
+        <HomePage />
+      )}
     </Layout>
   );
 }
