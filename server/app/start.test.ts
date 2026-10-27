@@ -122,6 +122,43 @@ test("the diagnosis log is on by default: each line has its time, goes to the te
   expect(written).toMatch(/ Command: \S+ .* -> exit -?\d+ after \d+\.\d s\n/);
 });
 
+test("the terminal and logs/aidm-ui.log hold the same lines, also the browser's and an engine's that resets every connection", async () => {
+  const port = await freePort();
+  // An engine that takes each connection and drops it at once.
+  const resetting = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: (socket) => void socket.terminate(), data() {} } });
+  try {
+    const lines: string[] = [];
+    const result = await startAidmUi({
+      argv: ["--port", String(port), "--data-dir", dataFolder("same-lines")],
+      env: {},
+      platform: process.platform,
+      homeDir: root,
+      cwd: root,
+      assets,
+      version: VERSION,
+      openBrowser: async (url, log) => log(`Could not open a browser. Open ${url} yourself.`),
+      log: (line) => lines.push(line),
+    });
+    const server = started(result);
+    running.push(server);
+    const added = await fetch(`${server.url}api/engines`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Resets", address: `http://127.0.0.1:${resetting.port}`, token: "abcdefgh1234" }),
+    });
+    expect(added.status).toBe(201);
+    await eventually(async () => lines.some((line) => line.includes("Could not reach")), 5000);
+    // Stopped first, so no line comes between the two reads.
+    await server.stop();
+    running.splice(running.indexOf(server), 1);
+    const file = readFileSync(join(server.dataFolder, "logs", "aidm-ui.log"), "utf8").split("\n").filter(Boolean);
+    expect(file).toEqual(lines);
+    expect(lines.some((line) => line.endsWith(`Could not open a browser. Open ${server.url} yourself.`))).toBe(true);
+  } finally {
+    resetting.stop(true);
+  }
+});
+
 test("--record-runtime-commands says where it records, and the runtime commands end up there", async () => {
   const port = await freePort();
   const lines: string[] = [];

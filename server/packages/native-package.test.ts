@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { fakeProgramScript } from "../../test-support/native-archive.ts";
@@ -70,7 +70,17 @@ function packageWith(overrides: Partial<NativePackageDeps> = {}) {
   return { pkg, starts, children };
 }
 
-const startOptions = { hostPort: 0, token: "a-secret-token", memoryBytes: null, cpus: null, engineDataFolder: os.tmpdir(), gpu: false };
+const startOptions = {
+  hostPort: 0,
+  token: "a-secret-token",
+  memoryBytes: null,
+  cpus: null,
+  // Inside the data folder of the test, which goes after each test with what the start makes in it.
+  get engineDataFolder() {
+    return join(dataFolder, "engine-data");
+  },
+  gpu: false,
+};
 
 function alive(pid: number): boolean {
   try {
@@ -107,6 +117,18 @@ test("a program that is ours is ended, and the next start runs a new one", async
   expect((await pkg.stop()).ok).toBe(true);
   expect(alive(starts[1] as number)).toBe(false);
   expect(await pkg.status()).toEqual({ ok: true, value: { state: "missing", exitCode: null } });
+});
+
+test("before each start the folders the task API reads where it runs are there, and tests/data in test mode", async () => {
+  const { pkg } = packageWith();
+  expect((await pkg.start(startOptions)).ok).toBe(true);
+  expect(existsSync(join(dataFolder, "engine-data", "data"))).toBe(true);
+  expect(existsSync(join(dataFolder, "engine-data", "tmp"))).toBe(true);
+  expect(existsSync(join(dataFolder, "engine-data", "tests"))).toBe(false);
+  await pkg.stop();
+  const testMode = packageWith({ extraArgs: ["--test"] });
+  expect((await testMode.pkg.start(startOptions)).ok).toBe(true);
+  expect(existsSync(join(dataFolder, "engine-data", "tests", "data"))).toBe(true);
 });
 
 test("the command line of the program names its config file and holds no token", async () => {

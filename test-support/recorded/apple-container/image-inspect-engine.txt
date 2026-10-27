@@ -1,0 +1,187 @@
+[
+  {
+    "configuration" : {
+      "creationDate" : "2026-01-01T00:00:00Z",
+      "descriptor" : {
+        "digest" : "sha256:28566fdbd2616f500a5bc89190b58fbaf7fc6bec3aa1321bd05f96f831dd6870",
+        "mediaType" : "application/vnd.oci.image.index.v1+json",
+        "size" : 616
+      },
+      "name" : "ghcr.io/aidronemap/aidm-api:sha256-107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd"
+    },
+    "id" : "28566fdbd2616f500a5bc89190b58fbaf7fc6bec3aa1321bd05f96f831dd6870",
+    "variants" : [
+      {
+        "config" : {
+          "architecture" : "arm64",
+          "config" : {
+            "Entrypoint" : [
+              "/usr/bin/node",
+              "/var/www/index.js"
+            ],
+            "Env" : [
+              "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "DEBIAN_FRONTEND=noninteractive",
+              "PYTHONPATH=/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm",
+              "LD_LIBRARY_PATH=/code/SuperBuild/install/lib",
+              "PDAL_DRIVER_PATH=/code/SuperBuild/install/bin",
+              "NVM_DIR=/usr/local/nvm",
+              "NODE_VERSION=14"
+            ],
+            "Labels" : {
+              "org.opencontainers.image.description" : "REST task API and AIDM photogrammetry engine in one image. Based on NodeODX and ODX.",
+              "org.opencontainers.image.licenses" : "AGPL-3.0",
+              "org.opencontainers.image.source" : "https://github.com/AIDroneMap/aidm-api",
+              "org.opencontainers.image.title" : "AIDM API",
+              "org.opencontainers.image.version" : "2.5.0"
+            },
+            "User" : "root",
+            "WorkingDir" : "/var/www"
+          },
+          "created" : "2026-01-01T00:00:00Z",
+          "history" : [
+            {
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "/bin/sh -c #(nop)  ARG RELEASE",
+              "empty_layer" : true
+            },
+            {
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "/bin/sh -c #(nop)  ARG LAUNCHPAD_BUILD_ARCH",
+              "empty_layer" : true
+            },
+            {
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "/bin/sh -c #(nop)  LABEL org.opencontainers.image.version=24.04",
+              "empty_layer" : true
+            },
+            {
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "/bin/sh -c #(nop) ADD file:41d2e63ceb0b90641106340bc81ee11125254db51ee5a9d49e666bcf0388814f in / "
+            },
+            {
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "/bin/sh -c #(nop)  CMD [\"/bin/bash\"]",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "LABEL org.opencontainers.image.source=https://github.com/AIDroneMap/aidm org.opencontainers.image.version=0.1.0 org.opencontainers.image.licenses=AGPL-3.0 org.opencontainers.image.title=AIDM org.opencontainers.image.description=Photogrammetry engine that turns drone images into orthophotos, elevation models, point clouds and textured 3D models. Based on ODX.",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "ENV DEBIAN_FRONTEND=noninteractive PYTHONPATH=/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm LD_LIBRARY_PATH=/code/SuperBuild/install/lib PDAL_DRIVER_PATH=/code/SuperBuild/install/bin",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "WORKDIR /code"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "COPY /code /code # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "COPY /usr/local /usr/local # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "RUN /bin/sh -c bash configure.sh installruntimedeps   && apt-get clean   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*   && bash run.sh --help   && bash -c \"eval $(python3 /code/modules/context.py) && python3 -c 'from opensfm import io, pymap'\" # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "ENTRYPOINT [\"python3\" \"/code/run.py\"]",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "LABEL org.opencontainers.image.source=https://github.com/AIDroneMap/aidm-api org.opencontainers.image.version=2.5.0 org.opencontainers.image.licenses=AGPL-3.0 org.opencontainers.image.title=AIDM API org.opencontainers.image.description=REST task API and AIDM photogrammetry engine in one image. Based on NodeODX and ODX.",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "EXPOSE [3000/tcp]",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "USER root",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "RUN /bin/sh -c mkdir /var/www # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "WORKDIR /var/www"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "COPY . /var/www # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "ENV NVM_DIR=/usr/local/nvm",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "ENV NODE_VERSION=14",
+              "empty_layer" : true
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "RUN /bin/sh -c bash install_deps.sh &&     ln -s /code/SuperBuild/install/bin/untwine /usr/bin/untwine &&     ln -s /code/SuperBuild/install/bin/entwine /usr/bin/entwine &&     ln -s /code/SuperBuild/install/bin/pdal /usr/bin/pdal &&     ln -s /var/www/node.sh /usr/bin/node &&     mkdir -p tmp && node index.js --powercycle # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-01-01T00:00:00Z",
+              "created_by" : "ENTRYPOINT [\"/usr/bin/node\" \"/var/www/index.js\"]",
+              "empty_layer" : true
+            }
+          ],
+          "os" : "linux",
+          "rootfs" : {
+            "diff_ids" : [
+              "sha256:9a354992483c962fa69075527e7a2690fd9103f53d2c10af083fb31f24335256",
+              "sha256:e05b818229c98523153827ea2fdf4bf8926b0db373585323f6acab1583129257",
+              "sha256:8642ee9724df225d47cc6c31e7a086f72dd195b077c83f6b85271c409551e2f2",
+              "sha256:72cdfb069497ded72b404dfd6579685124d99f1f887ef6a5e4156c77241bb7e1",
+              "sha256:1f7d3eee99e29e8f439a2ea7f30c523365aee2297516fc5e68a15bcf168a0abd",
+              "sha256:2113f83e93c565bdf2ff9ac95407a5e580491e3d2604d098033ed51fd2c1b4d7",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+              "sha256:3d7d8fb03f1125f8aca319989989390637cde61f0e0ce791588a22c146ad8408",
+              "sha256:8ac7494cedef5b13c50f00200ad10056b36721ef11083f09da1778683bcb3e86"
+            ],
+            "type" : "layers"
+          }
+        },
+        "digest" : "sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd",
+        "platform" : {
+          "architecture" : "arm64",
+          "os" : "linux"
+        },
+        "size" : 622712209
+      }
+    ]
+  }
+]

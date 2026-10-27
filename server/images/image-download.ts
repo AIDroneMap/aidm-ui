@@ -73,6 +73,11 @@ const DIGEST = /^sha256:([0-9a-f]{64})$/;
 /** A blob that fails its check this many times in a row is not the registry's mistake of the moment. */
 const CHECKSUM_TRIES = 3;
 
+/** How the log names an image after its first line: the last part of the repository and the start of the digest, such as "aidm-api@sha256:107b6ef10496". */
+export function shortName(pinned: Pick<PinnedImage, "repository" | "digest">): string {
+  return `${pinned.repository.split("/").at(-1) ?? pinned.repository}@${pinned.digest.slice(0, 19)}`;
+}
+
 /** The name the runtimes keep an image under: the repository, with the manifest digest as its tag. */
 export function localName(pinned: PinnedImage): string {
   return `${pinned.repository}:sha256-${hexOf(pinned.digest)}`;
@@ -241,7 +246,9 @@ export async function downloadImage(
   const log = options.log ?? (() => {});
   const began = now();
   const name = pinned.name ?? localName(pinned);
-  log(`Image download ${name}: ${blobs.length} blobs, ${total} bytes, from ${location.base}`);
+  // Named in full once, with its digest; the lines after it use the short form.
+  const short = shortName(pinned);
+  log(`Image download ${short}: ${name}, manifest ${pinned.digest}, ${blobs.length} blobs, ${total} bytes, from ${location.base}`);
 
   for (const [index, blob] of blobs.entries()) {
     const path = blobPath(folder, blob.digest);
@@ -257,7 +264,7 @@ export async function downloadImage(
           backoffMs: options.backoffMs,
           now,
           log,
-          label: `${index === 0 ? "config" : `layer ${index} of ${blobs.length - 1}`} of ${name} (${blob.digest.slice(0, 19)})`,
+          label: `${index === 0 ? "config" : `layer ${index} of ${blobs.length - 1}`} of ${short} (${blob.digest.slice(0, 19)})`,
           onProgress: (received) => report(doneBytes + received),
           onRetry: (reason) => {
             retries++;
@@ -269,7 +276,7 @@ export async function downloadImage(
       if (outcome.ok) break;
       // A blob that fails its check is discarded alone; the others stay.
       if (outcome.error.code !== "download.checksum_mismatch" || checks >= CHECKSUM_TRIES) {
-        log(`Image download ${name}: failed after ${((now() - began) / 1000).toFixed(1)} s at ${blob.digest.slice(0, 19)}: ${outcome.error.code}`);
+        log(`Image download ${short}: failed after ${((now() - began) / 1000).toFixed(1)} s at ${blob.digest.slice(0, 19)}: ${outcome.error.code}`);
         return outcome;
       }
       retries++;
@@ -280,7 +287,7 @@ export async function downloadImage(
     report(doneBytes);
   }
 
-  log(`Image download ${name}: finished, ${total} bytes in ${((now() - began) / 1000).toFixed(1)} s, ${retries} interruption${retries === 1 ? "" : "s"}`);
+  log(`Image download ${short}: finished, ${total} bytes in ${((now() - began) / 1000).toFixed(1)} s, ${retries} interruption${retries === 1 ? "" : "s"}`);
   writeLayout(folder, { digest: pinned.digest, size: got.bytes.length, mediaType: manifest.mediaType }, name);
   return {
     ok: true,

@@ -1,5 +1,6 @@
 import type { EngineInfoView } from "../../shared/api-types.ts";
 import { isReadableVersion } from "../engines/versions.ts";
+import type { UnreachableLines } from "./unreachable-lines.ts";
 
 /**
  * The address of an engine reached through a Unix socket instead of a port:
@@ -67,6 +68,8 @@ export interface TaskClientOptions {
    * about, so the receiver can drop a line it already has for that key.
    */
   logOnce?: (key: string, line: string) => void;
+  /** Where "Could not reach" goes instead of `log`: shared by every client of an engine, it summarises a long outage. */
+  unreachable?: UnreachableLines;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -89,6 +92,7 @@ export class TaskClient {
   private readonly fetchFn: typeof fetch;
   private readonly log: (line: string) => void;
   private readonly logOnce: (key: string, line: string) => void;
+  private readonly unreachable: UnreachableLines | undefined;
 
   constructor(
     private readonly endpoint: EngineEndpoint,
@@ -98,6 +102,7 @@ export class TaskClient {
     this.fetchFn = options.fetch ?? fetch;
     this.log = options.log ?? (() => {});
     this.logOnce = options.logOnce ?? ((_key, line) => this.log(line));
+    this.unreachable = options.unreachable;
   }
 
   async info(): Promise<TaskApiResult<EngineInfo>> {
@@ -213,12 +218,13 @@ export class TaskClient {
       });
     } catch (error) {
       const detail = this.scrub(describeFailure(error, DOWNLOAD_HEADER_TIMEOUT_MS));
-      this.log(`Could not reach ${where}: ${detail}`);
+      this.notReached(where, detail);
       return { ok: false, failure: { kind: "unreachable", detail } };
     } finally {
       clearTimeout(timer);
     }
 
+    this.unreachable?.answered(this.endpoint.address);
     const type = response.headers.get("content-type") ?? "";
     if (type.includes("json")) {
       try {
@@ -248,6 +254,11 @@ export class TaskClient {
   private expectSuccess(body: Record<string, unknown>, path: string): TaskApiResult<void> {
     if (body.success === true) return { ok: true, value: undefined };
     return this.badResponse(`${this.endpoint.address}${path}`, "The answer does not say success.");
+  }
+
+  private notReached(where: string, detail: string): void {
+    if (this.unreachable === undefined) this.log(`Could not reach ${where}: ${detail}`);
+    else this.unreachable.failed(this.endpoint.address, where, detail);
   }
 
   /** One HTTP request, over the engine's socket when it has one: Bun's fetch takes the socket's path as `unix`. */
@@ -300,9 +311,10 @@ export class TaskClient {
       text = await readCapped(response, options.maxBodyBytes ?? MAX_BODY_BYTES);
     } catch (error) {
       const detail = this.scrub(describeFailure(error, timeoutMs));
-      this.log(`Could not reach ${where}: ${detail}`);
+      this.notReached(where, detail);
       return { ok: false, failure: { kind: "unreachable", detail } };
     }
+    this.unreachable?.answered(this.endpoint.address);
     return this.parse(where, response, text);
   }
 

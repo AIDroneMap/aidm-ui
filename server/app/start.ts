@@ -39,6 +39,7 @@ import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { MAX_RAISED_BODY_BYTES } from "../http/limits.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
+import { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { entryScriptOf, type AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
 import { loggingRunner } from "../process/logging-runner.ts";
@@ -63,7 +64,8 @@ export interface StartOptions {
 export type StartResult =
   | { kind: "started"; url: string; port: number; dataFolder: string; stop(): Promise<void> }
   | { kind: "attached"; url: string }
-  | { kind: "failed"; problem: string };
+  /** `logged`: the problem is in the diagnosis log, and on the terminal, already. */
+  | { kind: "failed"; problem: string; logged?: boolean };
 
 function urlFor(port: number): string {
   return `http://${LOOPBACK}:${port}/`;
@@ -110,7 +112,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   const isOurs = async (port: number) => (await probe(port))?.instance === identity.instance;
   const attach = async (port: number): Promise<StartResult> => {
     const url = urlFor(port);
-    await options.openBrowser(url);
+    // A second copy, which stops at once: its lines go to its own terminal, and the log is the running copy's.
+    await options.openBrowser(url, options.log);
     return { kind: "attached", url };
   };
 
@@ -130,7 +133,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const sessions = new Sessions();
     const engineStore = new EngineStore(db, log);
     tokens = () => engineStore.list().map((engine) => engine.token);
-    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log });
+    // One record of each engine's failures for every caller, so a long outage reads as one summary a minute.
+    const unreachable = new UnreachableLines(log);
+    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log, unreachable });
     const runStore = new RunStore(db);
     const tracker = new RunTracker({
       runs: runStore,
@@ -138,6 +143,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       dataFolder,
       intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
       log: log,
+      unreachable,
     });
     const manifests = new ManifestService({
       settings,
@@ -194,6 +200,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engineStore,
       architecture: process.arch,
       log: log,
+      unreachable,
       localMemoryCap: () => localEngine.memoryCap(),
     });
     const runtimeSetup = new RuntimeSetup({
@@ -258,7 +265,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       void localEngine.refreshRuntimes();
       void localEngine.resume();
       updateChecks.start();
-      await options.openBrowser(url);
+      await options.openBrowser(url, log);
       const result: StartResult = {
         kind: "started",
         url,
@@ -280,10 +287,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       return result;
     }
 
-    return {
-      kind: "failed",
-      problem: `No free port from ${first} to ${last}. Close the program that uses them or pass --port.`,
-    };
+    const problem = `No free port from ${first} to ${last}. Close the program that uses them or pass --port.`;
+    log(problem);
+    return { kind: "failed", problem, logged: true };
   } finally {
     // A running server keeps the database until it stops.
     if (!databaseBelongsToServer) db.close();
@@ -310,13 +316,13 @@ export async function runFromCommandLine(assets: AssetMap, version: string): Pro
     cwd: process.cwd(),
     assets,
     version,
-    openBrowser: platformOpener(process.platform, log),
+    openBrowser: platformOpener(process.platform),
     log,
   });
 
   switch (result.kind) {
     case "failed":
-      console.error(result.problem);
+      if (result.logged !== true) console.error(result.problem);
       process.exit(1);
     case "attached":
       log(`aidm-ui is already running at ${result.url}`);

@@ -12,6 +12,7 @@ import { checkEngineAddress, PLAIN_HTTP_WARNING, type AddressCheck, type Resolve
 import { nextEngineStatus, type EngineEvent, type EngineStatus } from "./engine-state.ts";
 import type { EngineRecord, EngineStore } from "./engine-store.ts";
 import { problemFromFailure } from "./problems.ts";
+import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { isSupportedVersion } from "./versions.ts";
 
 export const DEFAULT_POLL_INTERVAL_MS = 3000;
@@ -28,6 +29,8 @@ export interface EngineMonitorDeps {
   resolve?: Resolve;
   /** How long a freshly started local engine may stay silent and still be starting. */
   startingGraceMs?: number;
+  /** The "Could not reach" lines, shared with the other clients of each engine. Absent: each failure is a line. */
+  unreachable?: UnreachableLines;
 }
 
 /** What the monitor remembers about one engine between polls. */
@@ -69,6 +72,7 @@ export class EngineMonitor {
   private readonly clientFor: (endpoint: EngineEndpoint, options: TaskClientOptions) => TaskClient;
   private readonly resolve: Resolve | undefined;
   private readonly startingGraceMs: number;
+  private readonly unreachable: UnreachableLines | undefined;
   private readonly entries = new Map<number, Entry>();
   private readonly inFlight = new Map<number, Promise<void>>();
   /** Engines whose version the manager is changing. */
@@ -85,6 +89,7 @@ export class EngineMonitor {
     this.clientFor = deps.clientFor ?? ((endpoint, options) => new TaskClient(endpoint, options));
     this.resolve = deps.resolve;
     this.startingGraceMs = deps.startingGraceMs ?? DEFAULT_STARTING_GRACE_MS;
+    this.unreachable = deps.unreachable;
   }
 
   /** The address rule, with the name lookup this monitor was given. */
@@ -323,7 +328,7 @@ export class EngineMonitor {
       { address: engine.address, token: engine.token },
       quiet
         ? { log: () => {}, logOnce: () => {} }
-        : { log: this.log, logOnce: (key, line) => this.logOnce(entry, key, line) },
+        : { log: this.log, logOnce: (key, line) => this.logOnce(entry, key, line), unreachable: this.unreachable },
     );
     const result = await client.info();
     if (result.ok) return result;

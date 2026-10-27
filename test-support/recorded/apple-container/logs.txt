@@ -1,2 +1,7 @@
-AIDM API 2.5.0 listening on port 3000
-queue: 0 tasks
+Now using node v14.21.3 (npm v6.14.18)
+info: AIDM API 2.5.0 (NodeODX 2.4.0), engine aidm 0.1.0 (ODX 3.8.4)
+info: Authentication using SimpleToken
+info: Listening on 127.0.0.1:6367 UDP for progress updates
+info: No tasks dump found
+info: Checking for orphaned directories to be removed...
+info: Server has started on port 3000

@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "[1/2] Fetching image [0s]\n[1/2] Fetching image [1s]\n[1/2] Fetching image [2s]\n[1/2] Fetching image 0% (1 of 11 blobs, 2 KB/593,9 MB, 444 bytes/s) [5s]\n[1/2] Fetching image 43% (7 of 11 blobs, 258,9/593,9 MB, 1.005 KB/s) [10m 2s]\n[1/2] Fetching image 43% (7 of 11 blobs, 259,9/593,9 MB, 950 KB/s) [10m 3s]\n[1/2] Fetching image 100% (11 blobs, 593,9 MB) [10m 4s]\nError: StreamClosed(streamID: HTTP2StreamID(11), errorCode: HTTP2ErrorCode<0x1 ProtocolError>, location: \"NIOHTTP2/HTTP2StreamChannel.swift:892\")\n"
+}

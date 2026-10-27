@@ -86,12 +86,12 @@ jobs:
         env:
           AIDM_REAL_RUNTIMES: podman,docker
 
-  # Disabled until the aidm-api 2.6.0 release with bundled tools exists
-  # (AIDroneMap/aidm-api#8). Then remove `if: false`. The version below is the
-  # release whose Linux x64 archive the test downloads and starts in test mode.
+  # The version below is the aidm-api release whose Linux x64 archive the test
+  # downloads and starts in test mode. 2.6.1 is the first with that archive
+  # (there is no 2.6.0 release). It bundles neither unzip nor 7z; the test
+  # mode run needs neither, and the runners have both.
   real-task-api:
     name: Real task API in test mode through the native package
-    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -103,4 +103,4 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test ./server/packages/real-task-api.test.ts
         env:
-          AIDM_REAL_TASK_API_VERSION: "2.6.0"
+          AIDM_REAL_TASK_API_VERSION: "2.6.1"

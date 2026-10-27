@@ -1,4 +1,4 @@
 {
   "exitCode": 0,
-  "stderr": ""
+  "stderr": "Launching container-apiserver...\nTesting access to container-apiserver...\nVerifying machine API server is running...\nInstalling kernel...\n"
 }

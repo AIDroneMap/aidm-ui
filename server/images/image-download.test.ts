@@ -393,3 +393,15 @@ test("a schema 1 manifest is image.unsupported_manifest", async () => {
   expect(outcome).toEqual({ ok: false, error: { code: "image.unsupported_manifest", data: {} } });
   expect(registry.requests.some((r) => pathOf(r).includes("/blobs/"))).toBe(false);
 });
+
+test("the log names the image in full once, with its manifest digest, and in a short form after that", async () => {
+  const lines: string[] = [];
+  const outcome = await download({ log: (line) => lines.push(line) });
+  expect(outcome.ok).toBe(true);
+  const short = `aidm-api@${added.digest.slice(0, 19)}`;
+  expect(lines[0]).toStartWith(`Image download ${short}: ${localName(pinned)}, manifest ${added.digest}, 4 blobs, `);
+  // The full name with its 64 digits is in the first line only.
+  expect(lines.slice(1).filter((line) => line.includes(localName(pinned)) || line.includes(added.digest))).toEqual([]);
+  expect(lines.some((line) => line.includes(`layer 1 of 3 of ${short} (`))).toBe(true);
+  expect(lines.at(-1)).toStartWith(`Image download ${short}: finished, `);
+});

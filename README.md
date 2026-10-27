@@ -38,7 +38,7 @@ AIDM UI talks to every engine only through the task API, so it works the same wi
 
 ## Logs for a bug report
 
-AIDM UI writes a readable log of what it does to the terminal and to `logs/aidm-ui.log` in its data folder: each install step with its time and result, each command it runs (with tokens hidden), each download with every resume and its average speed, and each check that failed with what it expected and what it found. When the file reaches 5 MiB it becomes `aidm-ui.log.1`, and three older files are kept. The engine's own lines go to `logs/engine.log` next to it.
+AIDM UI writes a readable log of what it does to the terminal and to `logs/aidm-ui.log` in its data folder: each install step with its time and result, each command it runs (with tokens hidden), each download with every resume and its average speed, and each check that failed with what it expected and what it found. When the file reaches 5 MiB it becomes `aidm-ui.log.1`, and three older files are kept. The engine's own lines go to `logs/engine.log` next to it. The terminal and the file hold the same lines. An engine that stops answering gets three "Could not reach" lines, then one "Still unreachable" summary a minute until it answers again. If the file cannot be written, the terminal says so, and the file says how many lines it lacks once it can be written again.
 
 The data folder is, unless `--data-dir` or the `AIDM_UI_DATA_DIR` environment variable names another:
 

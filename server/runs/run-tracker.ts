@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
+import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure, type TaskApiResult } from "../task-api/task-client.ts";
 import { isFinished, runStateFromTask } from "./run-state.ts";
 import type { RunPatch, RunRecord, RunStore } from "./run-store.ts";
@@ -32,6 +33,8 @@ export interface RunTrackerDeps {
   intervalMs: number;
   log: (line: string) => void;
   clientFor?: (endpoint: EngineEndpoint) => TaskClient;
+  /** The "Could not reach" lines, shared with the other clients of each engine. */
+  unreachable?: UnreachableLines;
 }
 
 interface Live {
@@ -75,7 +78,7 @@ export class RunTracker {
     this.dataFolder = deps.dataFolder;
     this.intervalMs = deps.intervalMs;
     this.logLine = deps.log;
-    this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log }));
+    this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log, unreachable: deps.unreachable }));
   }
 
   /**

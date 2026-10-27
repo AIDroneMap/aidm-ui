@@ -247,7 +247,7 @@ describe("detect", () => {
 describe("start", () => {
   test("it runs the recorded command and gives the ID the tool prints", async () => {
     const { runtime, runner } = make([{ argv: argv.run, result: rec("run") }]);
-    expect(await runtime.start(spec())).toEqual({ ok: true, value: { containerId: "aidm-engine" } });
+    expect(await runtime.start(spec())).toEqual({ ok: true, value: { containerId: "aidm-local-engine" } });
     expect(runner.calls).toEqual([argv.run]);
   });
 
@@ -360,8 +360,8 @@ describe("load", () => {
   });
 });
 
-// No recording of the tool's image inspect exists. This JSON follows the tool's source at 1.6.1 (ImageResource): the
-// image's own descriptor under configuration, and the digests of the loaded manifests under variants.
+// The JSON built here follows the tool's source at 1.6.1 (ImageResource): the image's own descriptor under
+// configuration, and the digests of the loaded manifests under variants. The first test reads a real answer.
 describe("verifyImage", () => {
   const inspectJson = (descriptor: string, variants: string[]) =>
     JSON.stringify([
@@ -374,6 +374,16 @@ describe("verifyImage", () => {
   const answer = (stdout: string) => ({ argv: argv.imageInspect, result: { exitCode: 0, stdout, stderr: "" } });
   const OTHER = `sha256:${"3".repeat(64)}`;
   const INDEX = `sha256:${"4".repeat(64)}`;
+
+  test("the answer recorded on a Mac after the load names the manifest under variants, not under configuration", async () => {
+    const digest = "sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd";
+    const engine = { ...tiny, name: `ghcr.io/aidronemap/aidm-api:sha256-${digest.slice(7)}`, manifest: { ...tiny.manifest, digest } };
+    const inspect = [TOOL, "image", "inspect", engine.name];
+    const { runtime } = make([{ argv: inspect, result: rec("image-inspect-engine") }]);
+    expect(await runtime.verifyImage(engine)).toEqual({ ok: true, value: engine.name });
+    const other = make([{ argv: inspect, result: rec("image-inspect-engine") }]);
+    expect(await other.runtime.verifyImage({ ...engine, manifest: { ...engine.manifest, digest: INDEX } })).toMatchObject({ ok: false });
+  });
 
   test("(follows the tool's source at 1.6.1) an image with the manifest digest among its variants is verified, and is run by its name", async () => {
     const { runtime, runner } = make([answer(inspectJson(INDEX, [OTHER, tiny.manifest.digest]))]);
@@ -390,9 +400,9 @@ describe("verifyImage", () => {
   });
 
   test("an image the tool does not have is runtime.image_not_verified", async () => {
-    // The text is made up for the test.
+    // The text is the one recorded on a Mac for another image (image-inspect-init-missing).
     const { runtime } = make([
-      { argv: argv.imageInspect, result: { exitCode: 1, stdout: "", stderr: `Error: notFound: "image not found: ${tiny.name}"\n` } },
+      { argv: argv.imageInspect, result: { exitCode: 1, stdout: "", stderr: `Error: image not found: ${tiny.name}\n` } },
     ]);
     expect(await runtime.verifyImage(tiny)).toEqual({
       ok: false,
@@ -481,7 +491,9 @@ describe("logs", () => {
     const lines: string[] = [];
     expect(await runtime.logs(NAME, { follow: true, tail: 50, onLine: (line) => lines.push(line) })).toEqual({ ok: true, value: undefined });
     expect(runner.calls).toEqual([followed]);
-    expect(lines).toEqual(["AIDM API 2.5.0 listening on port 3000", "queue: 0 tasks"]);
+    expect(lines).toEqual(recordedText("apple-container", "logs").trimEnd().split("\n"));
+    expect(lines).toHaveLength(7);
+    expect(lines.at(-1)).toBe("info: Server has started on port 3000");
   });
 
   test("a plain read has no flags", async () => {
