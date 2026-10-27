@@ -201,6 +201,17 @@ export interface SampleView {
   run: RunView | null;
 }
 
+/**
+ * GET and DELETE /api/sample/dataset: the zip of the sample photos that the
+ * data folder keeps, so a later run never downloads it again.
+ */
+export interface SampleDatasetFileView {
+  present: boolean;
+  /** Bytes on disk, or null when the zip is not there. */
+  size: number | null;
+  fileName: string;
+}
+
 /** POST /api/sample/start */
 export interface SampleStartRequest {
   engineId: number;

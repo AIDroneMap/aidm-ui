@@ -8,7 +8,7 @@ import { runRoutes } from "../runs/routes.ts";
 import { sampleRoutes } from "../sample/routes.ts";
 import { settingsRoutes } from "../settings/routes.ts";
 import type { GuardedHandler, ServeRoutes } from "./listener.ts";
-import type { Method, RouteContext, RouteHandler, RouteTable } from "./route-table.ts";
+import { bodyLimitOf, type Method, type RouteContext, type RouteHandler, type RouteTable } from "./route-table.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 import { serveAsset } from "./static-assets.ts";
 
@@ -45,12 +45,17 @@ export function apiRoutes(ctx: RouteContext): RouteTable {
  * whether they may, and what to say if the handler fails.
  */
 function guarded(ctx: RouteContext, handler: RouteHandler): GuardedHandler {
+  const bodyLimit = bodyLimitOf(handler);
   return async (req, server) => {
     // No address (it should not happen on a TCP listener) counts as not loopback.
     const client = { address: server.requestIP(req)?.address ?? "" };
     try {
       const refusal = await ctx.auth().authorize(req, client);
-      return withSecurityHeaders(refusal ?? (await handler(req, { client, server })));
+      if (refusal !== null) return withSecurityHeaders(refusal);
+      // Bun lets the largest body of any route through, so each route is held to its own.
+      const declared = Number(req.headers.get("content-length"));
+      if (declared > bodyLimit) return withSecurityHeaders(errorResponse(413, "api.body_too_large"));
+      return withSecurityHeaders(await handler(req, { client, server }));
     } catch (error) {
       ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describeError(error)}`);
       return withSecurityHeaders(errorResponse(500, "server.internal_error"));

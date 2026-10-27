@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, asApiFailure, type ApiFailure } from "../api.ts";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { api, asApiFailure, upload, type ApiFailure } from "../api.ts";
+import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
+import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
 import {
@@ -14,6 +16,7 @@ import {
   type PortSettingRequest,
   type RefreshResult,
   type RefreshView,
+  type SampleDatasetFileView,
   type SettingsView as SettingsData,
   type UpdateCheck,
   type UpdateCheckRequest,
@@ -21,7 +24,7 @@ import {
   type WizardView,
 } from "../../../shared/api-types.ts";
 
-export type Section = "load" | "port" | "lan" | "wizard" | "updates";
+export type Section = "load" | "port" | "lan" | "wizard" | "updates" | "dataset";
 
 export interface SettingsFormProps {
   /** Null while the settings are loading. */
@@ -54,6 +57,18 @@ export interface SettingsFormProps {
   refreshing: boolean;
   refreshResult: RefreshResult | null;
   onRefresh: () => void;
+  /** The sample photos the data folder keeps. Null while they are loading. */
+  dataset: SampleDatasetFileView | null;
+  /** True while the question before deleting them is open. */
+  datasetAsking: boolean;
+  /** What is under way on them, or null. */
+  datasetWorking: "delete" | "import" | null;
+  /** What just finished, to say aloud. */
+  datasetDone: "deleted" | "imported" | null;
+  onDatasetAskDelete: () => void;
+  onDatasetKeep: () => void;
+  onDatasetDelete: () => void;
+  onDatasetImport: (file: File) => void;
 }
 
 function Failure({ props, section, id }: { props: SettingsFormProps; section: Section; id?: string }) {
@@ -67,6 +82,23 @@ function updatesStatus(props: SettingsFormProps): string {
   if (props.updateSaved) return t("updates.saved");
   if (result?.ok) return result.replaced ? t("settings.updates.found", { tag: result.tag }) : t("settings.updates.none");
   return "";
+}
+
+/** The question before the sample photos are deleted. Focus goes to its first button, because the button that opened it is gone. */
+function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep: () => void }) {
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => first.current?.focus(), []);
+  return (
+    <div role="group" aria-label={t("settings.dataset.delete_ask")} className="actions">
+      <p>{t("settings.dataset.delete_ask")}</p>
+      <button ref={first} type="button" onClick={onConfirm}>
+        {t("settings.dataset.delete_confirm")}
+      </button>
+      <button type="button" className="secondary" onClick={onKeep}>
+        {t("settings.dataset.delete_keep")}
+      </button>
+    </div>
+  );
 }
 
 export function SettingsForm(props: SettingsFormProps) {
@@ -223,6 +255,57 @@ export function SettingsForm(props: SettingsFormProps) {
         <p role="status">{updatesStatus(props)}</p>
       </section>
 
+      <section aria-labelledby="settings-dataset-title">
+        <h2 id="settings-dataset-title">{t("settings.dataset.title")}</h2>
+        <p>{t("settings.dataset.explain")}</p>
+        {props.dataset === null ? (
+          <p>{t("settings.dataset.loading")}</p>
+        ) : props.dataset.present ? (
+          <p>{t("settings.dataset.kept", { name: props.dataset.fileName, size: formatBytes(props.dataset.size ?? 0) })}</p>
+        ) : (
+          <p>{t("settings.dataset.absent")}</p>
+        )}
+        {props.dataset?.present &&
+          (props.datasetAsking ? (
+            <DatasetDeleteAsk onConfirm={props.onDatasetDelete} onKeep={props.onDatasetKeep} />
+          ) : (
+            <div className="actions">
+              <BusyButton busy={props.datasetWorking !== null} className="secondary" onClick={props.onDatasetAskDelete}>
+                {props.datasetWorking === "delete" ? t("settings.dataset.deleting") : t("settings.dataset.delete")}
+              </BusyButton>
+            </div>
+          ))}
+        <div className="field">
+          <label htmlFor="settings-dataset-import">{t("settings.dataset.import_label")}</label>
+          <input
+            id="settings-dataset-import"
+            type="file"
+            accept=".zip,application/zip"
+            aria-describedby="settings-dataset-import-hint"
+            disabled={props.datasetWorking !== null}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Cleared, so the same file can be chosen again after a refusal.
+              event.target.value = "";
+              if (file !== undefined) props.onDatasetImport(file);
+            }}
+          />
+          <p id="settings-dataset-import-hint" className="hint">
+            {t("settings.dataset.import_hint")}
+          </p>
+        </div>
+        <Failure props={props} section="dataset" />
+        <p role="status">
+          {props.datasetWorking === "import"
+            ? t("settings.dataset.importing")
+            : props.datasetDone === "deleted"
+              ? t("settings.dataset.deleted")
+              : props.datasetDone === "imported"
+                ? t("settings.dataset.imported")
+                : ""}
+        </p>
+      </section>
+
       <section aria-labelledby="settings-local-title">
         <h2 id="settings-local-title">{t("settings.local.title")}</h2>
         <p>{t("settings.local.explain")}</p>
@@ -264,6 +347,10 @@ export function SettingsPage({
   const [updateSaved, setUpdateSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const [dataset, setDataset] = useState<SampleDatasetFileView | null>(null);
+  const [datasetAsking, setDatasetAsking] = useState(false);
+  const [datasetWorking, setDatasetWorking] = useState<SettingsFormProps["datasetWorking"]>(null);
+  const [datasetDone, setDatasetDone] = useState<SettingsFormProps["datasetDone"]>(null);
 
   const fail = (section: Section, error: unknown) => {
     const failure = asApiFailure(error);
@@ -292,6 +379,14 @@ export function SettingsPage({
       },
       (error: unknown) => {
         if (current) fail("updates", error);
+      },
+    );
+    api<SampleDatasetFileView>("GET", "/api/sample/dataset").then(
+      (loaded) => {
+        if (current) setDataset(loaded);
+      },
+      (error: unknown) => {
+        if (current) fail("dataset", error);
       },
     );
     return () => {
@@ -362,6 +457,21 @@ export function SettingsPage({
     }
   };
 
+  const changeDataset = async (work: "delete" | "import", done: "deleted" | "imported", send: () => Promise<SampleDatasetFileView>) => {
+    setDatasetWorking(work);
+    setDatasetAsking(false);
+    setDatasetDone(null);
+    setFailure(null);
+    try {
+      setDataset(await send());
+      setDatasetDone(done);
+    } catch (error) {
+      fail("dataset", error);
+    } finally {
+      setDatasetWorking(null);
+    }
+  };
+
   const runWizard = async () => {
     setSaving("wizard");
     setFailure(null);
@@ -405,6 +515,14 @@ export function SettingsPage({
       refreshing={refreshing}
       refreshResult={refreshResult}
       onRefresh={() => void refresh()}
+      dataset={dataset}
+      datasetAsking={datasetAsking}
+      datasetWorking={datasetWorking}
+      datasetDone={datasetDone}
+      onDatasetAskDelete={() => setDatasetAsking(true)}
+      onDatasetKeep={() => setDatasetAsking(false)}
+      onDatasetDelete={() => void changeDataset("delete", "deleted", () => api<SampleDatasetFileView>("DELETE", "/api/sample/dataset"))}
+      onDatasetImport={(file) => void changeDataset("import", "imported", () => upload<SampleDatasetFileView>("/api/sample/dataset", file))}
     />
   );
 }

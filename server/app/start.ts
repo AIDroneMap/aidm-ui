@@ -37,6 +37,7 @@ import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts
 import { SampleJob } from "../sample/sample-job.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
+import { MAX_RAISED_BODY_BYTES } from "../http/limits.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
@@ -237,7 +238,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 
     for (let port = first; port <= last; port++) {
       try {
-        listener = listen({ hostname, port, routes, fetch });
+        listener = listen({ hostname, port, routes, fetch, maxRequestBodySize: MAX_RAISED_BODY_BYTES });
       } catch (error) {
         if (!isAddressInUse(error)) throw error;
         if (await isOurs(port)) return await attach(port);
