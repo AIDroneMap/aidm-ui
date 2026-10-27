@@ -40,6 +40,18 @@ const VERSIONS: Record<RuntimeId, string> = { podman: "5.8.9", docker: "29.9.2",
  * the file cannot be read, has no usable JSON or has no token.
  */
 function readConfigToken(spec: ContainerSpec): string | null | undefined {
+  const config = readConfig(spec);
+  if (config === undefined || config === null) return config;
+  return typeof config.token === "string" ? config.token : null;
+}
+
+/** The socket path the config file names, the one a task API that can listen on a socket would use. */
+function readConfigSocket(spec: ContainerSpec): string | null {
+  const socket = readConfig(spec)?.socket;
+  return typeof socket === "string" ? socket : null;
+}
+
+function readConfig(spec: ContainerSpec): Record<string, unknown> | null | undefined {
   const at = spec.args.indexOf("--config");
   if (at === -1) return undefined;
   const path = spec.args[at + 1];
@@ -49,8 +61,8 @@ function readConfigToken(spec: ContainerSpec): string | null | undefined {
   if (mount === undefined) return null;
   try {
     const text = readFileSync(join(mount.hostPath, path.slice(mount.containerPath.length + 1)), "utf8");
-    const token = (JSON.parse(text) as { token?: unknown } | null)?.token;
-    return typeof token === "string" ? token : null;
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
   }
@@ -193,11 +205,11 @@ export class FakeRuntime implements ContainerRuntime {
     if (!this.images.has(spec.image)) return fail("runtime.image_not_found");
 
     // Bun lets two servers share a port on Linux, a real runtime would not.
-    const wanted = spec.publish.hostPort;
+    const wanted = spec.publish?.hostPort ?? 0;
     const taken = [...this.containers.values()].some(
       (other) => other.running && wanted !== 0 && Number(new URL(other.api.address).port) === wanted,
     );
-    if (taken) return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+    if (taken) return fail("runtime.port_in_use", { port: wanted });
 
     // The real task API exits with status 1 when it cannot read its config file.
     // The fake does the same: the container is created and is already stopped.
@@ -210,9 +222,14 @@ export class FakeRuntime implements ContainerRuntime {
     // A silent engine runs but listens on nothing, so every call to it is refused.
     if (config !== null && !this.silent(spec.image)) {
       try {
-        await api.start(spec.publish.hostPort);
+        // Like the tool's relay, the socket on this computer reaches the API only when the API listens on the path inside.
+        if (spec.publishSocket !== undefined) {
+          if (readConfigSocket(spec) === spec.publishSocket.containerPath) await api.startOnSocket(spec.publishSocket.hostPath);
+        } else {
+          await api.start(spec.publish?.hostPort ?? 0);
+        }
       } catch {
-        return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+        return fail("runtime.port_in_use", { port: wanted });
       }
     }
 

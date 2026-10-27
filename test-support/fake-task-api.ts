@@ -75,6 +75,8 @@ export class FakeTaskApi {
 
   private server: Bun.Server<undefined> | undefined;
   private port = 0;
+  /** The Unix socket it listens on instead of a port, like a task API started with `socket` in its config. */
+  private socket: string | null = null;
 
   constructor(options: { token?: string; info?: Partial<FakeInfo> } = {}) {
     this.token = options.token ?? "fake-token";
@@ -82,7 +84,7 @@ export class FakeTaskApi {
   }
 
   get address(): string {
-    return `http://127.0.0.1:${this.port}`;
+    return this.socket === null ? `http://127.0.0.1:${this.port}` : `unix:${this.socket}`;
   }
 
   /** Port 0 or none picks a free one. */
@@ -97,6 +99,13 @@ export class FakeTaskApi {
     this.port = this.server.port as number;
   }
 
+  /** Listens on a Unix socket at that path, the way Apple's tool relays the task API's socket to the Mac. */
+  async startOnSocket(path: string): Promise<void> {
+    if (this.server) throw new Error("The fake task API is already running.");
+    this.socket = path;
+    this.server = Bun.serve({ unix: path, development: false, fetch: (req) => this.handle(req) });
+  }
+
   async stop(): Promise<void> {
     const server = this.server;
     this.server = undefined;
@@ -106,7 +115,8 @@ export class FakeTaskApi {
   /** Listens again on the port it had. */
   async restart(): Promise<void> {
     await this.stop();
-    await this.start(this.port);
+    if (this.socket !== null) await this.startOnSocket(this.socket);
+    else await this.start(this.port);
   }
 
   /** Changes a task the way the engine would on its own. */

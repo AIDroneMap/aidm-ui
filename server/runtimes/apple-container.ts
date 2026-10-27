@@ -72,10 +72,12 @@ const PORT_IN_USE = /address already in use|port .* (is )?(already )?(in use|all
  * and the image is the arm64 one aidm-ui loaded. A read-only mount
  * ends in ":ro", the one mount option the tool reads (1.6.1: the volume
  * parser keeps the third part as options, and the folder is shared into the
- * VM read-only when they hold "ro").
+ * VM read-only when they hold "ro"). A published socket is relayed through
+ * the VM's own channel, not the IP network (1.6.1: Parser.publishSocket,
+ * UnixSocketRelay); with no port published the tool never asks for the Local
+ * Network permission (RuntimeService.startSocketForwarders).
  */
 export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): string[] {
-  const { hostAddress, hostPort, containerPort } = spec.publish;
   const memoryMib = Math.max(1, Math.ceil((spec.memoryBytes ?? defaults.memoryBytes) / MIB));
   return [
     APPLE_TOOL,
@@ -87,8 +89,8 @@ export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): s
     `${memoryMib}M`,
     "--cpus",
     String(spec.cpus ?? defaults.cpus),
-    "-p",
-    `${hostAddress}:${hostPort}:${containerPort}`,
+    ...(spec.publish === null ? [] : ["-p", `${spec.publish.hostAddress}:${spec.publish.hostPort}:${spec.publish.containerPort}`]),
+    ...(spec.publishSocket === undefined ? [] : ["--publish-socket", `${spec.publishSocket.hostPath}:${spec.publishSocket.containerPath}`]),
     ...spec.mounts.flatMap((mount) => ["-v", `${mount.hostPath}:${mount.containerPath}${mount.readOnly ? ":ro" : ""}`]),
     spec.image,
     ...spec.args,
@@ -250,7 +252,7 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       if (down !== null) return down;
       const output = text(result);
       if (NAME_IN_USE.test(output)) return fail("runtime.name_in_use", { name: spec.name });
-      if (PORT_IN_USE.test(output)) return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+      if (PORT_IN_USE.test(output)) return fail("runtime.port_in_use", { port: spec.publish?.hostPort ?? null });
       if (NO_SUCH_IMAGE.test(output) || NOT_AT_REGISTRY.test(output)) return fail("runtime.image_not_found");
       return fail("runtime.start_failed", { exitCode: result.exitCode });
     },

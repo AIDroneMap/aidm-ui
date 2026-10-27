@@ -32,6 +32,14 @@ describe("parseManifest", () => {
     expect(result).toEqual({ ok: true, manifest: sampleManifest(), skippedVariants: [] });
   });
 
+  test("a container variant may say that its task API listens on a socket, and says it with a boolean", () => {
+    const result = parseManifest(manifestBytes(withVariant({ ...container, taskApiSocket: true })));
+    expect(result.ok && result.manifest.variants["linux-amd64-cpu"]).toEqual({ ...container, taskApiSocket: true } as never);
+    const without = parseManifest(manifestBytes(withVariant(container)));
+    expect(without.ok && without.manifest.variants["linux-amd64-cpu"]).toEqual(container as never);
+    expect(malformedField(withVariant({ ...container, taskApiSocket: "yes" }))).toBe("variants.linux-amd64-cpu.taskApiSocket");
+  });
+
   test("text that is not JSON, or not an object, is malformed", () => {
     expect(malformedField("not json")).toBe("manifest");
     expect(malformedField("[]")).toBe("manifest");

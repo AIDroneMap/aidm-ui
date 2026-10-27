@@ -1,6 +1,7 @@
 import type { ApiError } from "../../shared/api-error.ts";
 import { MIN_TASK_API_VERSION, type EngineInfoView, type EngineView } from "../../shared/api-types.ts";
 import {
+  socketOf,
   TaskClient,
   type EngineEndpoint,
   type EngineInfo,
@@ -308,7 +309,8 @@ export class EngineMonitor {
    * longer passes is not called at all.
    */
   private async ask(engine: EngineRecord, entry: Entry): Promise<Outcome> {
-    const checked = await this.checkAddress(engine.address);
+    // The address rule is for addresses an operator typed. A socket is the local engine's own, set by the manager.
+    const checked = engine.kind === "local" && socketOf(engine.address) !== null ? { ok: true as const } : await this.checkAddress(engine.address);
     if (!checked.ok) {
       this.logOnce(entry, "address", `Engine "${engine.name}" is not called: ${checked.error.code}`);
       return { ok: false, problem: checked.error, event: { type: "no_answer" } };
