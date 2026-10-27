@@ -350,10 +350,10 @@ function macInputs(version: "26" | "15", extra: Partial<MachineInputs> = {}): Ma
   });
 }
 
-test("Apple silicon on macOS 26 passes the platform and cpu lines", async () => {
+test("Apple silicon on macOS 26 passes the platform and cpu lines, and the platform line names the version it found", async () => {
   const { h } = open(macInputs("26"));
   const view = await check(h);
-  expect(lineOf(view, "platform").message.code).toBe("machine.platform_ok");
+  expect(lineOf(view, "platform").message).toEqual({ code: "machine.platform_ok_macos", data: { version: "26.0.1" } });
   expect(lineOf(view, "cpu").message.code).toBe("machine.cpu_ok");
   expect(view.lines.map((line) => line.id)).toEqual(["platform", "cpu", "ram", "disk", "runtime"]);
   expect(view.localEngine.offered).toBe(true);
@@ -400,4 +400,11 @@ test("the wizard refuses a body that is not a yes or a no", async () => {
     expect(await response.json()).toEqual({ error: { code: "api.invalid_body", data: {} } });
   }
   expect(harness.settings.get("wizard.completed")).toBe(false);
+});
+
+test("on Linux the platform line names the system it found in os-release, and says nothing made up when there is none", async () => {
+  const named = await check(open(linuxInputs()).h);
+  expect(lineOf(named, "platform").message).toEqual({ code: "machine.platform_ok_linux", data: { name: "Ubuntu 24.04.4 LTS" } });
+  const unnamed = await check(open(linuxInputs({ osRelease: null })).h);
+  expect(lineOf(unnamed, "platform").message).toEqual({ code: "machine.platform_ok", data: {} });
 });

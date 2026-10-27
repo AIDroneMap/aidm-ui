@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure, setApiBase } from "../api.ts";
 import type {
@@ -8,6 +10,7 @@ import type {
   PackagesView,
   RuntimeSetupView,
 } from "../../../shared/api-types.ts";
+import { formatBytes } from "../format.ts";
 import en from "../i18n/en.json";
 import { engineInstall, fresh, macInstall, macPlan } from "../localEngine.fixtures.ts";
 import { textNodes, unlabelledInputs, untranslatedText } from "../test-helpers.ts";
@@ -786,7 +789,7 @@ test("the install screen on a Mac lists the steps with their sizes before the op
     "Apple&#x27;s container tool, 149 MiB",
     "Your approval: macOS asks for your password once",
     "Starting Apple&#x27;s container tool",
-    "Kernel, 664 MiB",
+    "Linux system for Apple&#x27;s container tool, 664 MiB, downloaded once",
     "Startup files, 66 MiB",
     "AIDM engine, 594 MiB",
   ].map((text) => html.indexOf(text));
@@ -881,4 +884,60 @@ test("the remote engine button is busy, with keyboard focus kept, while the wiza
     remoteBusy: true,
   });
   expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Add a remote engine<\/button>/);
+});
+
+// The wizard's words after the first real Mac test (issue #32).
+
+test("on a Mac the package runs on this Mac through Apple's container tool, not on Linux", () => {
+  const mac = { ...builtIn, offer: { ...builtIn.offer!, variant: "linux-arm64-cpu" as const, size: 622_710_197 } };
+  const html = renderInstall(mac, { local: { ...fresh, platform: "darwin" } });
+  expect(html).toContain("Runs on this Mac through Apple&#x27;s container tool");
+  expect(html).not.toContain("Linux, 64-bit ARM processor");
+  // On Linux the package still says what it runs on.
+  expect(renderInstall(builtIn, { local: fresh })).toContain("Runs on: Linux, 64-bit Intel or AMD processor");
+});
+
+test("before the button the screen lists every download with its size and says the total", () => {
+  const html = renderInstall(builtIn, { local: { ...fresh, platform: "darwin", plan: macPlan } });
+  const total = macPlan.reduce((sum, step) => sum + (step.size ?? 0), 0);
+  expect(html).toContain(`Downloads in all: ${formatBytes(total)}`);
+  for (const text of ["Apple&#x27;s container tool, 149 MiB", "Linux system for Apple&#x27;s container tool, 664 MiB, downloaded once", "Startup files, 66 MiB", "AIDM engine, 594 MiB"]) {
+    expect(html.indexOf(text)).toBeGreaterThan(-1);
+    expect(html.indexOf(text)).toBeLessThan(html.indexOf(">Install on this computer</button>"));
+  }
+  expect(html.indexOf("Downloads in all")).toBeLessThan(html.indexOf(">Install on this computer</button>"));
+  // On Linux the one download is the engine package.
+  const linux = renderInstall(builtIn, { local: fresh });
+  expect(linux).toContain("Downloads in all: 651 MiB");
+  expect(linux.indexOf("Downloads in all")).toBeLessThan(linux.indexOf(">Install on this computer</button>"));
+});
+
+test("a download whose size is not known makes the total an at least, and no number is made up for it", () => {
+  const unknownKernel = macPlan.map((step) => (step.id === "kernel" ? { ...step, size: null } : step));
+  const html = renderInstall(builtIn, { local: { ...fresh, platform: "darwin", plan: unknownKernel } });
+  const known = unknownKernel.reduce((sum, step) => sum + (step.size ?? 0), 0);
+  expect(html).toContain(`Downloads in all: at least ${formatBytes(known)}`);
+});
+
+test("a new try after a failed one says why the last one stopped", () => {
+  const html = renderInstall(builtIn, {
+    local: {
+      ...fresh,
+      state: "installing",
+      install: engineInstall({ size: 682_533_845, stepReceived: 1000 }),
+      lastTry: { code: "install.pull_failed", data: { cause: { code: "download.stalled", data: { seconds: 300 } } } },
+    },
+  });
+  expect(html).toContain(
+    "The last try stopped: The engine could not be downloaded. Check the internet connection, then try again. Nothing arrived for 300 seconds, so the download stopped.",
+  );
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("the page heading that takes the focus gets a quiet underline, not the box of a text field", () => {
+  const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
+  const rule = /h1\[tabindex="-1"\]:focus,\s*h1\[tabindex="-1"\]:focus-visible\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  expect(rule).toContain("outline: none");
+  expect(rule).toContain("text-decoration: underline");
+  expect(css).not.toContain("#wizard-title:focus");
 });

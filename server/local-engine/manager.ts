@@ -269,6 +269,8 @@ export class LocalEngineManager {
   private publishedReceived = 0;
   /** Why the last install or start failed; cleared by the next one. */
   private failure: ApiError | null = null;
+  /** Why the install before this one stopped, shown while the operator tries again. */
+  private lastTry: ApiError | null = null;
   private background: Promise<unknown> = Promise.resolve();
   private published: string | undefined;
   private closed = false;
@@ -394,6 +396,7 @@ export class LocalEngineManager {
       warnings,
       forceCpu: this.settings.get("local.forceCpu"),
       problem,
+      lastTry: this.installing ? this.lastTry : null,
       update: {
         available: this.offer === null || installedPackage === null ? null : { packageVersion: this.offer.packageVersion, size: this.offer.size },
         previous: previous === null ? null : { packageVersion: previous.packageVersion },
@@ -648,6 +651,7 @@ export class LocalEngineManager {
 
       const existing = this.store.local();
       if (existing !== null) this.monitor.setLocalState(existing.id, "installing");
+      this.lastTry = this.failure;
       this.failure = null;
       this.packageLeft = null;
       this.installing = true;

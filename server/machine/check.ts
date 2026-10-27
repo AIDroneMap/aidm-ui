@@ -30,9 +30,12 @@ function platformLine(facts: MachineFacts): CheckLine {
     if (major < MACOS_MINIMUM) {
       return line("platform", "fail", "machine.macos_too_old", { version: facts.macosVersion, minimumVersion: MACOS_MINIMUM });
     }
+    // The line names the version it found, so the operator can see what was read.
+    if (facts.macosVersion !== null) return line("platform", "pass", "machine.platform_ok_macos", { version: facts.macosVersion });
     return line("platform", "pass", "machine.platform_ok");
   }
   if (platform === "linux" && (arch === "x64" || arch === "arm64")) {
+    if (facts.linuxName !== null) return line("platform", "pass", "machine.platform_ok_linux", { name: facts.linuxName });
     return line("platform", "pass", "machine.platform_ok");
   }
   return line("platform", "fail", "machine.platform_unsupported");

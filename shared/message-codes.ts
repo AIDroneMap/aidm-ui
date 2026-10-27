@@ -53,6 +53,8 @@ export const MESSAGE_CODES = [
   "run.engine_lost",
   "run.interrupted",
   "machine.platform_ok",
+  "machine.platform_ok_macos",
+  "machine.platform_ok_linux",
   "machine.platform_unsupported",
   "machine.windows_not_yet",
   "machine.mac_intel",

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { formatBytes, formatClock, formatDuration } from "./format.ts";
 
 test("sizes under 1 GiB are whole MiB", () => {
@@ -25,8 +27,20 @@ test("seconds read as minutes and seconds", () => {
   expect(formatDuration(0)).toBe("0 s");
 });
 
-test("the time of day is two digits for the hour and the minutes on the local clock", () => {
-  const afternoon = formatClock(new Date(2026, 9, 26, 14, 5).toISOString());
-  expect(afternoon).toMatch(/^02:05\s?PM$/);
-  expect(formatClock(new Date(2026, 9, 26, 9, 30).toISOString())).toMatch(/^09:30\s?AM$/);
+test("the time of day is the hour and the minutes on the local clock, in the locale this computer is set to", () => {
+  const afternoon = new Date(2026, 9, 26, 14, 5);
+  // Whatever the locale of the machine that runs the test, the clock is its locale's.
+  const local = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(afternoon);
+  expect(formatClock(afternoon.toISOString())).toBe(local);
+  expect(formatClock(afternoon.toISOString())).toMatch(/05/);
+});
+
+test("no locale is written into the clock, so an Italian computer reads 14:05 and an American one 02:05 PM", () => {
+  const source = readFileSync(join(import.meta.dir, "format.ts"), "utf8");
+  const clock = /const clockFormat = new Intl\.DateTimeFormat\(([^,]*),/.exec(source)?.[1];
+  expect(clock).toBe("undefined");
+  // The same options give those two answers in those two locales.
+  const at = new Date(2026, 9, 26, 14, 5);
+  expect(new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" }).format(at)).toBe("14:05");
+  expect(new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" }).format(at)).toMatch(/^02:05\s?PM$/);
 });
