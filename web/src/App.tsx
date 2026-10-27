@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "./api.ts";
 import { ErrorMessage } from "./components/ErrorMessage.tsx";
 import { Layout } from "./components/Layout.tsx";
+import { VersionWatch } from "./components/VersionBanner.tsx";
 import { firstRunRedirect } from "./firstRun.ts";
 import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
@@ -15,7 +16,7 @@ import type { SessionView, WizardView } from "../../shared/api-types.ts";
 
 type Session = "loading" | "login" | "ready";
 
-export function App() {
+function Screens() {
   const route = useRoute();
   const [session, setSession] = useState<Session>("loading");
   const [failure, setFailure] = useState<ApiFailure | null>(null);
@@ -78,5 +79,14 @@ export function App() {
         <HomePage />
       )}
     </Layout>
+  );
+}
+
+export function App() {
+  return (
+    <>
+      <VersionWatch />
+      <Screens />
+    </>
   );
 }

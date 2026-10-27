@@ -190,6 +190,21 @@ button.secondary[aria-disabled="true"] {
   margin: 0;
 }
 
+.version-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1rem;
+  color: #5c3b00;
+  background: #fff4e0;
+  border-bottom: 2px solid #5c3b00;
+}
+
+.version-banner p {
+  margin: 0;
+}
+
 .download-block {
   margin: 0.5rem 0;
 }

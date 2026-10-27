@@ -34,6 +34,8 @@
   "api.not_found": "AIDM UI could not find what you asked for.",
   "api.method_not_allowed": "AIDM UI does not accept that action.",
   "api.invalid_body": "AIDM UI could not read what was sent. Check the values and try again.",
+  "app.version_changed": "AIDM UI was updated since this page was opened. Reload the page to use the new version.",
+  "app.reload": "Reload the page",
   "api.body_too_large": "That request is too large for AIDM UI.",
   "api.too_many_streams": "Too many open windows are following AIDM UI. Close some and reload this page.",
   "server.internal_error": "Something went wrong in AIDM UI. Try again. If it keeps happening, restart AIDM UI.",

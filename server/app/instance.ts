@@ -6,6 +6,13 @@ export interface InstanceIdentity {
   app: "aidm-ui";
   version: string;
   instance: string;
+  /**
+   * The hashed name of the interface's entry script, such as
+   * "/assets/index-D3x9a.js". Every build whose interface changed has its own,
+   * also under the same version, so an open page can tell that it is from
+   * another build. Absent when the server has no built interface.
+   */
+  entry?: string;
 }
 
 /** Same data folder, same instance: a second launch can tell whether the program on a port is its own. */
