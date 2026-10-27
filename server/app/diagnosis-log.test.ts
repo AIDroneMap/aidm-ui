@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { excerpt, openDiagnosisLog } from "./diagnosis-log.ts";
@@ -19,6 +19,31 @@ test("each line goes to the terminal and to logs/aidm-ui.log, with its time", ()
   log("Install step start of the engine: started");
   expect(terminal).toEqual(["2026-10-27T08:00:00.000Z Install step start of the engine: started"]);
   expect(readFileSync(file, "utf8")).toBe("2026-10-27T08:00:00.000Z Install step start of the engine: started\n");
+});
+
+test("a file that cannot be written says so once, and the first line that gets through counts what it lacks", () => {
+  const { log, terminal, file } = logIn();
+  log("first");
+  // Something takes the file's place: a folder cannot be appended to.
+  rmSync(file);
+  mkdirSync(file);
+  log("second");
+  log("third");
+  expect(terminal.filter((line) => line.includes("cannot be written"))).toHaveLength(1);
+  rmSync(file, { recursive: true });
+  log("fourth");
+  expect(readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => line.slice(25))).toEqual([
+    "The log file can be written again. 2 lines are only in the terminal.",
+    "fourth",
+  ]);
+  expect(terminal.map((line) => line.slice(25))).toEqual([
+    "first",
+    `The log file ${file} cannot be written (EISDIR). Lines go to this terminal only until it can.`,
+    "second",
+    "third",
+    "The log file can be written again. 2 lines are only in the terminal.",
+    "fourth",
+  ]);
 });
 
 test("the file rotates at its size and keeps three older files", () => {

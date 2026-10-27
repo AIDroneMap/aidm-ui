@@ -1,4 +1,5 @@
-export type OpenBrowser = (url: string) => Promise<void>;
+/** Opens the browser at the address. A line about it goes to `log`, the diagnosis log once it is open. */
+export type OpenBrowser = (url: string, log: (line: string) => void) => Promise<void>;
 
 export function openerCommand(platform: NodeJS.Platform, url: string): string[] {
   switch (platform) {
@@ -13,8 +14,8 @@ export function openerCommand(platform: NodeJS.Platform, url: string): string[] 
 }
 
 /** Opens the default browser. A failure is logged and never thrown: the server keeps running without a browser. */
-export function platformOpener(platform: NodeJS.Platform, log: (line: string) => void): OpenBrowser {
-  return async (url) => {
+export function platformOpener(platform: NodeJS.Platform): OpenBrowser {
+  return async (url, log) => {
     try {
       const child = Bun.spawn(openerCommand(platform, url), {
         stdin: "ignore",
