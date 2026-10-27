@@ -277,6 +277,23 @@ test("the run follows the engine through queued, processing and completed, and o
   expect(new Uint8Array(await download.arrayBuffer())).toEqual(results);
 });
 
+test("a finished run on a remote engine leaves one summary in aidm-ui's log, from the output it received", async () => {
+  const { run, uuid } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 20, processingTime: 4000, output: ["[INFO]    Running dataset stage", "[WARNING] Cannot write benchmark file"] });
+  await waitRun(run.id, (candidate) => candidate.state === "processing");
+  await Bun.sleep(80);
+  fake.setTask(uuid, {
+    statusCode: 40,
+    processingTime: 395_250,
+    progress: 100,
+    output: ["[INFO]    Running dataset stage", "[WARNING] Cannot write benchmark file", "[INFO]    Running opensfm stage", "[WARNING] PoissonRecon failed with 8 threads, let's retry with 4..."],
+  });
+  await waitRun(run.id, (candidate) => candidate.state === "completed");
+  const lines = harness.logs.filter((line) => line.startsWith(`Run ${run.id} summary:`));
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(new RegExp(`^Run ${run.id} summary: completed on "Office"; the engine took 395.3 s; stages \\(as AIDM UI's polls saw them, to within a poll\\): dataset [\\d.]+ s, opensfm [\\d.]+ s; 2 warnings; failed processes not known from the output; the engine's task log: on the engine, in the folder of task ${uuid} `));
+});
+
 test("a failed run passes the engine's own message through", async () => {
   const { run, uuid } = await startAndQueue();
   fake.setTask(uuid, { statusCode: 30, errorMessage: "Not enough memory", progress: 12 });
