@@ -127,8 +127,9 @@ test("before the click a Mac lists every step in order with its size, all waitin
   expect(items).toEqual([
     ["Apple&#x27;s container tool, 149 MiB", "Waiting"],
     ["Your approval: macOS asks for your password once", "Waiting"],
-    ["Kernel, about 665 MiB, no resume", "Waiting"],
-    ["Startup files, size not known", "Waiting"],
+    ["Starting Apple&#x27;s container tool", "Waiting"],
+    ["Kernel, 664 MiB", "Waiting"],
+    ["Startup files, 66 MiB", "Waiting"],
     ["AIDM engine, 594 MiB", "Waiting"],
   ]);
   expect(html).toContain('aria-label="Steps of the install"');
@@ -163,7 +164,7 @@ test("while the installer downloads, its step is the current one, with a progres
   expect(html).toContain('<li aria-current="step" class="install-step-current"><span>Apple&#x27;s container tool, 149 MiB</span><span class="install-step-state">Under way</span>');
   expect(html).toMatch(/<progress id="install-progress" max="155965213" value="50000000">/);
   expect(html).toContain("Downloading Apple&#x27;s container tool: 149 MiB");
-  expect(html.match(/Waiting<\/span>/g)).toHaveLength(4);
+  expect(html.match(/Waiting<\/span>/g)).toHaveLength(5);
   expect(untranslatedText(html)).toEqual([]);
 });
 
@@ -174,40 +175,55 @@ test("the approval step asks for the password in words and has no progress bar",
   expect(html.match(/Done<\/span>/g)).toHaveLength(1);
 });
 
-test("the kernel step says its size and that it cannot resume, with a bar that has no value", () => {
-  const html = render(mac("kernel"));
-  expect(html).toContain("Downloading the kernel: 665 MiB. If it stops, it starts again from the beginning.");
-  expect(html).toContain('<progress id="install-progress"></progress>');
+test("the service step says that Apple's container tool is starting, with no size and no progress bar", () => {
+  const html = render(mac("service"));
+  const status = /<div role="status">(.*?)<\/div>/.exec(html)?.[1] ?? "";
+  expect(status).toContain("Starting Apple&#x27;s container tool");
+  expect(html).toContain('<li aria-current="step" class="install-step-current"><span>Starting Apple&#x27;s container tool</span>');
+  expect(html).not.toContain("<progress");
   expect(html.match(/Done<\/span>/g)).toHaveLength(2);
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("the kernel step says its size and that it continues from where it stopped, with a bar that has no value before the first byte", () => {
+  const html = render(mac("kernel"));
+  expect(html).toContain("Downloading the kernel: 664 MiB. If it stops, it continues from where it stopped.");
+  expect(html).not.toContain("starts again from the beginning");
+  expect(html).toContain('<progress id="install-progress"></progress>');
+  expect(html.match(/Done<\/span>/g)).toHaveLength(3);
+  expect(untranslatedText(html)).toEqual([]);
 });
 
 test("when the tool was there already, the kernel step says its size is not known and makes none up", () => {
   const plan = render({ ...fresh, plan: macStoppedPlan });
   expect(plan).toContain("<span>Kernel, size not known, no resume</span>");
-  expect(plan).not.toContain("665 MiB");
+  expect(plan).not.toContain("664 MiB");
   expect(plan).not.toContain("0 B");
 
   const html = render(mac("kernel", { install: macInstall("kernel", { steps: macStoppedPlan }) }));
   expect(html).toContain("Downloading the kernel. If it stops, it starts again from the beginning.");
   expect(html).not.toContain("0 B");
-  expect(html).not.toContain("665 MiB");
+  expect(html).not.toContain("664 MiB");
   expect(html).toContain('<progress id="install-progress"></progress>');
   expect(untranslatedText(html)).toEqual([]);
 });
 
-test("the startup files step does not make up a size", () => {
+test("the startup files step says the size aidm-ui downloads", () => {
   const html = render(mac("init"));
-  expect(html).toContain("Getting the startup files");
-  expect(html).toContain("<p>Getting the startup files</p>");
-  expect(html).toContain("<span>Startup files, size not known</span>");
-  expect(html.match(/Done<\/span>/g)).toHaveLength(3);
+  const status = /<div role="status">(.*?)<\/div>/.exec(html)?.[1] ?? "";
+  expect(status).toContain("Downloading the startup files: 66 MiB");
+  expect(html).toContain("<span>Startup files, 66 MiB</span>");
+  expect(html).not.toContain("Getting the startup files");
+  expect(html).not.toContain("size not known</span>");
+  expect(html.match(/Done<\/span>/g)).toHaveLength(4);
+  expect(untranslatedText(html)).toEqual([]);
 });
 
 test("the engine step is the engine's own download, with the Mac steps behind it", () => {
   const html = render(mac("engine", { install: macInstall("engine", { layersDone: 3, layersTotal: 9 }) }));
   expect(html).toContain("Downloading the engine: 594 MiB");
   expect(html).toContain("3 of 9 parts");
-  expect(html.match(/Done<\/span>/g)).toHaveLength(4);
+  expect(html.match(/Done<\/span>/g)).toHaveLength(5);
 });
 
 test("a step that failed is marked Failed with the reason in words, and nothing after it is shown as under way", () => {

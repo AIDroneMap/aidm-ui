@@ -109,6 +109,8 @@ export const MESSAGE_CODES = [
   "runtime.not_available",
   "mac.install_not_finished",
   "mac.start_failed",
+  "mac.kernel_failed",
+  "mac.init_failed",
   "engine.local_not_editable",
   "setup.not_needed",
   "setup.not_offered",

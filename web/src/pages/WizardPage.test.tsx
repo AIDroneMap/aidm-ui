@@ -785,8 +785,9 @@ test("the install screen on a Mac lists the steps with their sizes before the op
   const order = [
     "Apple&#x27;s container tool, 149 MiB",
     "Your approval: macOS asks for your password once",
-    "Kernel, about 665 MiB, no resume",
-    "Startup files, size not known",
+    "Starting Apple&#x27;s container tool",
+    "Kernel, 664 MiB",
+    "Startup files, 66 MiB",
     "AIDM engine, 594 MiB",
   ].map((text) => html.indexOf(text));
   expect(order.every((index) => index > 0)).toBe(true);
@@ -843,7 +844,7 @@ test("while the page waits for the password, it offers a remote engine and a Sto
 });
 
 test("Stop waiting is shown only while the approval is awaited", () => {
-  for (const step of ["installer", "kernel", "init", "engine"] as const) {
+  for (const step of ["installer", "service", "kernel", "init", "engine"] as const) {
     const html = renderInstall(builtIn, { local: { ...fresh, state: "installing", plan: macPlan, install: macInstall(step) } });
     expect(html, step).not.toContain("Stop waiting");
     expect(html, step).not.toContain("Add a remote engine");

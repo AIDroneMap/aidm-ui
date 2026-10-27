@@ -319,7 +319,7 @@ export type RuntimeId = (typeof RUNTIME_IDS)[number];
 // The local engine (ticket #9).
 
 /** The steps of an install. Only a Mac without Apple's container tool has more than "engine". */
-export const INSTALL_STEPS = ["installer", "approve", "kernel", "init", "engine"] as const;
+export const INSTALL_STEPS = ["installer", "approve", "service", "kernel", "init", "engine"] as const;
 export type InstallStepId = (typeof INSTALL_STEPS)[number];
 
 export interface InstallStepView {
@@ -368,6 +368,8 @@ export interface CapsView {
 }
 
 export interface LocalEngineView {
+  /** The operating system of the computer the server runs on, as Node names it: "linux", "darwin" or "win32". */
+  platform: string;
   /** Null until a package is installed. */
   installed: { packageVersion: string; variant: VariantId; kind: "container" | "native"; runtime: RuntimeId | null } | null;
   /** The engine's row in the engines list, once there is one. */

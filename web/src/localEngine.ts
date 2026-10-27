@@ -192,13 +192,20 @@ export function canInstall(view: LocalEngineView | null): boolean {
 }
 
 /**
- * True when the wizard should offer to install Podman: a Linux package is on
- * offer, nothing is installed, and no container tool works. The server checks
- * all of this again when the operator clicks.
+ * True when the wizard should offer to install Podman: the computer runs
+ * Linux, a Linux package is on offer, nothing is installed, and no container
+ * tool works. The machine decides, not the package: a Mac runs the Linux
+ * arm64 package too, through Apple's tool, and never gets Podman. The server
+ * checks all of this again when the operator clicks.
  */
 export function needsRuntimeSetup(local: LocalEngineView | null, offer: EnginePackageOffer | null): boolean {
   if (local === null || offer === null) return false;
-  return offer.variant.startsWith("linux-") && local.installed === null && local.runtime.available.length === 0;
+  return (
+    local.platform === "linux" &&
+    offer.variant.startsWith("linux-") &&
+    local.installed === null &&
+    local.runtime.available.length === 0
+  );
 }
 
 /** True while the approval, the install or the check of Podman is under way. */

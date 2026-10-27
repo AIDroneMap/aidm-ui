@@ -25,7 +25,7 @@ import { ContainerPackage, type ContainerPackageDeps, type ContainerVariant, typ
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
 import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
-import type { MacNeed, MacSetup } from "../runtimes/apple-container-installer.ts";
+import type { MacNeed, MacSetup, MacState } from "../runtimes/apple-container-installer.ts";
 import type { RunStore } from "../runs/run-store.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
@@ -367,6 +367,7 @@ export class LocalEngineManager {
     warnings.push(...this.gpuWarnings(installedPackage));
 
     return {
+      platform: this.deps.machine.platform,
       installed:
         installedPackage === null || installedKind === null
           ? null
@@ -610,8 +611,8 @@ export class LocalEngineManager {
         plan = { pkg, installed, size: variant.size };
       } else {
         const runtime = this.chosenRuntime();
-        // A Mac without a working container tool gets it set up first.
-        mac = runtime === null ? this.macNeed() : null;
+        // A Mac gets what Apple's container tool still lacks set up first, and only that.
+        mac = runtime === null || runtime.id === "apple-container" ? await this.macNeed() : null;
         if (runtime === null && mac === null) return refusal(409, "install.no_runtime");
         const driver = this.deps.runtimes(runtime?.id ?? "apple-container");
         if (driver === null) return refusal(409, "install.no_runtime");
@@ -1346,7 +1347,7 @@ export class LocalEngineManager {
           show({ step, stepReceived: null });
         },
         onReceived: (received) => {
-          const size = steps.find((candidate) => candidate.id === "installer")?.size ?? 0;
+          const size = steps.find((candidate) => candidate.id === this.progress?.step)?.size ?? 0;
           // About two hundred events for the whole download.
           if (received < size && received - this.publishedReceived < size / 200) return;
           this.publishedReceived = received;
@@ -1381,7 +1382,7 @@ export class LocalEngineManager {
 
   /** The steps an install would take now. Only a Mac that lacks Apple's tool has more than one. */
   private async refreshPlan(): Promise<void> {
-    const mac = this.macNeed();
+    const mac = await this.macNeed();
     const { platform, arch } = this.deps.machine;
     const variant = mac === null ? null : (await this.deps.manifests.offerWithVariant({ platform, arch })).variant;
     this.plan =
@@ -1390,14 +1391,26 @@ export class LocalEngineManager {
         : [...mac.setup.steps(mac.need), { id: "engine", size: variant.size }];
   }
 
-  /** What a Mac still lacks for Apple's container tool, or null when nothing (or when this is no Mac). */
-  private macNeed(): MacPlan | null {
+  /**
+   * What a Mac still lacks for Apple's container tool, or null when nothing
+   * (or when this is no Mac). Only looks: a tool, a kernel or startup files
+   * that are there are never set up again.
+   */
+  private async macNeed(): Promise<MacPlan | null> {
     const setup = this.deps.macSetup;
     if (this.deps.machine.platform !== "darwin" || setup === undefined) return null;
     const apple = this.detections.find((detection) => detection.id === "apple-container");
-    if (apple?.problem?.code === "runtime.not_installed") return { need: "tool_missing", setup };
-    if (apple?.problem?.code === "runtime.apple_not_started") return { need: "service_stopped", setup };
-    return null;
+    const state: MacState | null =
+      apple?.problem?.code === "runtime.not_installed"
+        ? "tool_missing"
+        : apple?.problem?.code === "runtime.apple_not_started"
+          ? "service_stopped"
+          : apple?.available === true
+            ? "running"
+            : null;
+    if (state === null) return null;
+    const need = await setup.need(state, apple?.version ?? null);
+    return need === null ? null : { need, setup };
   }
 
   private failInstall(error: ApiError): void {
@@ -1450,7 +1463,14 @@ export class LocalEngineManager {
       applied = { memoryBytes: this.systemd === true ? caps.memoryBytes : null, cpus: null };
     } else {
       await this.refreshRuntimes(DETECTION_MAX_AGE_MS);
-      const detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      let detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      // After a reboot the service of Apple's tool is stopped. It is started, without the kernel option, before the engine.
+      if (detection?.problem?.code === "runtime.apple_not_started" && this.deps.macSetup !== undefined) {
+        const woken = await this.deps.macSetup.startStoppedService(this.abort.signal);
+        if (!woken.ok) return this.failStart(engine.id, woken.error);
+        await this.lookAtRuntimesAgain();
+        detection = this.detections.find((candidate) => candidate.id === kind.runtime);
+      }
       applied = {
         memoryBytes: detection?.memoryCapEnforced === false ? null : caps.memoryBytes,
         cpus: detection?.cpuCapEnforced === false ? null : caps.cpus,
