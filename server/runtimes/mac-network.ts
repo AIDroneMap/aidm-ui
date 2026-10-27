@@ -32,6 +32,8 @@ export interface RouteAnswer {
   destination: string;
   interface: string;
   gateway: string | null;
+  /** The words between < and > on the flags line, such as "UP", "GATEWAY", "STATIC". */
+  flags: string[];
 }
 
 /**
@@ -195,7 +197,37 @@ export function parseRouteGet(text: string): RouteAnswer | null {
   const field = (name: string) => new RegExp(`^\\s*${name}:\\s*(\\S+)`, "m").exec(text)?.[1] ?? null;
   const name = field("interface");
   if (name === null) return null;
-  return { destination: field("destination") ?? "", interface: name, gateway: field("gateway") };
+  const flags = /^\s*flags:\s*<([^>]*)>/m.exec(text)?.[1]?.split(",").filter(Boolean) ?? [];
+  return { destination: field("destination") ?? "", interface: name, gateway: field("gateway"), flags };
+}
+
+/**
+ * Where the Mac sends traffic for the container, against the tool's bridge:
+ *
+ * - "bridge": straight onto the bridge, as the tool set it up;
+ * - "loop": onto the bridge, but through a gateway, which is the bridge's own
+ *   address. The packets come back to the Mac and go round until their time
+ *   to live runs out ("Time to live exceeded" from the gateway);
+ * - "away": through another interface. A VPN client's tunnel (LAN access off)
+ *   or the physical interface towards the home router (LAN access on);
+ * - "unknown": the route or the bridge could not be read.
+ */
+export type RouteKind =
+  | { kind: "bridge" }
+  | { kind: "loop"; gateway: string }
+  | { kind: "away"; interface: string; via: "tunnel" | "router"; gateway: string | null }
+  | { kind: "unknown" };
+
+/** Interfaces of VPN clients on macOS: utun, ipsec, ppp, and the tun and tap of older clients. */
+const TUNNEL = /^(utun|ipsec|ppp|tun|tap)\d*$/;
+
+export function classifyRoute(route: RouteAnswer | null, bridge: string | null): RouteKind {
+  if (route === null || bridge === null) return { kind: "unknown" };
+  if (route.interface !== bridge) {
+    return { kind: "away", interface: route.interface, via: TUNNEL.test(route.interface) ? "tunnel" : "router", gateway: route.gateway };
+  }
+  if (route.flags.includes("GATEWAY") && route.gateway !== null) return { kind: "loop", gateway: route.gateway };
+  return { kind: "bridge" };
 }
 
 /** Something on the Mac that uses part of a network: a route through another interface, or an address of another interface. */

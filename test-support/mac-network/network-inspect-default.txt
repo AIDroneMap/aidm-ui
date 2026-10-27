@@ -6,8 +6,8 @@
     },
     "id" : "default",
     "status" : {
-      "ipv4Gateway" : "192.0.2.1",
-      "ipv4Subnet" : "192.0.2.0/24",
+      "ipv4Gateway" : "192.168.64.1",
+      "ipv4Subnet" : "192.168.64.0/24",
       "ipv6Subnet" : "fd00:0:0:1::/64"
     }
   }

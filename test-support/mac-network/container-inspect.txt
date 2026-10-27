@@ -1,0 +1,149 @@
+[
+  {
+    "configuration" : {
+      "capAdd" : [
+
+      ],
+      "capDrop" : [
+
+      ],
+      "creationDate" : "2026-10-27T01:06:49Z",
+      "dns" : {
+        "nameservers" : [
+
+        ],
+        "options" : [
+
+        ],
+        "searchDomains" : [
+
+        ]
+      },
+      "id" : "aidm-local-engine",
+      "image" : {
+        "descriptor" : {
+          "digest" : "sha256:28566fdbd2616f500a5bc89190b58fbaf7fc6bec3aa1321bd05f96f831dd6870",
+          "mediaType" : "application/vnd.oci.image.index.v1+json",
+          "size" : 616
+        },
+        "reference" : "ghcr.io/aidronemap/aidm-api:sha256-107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd"
+      },
+      "initProcess" : {
+        "arguments" : [
+          "/var/www/index.js",
+          "--config",
+          "/etc/aidm-ui/task-api.json"
+        ],
+        "environment" : [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PYTHONPATH=/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm",
+          "NVM_DIR=/usr/local/nvm",
+          "LD_LIBRARY_PATH=/code/SuperBuild/install/lib",
+          "DEBIAN_FRONTEND=noninteractive",
+          "NODE_VERSION=14",
+          "PDAL_DRIVER_PATH=/code/SuperBuild/install/bin"
+        ],
+        "executable" : "/usr/bin/node",
+        "rlimits" : [
+
+        ],
+        "supplementalGroups" : [
+
+        ],
+        "terminal" : false,
+        "user" : {
+          "raw" : {
+            "userString" : "root"
+          }
+        },
+        "workingDirectory" : "/var/www"
+      },
+      "labels" : {
+
+      },
+      "mounts" : [
+        {
+          "destination" : "/var/www/data",
+          "options" : [
+
+          ],
+          "source" : "/Users/operator/aidm-ui-mac-test/data/engine-data",
+          "type" : {
+            "virtiofs" : {
+
+            }
+          }
+        },
+        {
+          "destination" : "/etc/aidm-ui",
+          "options" : [
+            "ro"
+          ],
+          "source" : "/Users/operator/aidm-ui-mac-test/data/engine-config/container",
+          "type" : {
+            "virtiofs" : {
+
+            }
+          }
+        }
+      ],
+      "networks" : [
+        {
+          "network" : "default",
+          "options" : {
+            "hostname" : "aidm-local-engine",
+            "mtu" : 1280
+          }
+        }
+      ],
+      "platform" : {
+        "architecture" : "arm64",
+        "os" : "linux"
+      },
+      "publishedPorts" : [
+        {
+          "containerPort" : 3000,
+          "count" : 1,
+          "hostAddress" : "127.0.0.1",
+          "hostPort" : 54794,
+          "proto" : "tcp"
+        }
+      ],
+      "publishedSockets" : [
+
+      ],
+      "readOnly" : false,
+      "resources" : {
+        "cpuOverhead" : 1,
+        "cpus" : 15,
+        "memoryInBytes" : 20616052736
+      },
+      "rosetta" : false,
+      "runtimeHandler" : "container-runtime-linux",
+      "ssh" : false,
+      "sysctls" : {
+
+      },
+      "useInit" : false,
+      "virtualization" : false
+    },
+    "id" : "aidm-local-engine",
+    "status" : {
+      "networks" : [
+        {
+          "hostname" : "aidm-local-engine",
+          "ipv4Address" : "192.168.64.2/24",
+          "ipv4Gateway" : "192.168.64.1",
+          "ipv6Address" : "fd00:0:0:1::2/64",
+          "macAddress" : "fe:00:00:00:00:02",
+          "mtu" : 1280,
+          "network" : "default",
+          "variant" : "reserved"
+        }
+      ],
+      "startedDate" : "2026-10-27T01:06:55Z",
+      "state" : "running"
+    }
+  }
+]
+

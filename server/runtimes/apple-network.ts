@@ -16,6 +16,8 @@ import {
   parseIpv4,
   parseNetstatRoutes,
   parseRouteGet,
+  classifyRoute,
+  type RouteKind,
   usesOf,
   type Cidr,
   type MacInterface,
@@ -34,8 +36,6 @@ const SYSTEM_STOP_TIMEOUT_MS = 120_000;
 const SYSTEM_START_TIMEOUT_MS = 120_000;
 /** How long the knock on the container's address waits. A refused permission fails at once. */
 export const KNOCK_TIMEOUT_MS = 3000;
-/** A failure faster than this did not wait for the network: macOS refused the connection itself. */
-const AT_ONCE_MS = 1000;
 
 /** A TCP connection to an address, tried and closed again, with how long it took. */
 export type Knock = { ok: true; ms: number } | { ok: false; code: string; ms: number };
@@ -55,6 +55,39 @@ export const knockTcp: Knocker = (address, port, timeoutMs) =>
     socket.once("error", (error: NodeJS.ErrnoException) => done({ ok: false, code: error.code ?? error.message, ms: elapsed() }));
   });
 
+/** What the published port did with one HTTP request: answered, reset the connection, said nothing in time, or something else. */
+export type PortAnswer = "answers" | "reset" | "timeout" | `failed ${string}`;
+export type PortProber = (hostPort: number) => Promise<PortAnswer>;
+
+const PORT_TIMEOUT_MS = 5000;
+
+export const probeHttpPort: PortProber = async (hostPort) => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${hostPort}/info`, { signal: AbortSignal.timeout(PORT_TIMEOUT_MS), redirect: "manual" });
+    await response.body?.cancel();
+    return "answers";
+  } catch (error) {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") return "timeout";
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "ECONNRESET" || /reset|closed unexpectedly/i.test(error instanceof Error ? error.message : "")) return "reset";
+    return `failed ${typeof code === "string" ? code : error instanceof Error ? error.message : String(error)}`;
+  }
+};
+
+/**
+ * The table of ADR 0006, route first: what stands between the Mac and an
+ * engine that runs. Null when the published port answers after all.
+ */
+export function decideConnection(route: RouteKind, inside: "answers" | "silent" | "unknown", published: PortAnswer | null): ApiError | null {
+  if (route.kind === "away") return { code: "mac.vpn_route", data: { interface: route.interface, via: route.via } };
+  if (route.kind === "loop") return { code: "mac.route_loop", data: { gateway: route.gateway } };
+  if (inside === "silent") return { code: "mac.engine_not_answering", data: {} };
+  if (published === "answers") return null;
+  if (inside === "answers" && route.kind === "bridge" && published === "reset") return { code: "mac.local_network_denied", data: {} };
+  return { code: "mac.engine_unreachable", data: { inside, port: published ?? "unknown" } };
+}
+
 /** The tool's own network as it runs now, and the interface of the Mac that carries it. */
 export interface ToolNetwork {
   subnet: Cidr;
@@ -69,6 +102,8 @@ export interface AppleNetworkDeps {
   /** Where the tool reads its configuration: `$XDG_CONFIG_HOME/container/config.toml`, else `~/.config/container/config.toml`. */
   configFile?: string;
   knock?: Knocker;
+  /** Asks the published port on 127.0.0.1. Default: an HTTP request to the task API's /info. */
+  probePort?: PortProber;
 }
 
 /** The tool's configuration file (1.6.1: PathUtils.BaseConfigPath.home). */
@@ -140,10 +175,12 @@ export function withSubnet(toml: string, subnet: string): string {
 export class AppleNetwork {
   private readonly configFile: string;
   private readonly knock: Knocker;
+  private readonly probePort: PortProber;
 
   constructor(private readonly deps: AppleNetworkDeps) {
     this.configFile = deps.configFile ?? appleConfigFile();
     this.knock = deps.knock ?? knockTcp;
+    this.probePort = deps.probePort ?? probeHttpPort;
   }
 
   /** The Mac's IPv4 routes and interfaces, or null when either command failed. */
@@ -216,10 +253,13 @@ export class AppleNetwork {
     if (table === null) return null;
     const network = await this.toolNetwork(table.interfaces);
     if (network === null) return null;
-    const uses = usesOf(network.subnet, table, { ignore: network.bridge === null ? [] : [network.bridge], winning: true });
-    const listed = uses.map((use) => `${use.kind} ${use.network} on ${use.interface}`).join(", ");
+    const all = usesOf(network.subnet, table, { ignore: network.bridge === null ? [] : [network.bridge], winning: true });
+    // Only another network with the same addresses is a collision a move can fix. A route of another
+    // interface into the subnet is a VPN client's, and it takes whatever subnet sits on the bridge.
+    const uses = all.filter((use) => use.kind === "address");
+    const listed = all.map((use) => `${use.kind} ${use.network} on ${use.interface}`).join(", ");
     this.deps.log(
-      `Network: the tool's subnet is ${formatCidr(network.subnet)} on ${network.bridge ?? "no interface of this Mac"}; ${uses.length === 0 ? "nothing else uses it" : `also used by ${listed}`}.`,
+      `Network: the tool's subnet is ${formatCidr(network.subnet)} on ${network.bridge ?? "no interface of this Mac"}; ${all.length === 0 ? "nothing else uses it" : `also used by ${listed}${uses.length === 0 ? ", which is a route and no collision" : ""}`}.`,
     );
     return { network, uses };
   }
@@ -261,56 +301,62 @@ export class AppleNetwork {
 
   /**
    * Why an engine container that runs does not answer on its published port,
-   * found with three checks, all from the Mac but the last one:
+   * or null when it answers now. ADR 0006 has the table; in short, route first:
    *
-   * 1. the route to the container's address leaves through another interface
-   *    than the tool's bridge: a VPN took it;
-   * 2. a connection to the container's address fails at once with "No route
-   *    to host" while the route is right: macOS's Local Network permission;
-   * 3. else the task API is asked inside the container with /bin/bash alone,
-   *    which every engine image has (its postprocess script needs it).
+   * 1. the route to the container's address (`route -n get`) against the tool's
+   *    bridge (the interface that holds the gateway, from `ifconfig`): another
+   *    interface is a VPN client's work, and a gateway route on the bridge is a loop;
+   * 2. the task API inside the container, asked with /bin/bash alone, which every
+   *    engine image has (its postprocess script needs it): no answer there is the
+   *    engine's own problem;
+   * 3. the published port on 127.0.0.1: reset while the API answers inside and
+   *    the route is right is macOS keeping "container" from the local network.
    *
-   * Each step goes to the diagnosis log.
+   * A direct connection to the container's address is logged too, as
+   * information only: it follows the Mac's route to the tool's network, so its
+   * failures say nothing about the permission. Each step goes to the log.
    */
-  async diagnose(container: string, port: number): Promise<ApiError> {
+  async diagnose(container: string, port: number): Promise<ApiError | null> {
     const found = await this.containerAddress(container);
+    let route: RouteKind = { kind: "unknown" };
     if (found === null) {
       this.deps.log(`Connection check: the address of ${container} could not be read.`);
-      return { code: "mac.engine_unreachable", data: { inside: await this.askInside(container, port) } };
+    } else {
+      const address = formatIpv4(found.address);
+      const table = await this.table();
+      const bridge = table === null ? null : interfaceWithAddress(table.interfaces, found.gateway);
+      const routeResult = await this.deps.runner.run([ROUTE, "-n", "get", address], { timeoutMs: QUICK_TIMEOUT_MS });
+      const answer = routeResult.exitCode === 0 ? parseRouteGet(routeResult.stdout) : null;
+      route = classifyRoute(answer, bridge);
+      this.deps.log(
+        `Connection check 1 (route): ${address} goes through ${answer?.interface ?? "no route"}${answer?.gateway ? ` via ${answer.gateway}` : ""}${answer === null ? "" : ` <${answer.flags.join(",")}>`}; the tool's bridge is ${bridge ?? "not found"}: ${route.kind}.`,
+      );
+      const knock = await this.knock(address, port, KNOCK_TIMEOUT_MS);
+      this.deps.log(
+        `Connection check (direct, for information only): a connection to ${address}:${port} ${knock.ok ? "was answered" : `failed with ${knock.code}`} after ${seconds(knock.ms)}.`,
+      );
     }
-    const table = await this.table();
-    const bridge = table === null ? null : interfaceWithAddress(table.interfaces, found.gateway);
-    const routeResult = await this.deps.runner.run([ROUTE, "-n", "get", formatIpv4(found.address)], { timeoutMs: QUICK_TIMEOUT_MS });
-    const route = routeResult.exitCode === 0 ? parseRouteGet(routeResult.stdout) : null;
-    const address = formatIpv4(found.address);
-    this.deps.log(
-      `Connection check 1 (route): ${address} goes through ${route?.interface ?? "no route"}${route?.gateway ? ` via ${route.gateway}` : ""}; the tool's bridge is ${bridge ?? "not found"}.`,
-    );
-    if (route !== null && bridge !== null && route.interface !== bridge) {
-      return { code: "mac.vpn_route", data: { address, interface: route.interface, bridge, subnet: formatCidr(found.network) } };
-    }
-
-    const knock = await this.knock(address, port, KNOCK_TIMEOUT_MS);
-    this.deps.log(`Connection check 2 (direct): a connection to ${address}:${port} ${knock.ok ? "was answered" : `failed with ${knock.code}`} after ${seconds(knock.ms)}.`);
-    if (!knock.ok && knock.code === "EHOSTUNREACH" && knock.ms < AT_ONCE_MS && (bridge === null || route?.interface === bridge)) {
-      return { code: "mac.local_network_denied", data: { address } };
-    }
-
-    return { code: "mac.engine_unreachable", data: { inside: await this.askInside(container, port) } };
+    const inside = await this.askInside(container, port);
+    const published = found?.hostPort === null || found === null ? null : await this.probePort(found.hostPort);
+    this.deps.log(`Connection check 3 (published port): ${published === null ? "not known" : `127.0.0.1:${found?.hostPort} ${published}`}.`);
+    return decideConnection(route, inside, published);
   }
 
-  /** The container's address and gateway on the tool's network, from `container inspect`. */
-  private async containerAddress(container: string): Promise<{ address: number; network: Cidr; gateway: number } | null> {
+  /** The container's address, gateway and published port, from `container inspect`. */
+  private async containerAddress(container: string): Promise<{ address: number; network: Cidr; gateway: number; hostPort: number | null } | null> {
     const result = await this.deps.runner.run([APPLE_TOOL, "inspect", container], { timeoutMs: QUICK_TIMEOUT_MS });
     if (result.exitCode !== 0) return null;
     const parsed = parseJson(result.stdout);
-    const status = asRecord(asRecord(Array.isArray(parsed) ? parsed[0] : parsed)?.status);
+    const entry = asRecord(Array.isArray(parsed) ? parsed[0] : parsed);
+    const status = asRecord(entry?.status);
     const first = asRecord(Array.isArray(status?.networks) ? status.networks[0] : undefined);
     const cidr = typeof first?.ipv4Address === "string" ? parseCidr(first.ipv4Address) : null;
     const address = typeof first?.ipv4Address === "string" ? parseIpv4(first.ipv4Address.split("/")[0] ?? "") : null;
     const gateway = typeof first?.ipv4Gateway === "string" ? parseIpv4(first.ipv4Gateway) : null;
     if (cidr === null || address === null || gateway === null) return null;
-    return { address, network: cidr, gateway };
+    const ports = asRecord(entry?.configuration)?.publishedPorts;
+    const hostPort = asRecord(Array.isArray(ports) ? ports[0] : undefined)?.hostPort;
+    return { address, network: cidr, gateway, hostPort: typeof hostPort === "number" ? hostPort : null };
   }
 
   /** Whether the task API answers inside the container: an HTTP status line from its port, read by bash alone. */
