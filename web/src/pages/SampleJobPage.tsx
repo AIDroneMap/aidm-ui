@@ -54,10 +54,12 @@ export interface SampleIntroProps {
   starting: boolean;
   failure: ApiFailure | null;
   onStart: () => void;
+  /** False inside the wizard, which has its own way out. */
+  showSkip?: boolean;
 }
 
 /** Everything the operator sees before a run: the photos, the measured figures and the choice of engine. */
-export function SampleIntro({ sample, engineId, onEngineChange, starting, failure, onStart }: SampleIntroProps) {
+export function SampleIntro({ sample, engineId, onEngineChange, starting, failure, onStart, showSkip = true }: SampleIntroProps) {
   const { dataset, reference } = sample;
   const offered = sample.engines.filter((engine) => engine.offered);
   const refused = sample.engines.filter((engine) => !engine.offered);
@@ -142,7 +144,7 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
             {starting ? t("sample.starting") : t("sample.start")}
           </button>
         )}
-        <a href="#/">{t("sample.skip")}</a>
+        {showSkip && <a href="#/">{t("sample.skip")}</a>}
       </div>
     </>
   );
@@ -207,7 +209,7 @@ export function RunProgress({
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
     <>
-      {run.engineName !== null && <p>{t("run.engine", { name: run.engineLocal ? t("engines.local_name") : run.engineName })}</p>}
+      {run.engineName !== null && <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName })}</p>}
       <p role="status" className="run-state">
         {t(known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>
@@ -452,6 +454,7 @@ export function SampleJobPage({
           starting={starting}
           failure={failure}
           onStart={() => void start()}
+          showSkip={!embedded}
         />
       )}
     </>

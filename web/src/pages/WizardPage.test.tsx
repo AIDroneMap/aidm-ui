@@ -281,7 +281,7 @@ test("the welcome, install and sample screens are translated and their controls 
   expect(install).toContain(">Back</button>");
   expect(install).toContain(">Next</button>");
   expect(sample).not.toContain('<a href="#/sample"');
-  expect(sample).toContain(">Finish</button>");
+  expect(sample).toContain(">Finish the setup</button>");
 });
 
 test("the sample screen holds the sample job page itself, with one heading, and Finish below it", () => {
@@ -289,10 +289,9 @@ test("the sample screen holds the sample job page itself, with one heading, and 
     <SampleScreen busy={false} failure={null} onAuthRequired={() => {}} onBack={() => {}} onFinish={() => {}} />,
   );
   expect(html.match(/<h1\b/g)?.length).toBe(1);
-  expect(html).toContain(en["wizard.sample.body"]);
   expect(html).toContain(en["sample.loading"]);
-  expect(html.indexOf(en["wizard.sample.body"])).toBeLessThan(html.indexOf(en["sample.loading"]));
-  expect(html.indexOf(en["sample.loading"])).toBeLessThan(html.indexOf(">Finish</button>"));
+  expect(html).not.toContain("Skip the sample job");
+  expect(html.indexOf(en["sample.loading"])).toBeLessThan(html.indexOf(">Finish the setup</button>"));
 });
 
 test("each screen has one heading that can take focus", () => {

@@ -417,7 +417,6 @@ export function SampleScreen(props: SampleScreenProps) {
   return (
     <>
       <Heading>{t("wizard.sample.title")}</Heading>
-      <p>{t("wizard.sample.body")}</p>
       <SampleJobPage onAuthRequired={props.onAuthRequired} embedded />
       {props.failure && <ErrorMessage failure={props.failure} />}
       <div className="actions">

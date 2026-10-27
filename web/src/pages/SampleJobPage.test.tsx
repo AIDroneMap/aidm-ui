@@ -7,6 +7,7 @@ import {
   type SampleEngineOffer,
   type SampleView,
 } from "../../../shared/api-types.ts";
+import en from "../i18n/en.json";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
 import { RunProgress, SampleIntro, SampleJobPage, type RunProgressProps, type SampleIntroProps } from "./SampleJobPage.tsx";
 
@@ -150,8 +151,19 @@ test("the engine on this computer is named by the interface, whatever name the s
 
 test("a run on the engine on this computer says so in the interface's words", () => {
   const html = renderRun({ engineLocal: true, engineName: "Nom enregistre" });
-  expect(html).toContain("Running on This computer");
+  expect(html).toContain("Running on this computer");
   expect(html).not.toContain("Nom enregistre");
+});
+
+test("a run on a remote engine puts the engine's name in quotes", () => {
+  expect(renderRun({ engineLocal: false, engineName: "Barn engine" })).toContain("Running on &quot;Barn engine&quot;");
+});
+
+test("inside the wizard the sample job page leaves out the skip link, and its intro is said once", () => {
+  const inWizard = renderIntro(sample, { showSkip: false });
+  expect(inWizard).not.toContain("Skip the sample job");
+  expect(inWizard.split(en["sample.intro"]).length - 1).toBe(1);
+  expect(renderIntro()).toContain('<a href="#/">Skip the sample job</a>');
 });
 
 test("an engine that is not offered is listed with its cap and the peak", () => {
