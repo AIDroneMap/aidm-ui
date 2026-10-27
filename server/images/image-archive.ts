@@ -77,7 +77,8 @@ function entries(image: DownloadedImage, format: ArchiveFormat): Entry[] {
   const read = (name: string) => new Uint8Array(readFileSync(join(image.folder, name)));
   const list: Entry[] = [small("oci-layout", read("oci-layout")), small("index.json", read("index.json"))];
   if (format === "oci+docker") list.push(small("manifest.json", dockerSaveManifest(image)));
-  const seen = new Set<string>();
+  // The layers the runtime already holds were not downloaded, so they are not in the archive; the manifests still name them.
+  const seen = new Set<string>(image.skipped.map((blob) => blob.digest));
   for (const blob of [image.manifest, image.config, ...image.layers]) {
     if (seen.has(blob.digest)) continue;
     seen.add(blob.digest);

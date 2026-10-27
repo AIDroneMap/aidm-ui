@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CommandResult } from "../server/process/command-runner.ts";
 import { runArgv as appleRunArgv } from "../server/runtimes/apple-container.ts";
 import { oneOffArgv } from "../server/runtimes/cli-runtime.ts";
-import type { DownloadedImage } from "../server/images/image-download.ts";
+import type { BlobEntry, DownloadedImage } from "../server/images/image-download.ts";
 import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv } from "../server/runtimes/docker.ts";
 import { GPU_FLAGS as PODMAN_GPU_FLAGS, runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
 import {
@@ -12,6 +12,7 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type KnownImage,
   type OneOffSpec,
   type RuntimeDetection,
   type RuntimeId,
@@ -80,6 +81,10 @@ export class FakeRuntime implements ContainerRuntime {
   readonly images = new Set<string>();
   /** Every image it was given to load, by its pinned reference. */
   readonly loads: string[] = [];
+  /** What heldLayers answers when set, whatever the runtime really holds. A load still fails for a layer left out that it does not really hold. */
+  heldAnswer: ReadonlySet<string> | undefined;
+  /** Every call of heldLayers, with the digests asked about. */
+  readonly heldAsks: Array<{ layers: string[]; known: string[] }> = [];
   readonly loadCopies = 1;
   readonly starts: Array<{ spec: ContainerSpec; argv: string[] }> = [];
   /** Every one-off run, with the command line the real adapter would use. */
@@ -93,6 +98,8 @@ export class FakeRuntime implements ContainerRuntime {
   silent: (image: string) => boolean;
 
   private failingLoads = 0;
+  /** The digests of every layer of the images it holds, by load or by holdImage. */
+  private readonly layerDigests = new Set<string>();
   /** The names of the images it loaded. */
   private readonly loadedNames = new Set<string>();
   private imageRemovalRefused = false;
@@ -139,8 +146,16 @@ export class FakeRuntime implements ContainerRuntime {
   }
 
   /** Puts an image in place as if it had been pulled or loaded before. */
-  holdImage(pinned: string): void {
+  holdImage(pinned: string, layers: BlobEntry[] = []): void {
     this.images.add(pinned);
+    for (const layer of layers) this.layerDigests.add(layer.digest);
+  }
+
+  /** The layers of the images it holds, by digest: a load may leave these out. */
+  async heldLayers(layers: BlobEntry[], known: KnownImage[]): Promise<ReadonlySet<string>> {
+    this.heldAsks.push({ layers: layers.map((layer) => layer.digest), known: known.map((image) => image.ref) });
+    if (this.heldAnswer !== undefined) return this.heldAnswer;
+    return new Set(layers.map((layer) => layer.digest).filter((digest) => this.layerDigests.has(digest)));
   }
 
   async load(image: DownloadedImage, options: { signal?: AbortSignal } = {}): Promise<RuntimeResult<void>> {
@@ -151,6 +166,9 @@ export class FakeRuntime implements ContainerRuntime {
       this.failingLoads--;
       return fail("runtime.load_failed", { exitCode: 1 });
     }
+    // Like the real tools, a load that leaves out a layer the runtime does not hold fails.
+    if (image.skipped.some((layer) => !this.layerDigests.has(layer.digest))) return fail("runtime.load_failed", { exitCode: 1 });
+    for (const layer of image.layers) this.layerDigests.add(layer.digest);
     this.loadedNames.add(image.name);
     this.images.add(pinned);
     return ok(undefined);

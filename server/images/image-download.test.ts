@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
@@ -8,6 +8,7 @@ import { sizeOf } from "../downloads/downloader.ts";
 import {
   blobPath,
   downloadImage,
+  fetchManifestLayers,
   localName,
   type ImageDownloadOptions,
   type ImageDownloadProgress,
@@ -404,4 +405,123 @@ test("the log names the image in full once, with its manifest digest, and in a s
   expect(lines.slice(1).filter((line) => line.includes(localName(pinned)) || line.includes(added.digest))).toEqual([]);
   expect(lines.some((line) => line.includes(`layer 1 of 3 of ${short} (`))).toBe(true);
   expect(lines.at(-1)).toStartWith(`Image download ${short}: finished, `);
+});
+
+/** The registry requests for blobs, as the digests asked for. */
+function blobsAsked(): string[] {
+  return registry.requests.filter((r) => pathOf(r).includes("/blobs/")).map((r) => pathOf(r).split("/blobs/")[1] ?? "");
+}
+
+test("layers the runtime holds are not requested, the totals cover what is fetched, and the log says what was left out", async () => {
+  const [lower = "", middle = "", top = ""] = added.layerDigests;
+  const progress: ImageDownloadProgress[] = [];
+  const lines: string[] = [];
+  const asks: string[][] = [];
+  const outcome = await download({
+    onProgress: (p) => progress.push(p),
+    log: (line) => lines.push(line),
+    held: async (asked) => {
+      asks.push(asked.map((layer) => layer.digest));
+      return new Set([lower, middle]);
+    },
+  });
+  if (!outcome.ok) throw new Error(`The download failed: ${outcome.error.code}`);
+
+  // Asked once, about the layers and not the config.
+  expect(asks).toEqual([added.layerDigests]);
+  expect(blobsAsked()).toEqual([added.configDigest, top]);
+  expect(existsSync(blobPath(folder, lower))).toBe(false);
+  expect(existsSync(blobPath(folder, middle))).toBe(false);
+  expect(sha256Of(blobPath(folder, top))).toBe(hexOf(top));
+
+  const fetched = config.length + (layers[2]?.length ?? 0);
+  const reused = (layers[0]?.length ?? 0) + (layers[1]?.length ?? 0);
+  expect(progress.every((p) => p.total === fetched && p.reused === reused && p.blobsTotal === 2)).toBe(true);
+  expect(progress.at(-1)).toMatchObject({ received: fetched, blobsDone: 2 });
+
+  // The image still lists every layer, and names the ones left out.
+  expect(outcome.image.layers.map((layer) => layer.digest)).toEqual(added.layerDigests);
+  expect(outcome.image.skipped).toEqual([
+    { digest: lower, size: layers[0]?.length ?? -1 },
+    { digest: middle, size: layers[1]?.length ?? -1 },
+  ]);
+  expect(lines[0]).toContain(`, 2 blobs, ${fetched} bytes, from `);
+  expect(lines[0]).toEndWith(`; 2 of 3 layers already held by the runtime, ${reused} bytes not downloaded`);
+});
+
+test("without a held option, or when nothing is held, nothing is left out and the log line is as before", async () => {
+  const lines: string[] = [];
+  const outcome = await download({ log: (line) => lines.push(line), held: async () => new Set() });
+  if (!outcome.ok) throw new Error(`The download failed: ${outcome.error.code}`);
+  expect(outcome.image.skipped).toEqual([]);
+  expect(blobsAsked()).toEqual(allDigests());
+  expect(lines[0]).not.toContain("already held");
+});
+
+test("a held layer whose blob is already complete on disk is not left out", async () => {
+  const [lower = "", middle = ""] = added.layerDigests;
+  // A first download that keeps everything on disk.
+  expect((await download()).ok).toBe(true);
+  const before = registry.requests.length;
+  const outcome = await download({ held: async () => new Set([lower, middle]) });
+  if (!outcome.ok) throw new Error(`The download failed: ${outcome.error.code}`);
+  expect(outcome.image.skipped).toEqual([]);
+  // Everything was there already, so nothing is requested.
+  expect(registry.requests.slice(before).some((r) => pathOf(r).includes("/blobs/"))).toBe(false);
+});
+
+test("a held layer whose blob is only partly on disk is left out", async () => {
+  const [lower = ""] = added.layerDigests;
+  mkdirSync(join(folder, "blobs", "sha256"), { recursive: true });
+  writeFileSync(blobPath(folder, lower), layers[0]?.subarray(0, 1000) ?? new Uint8Array());
+  const outcome = await download({ held: async () => new Set([lower]) });
+  if (!outcome.ok) throw new Error(`The download failed: ${outcome.error.code}`);
+  expect(outcome.image.skipped.map((layer) => layer.digest)).toEqual([lower]);
+  expect(blobsAsked()).not.toContain(lower);
+});
+
+test("a held question that throws is logged and the image is downloaded whole", async () => {
+  const lines: string[] = [];
+  const outcome = await download({
+    log: (line) => lines.push(line),
+    held: async () => {
+      throw new Error("the tool said no");
+    },
+  });
+  if (!outcome.ok) throw new Error(`The download failed: ${outcome.error.code}`);
+  expect(outcome.image.skipped).toEqual([]);
+  expect(blobsAsked()).toEqual(allDigests());
+  expect(lines.some((line) => line.includes("could not say which layers it holds") && line.includes("the tool said no"))).toBe(true);
+});
+
+test("fetchManifestLayers gives the layers of the manifest at the registry and writes nothing", async () => {
+  const lines: string[] = [];
+  const found = await fetchManifestLayers(pinned, { log: (line) => lines.push(line) });
+  expect(found).toEqual(added.layerDigests.map((digest, i) => ({ digest, size: layers[i]?.length ?? -1 })));
+  expect(existsSync(folder)).toBe(false);
+  expect(blobsAsked()).toEqual([]);
+  expect(lines).toEqual([]);
+});
+
+test("fetchManifestLayers gives null, and says why, for a missing manifest, a manifest that does not match its digest and an index", async () => {
+  const lines: string[] = [];
+  const log = (line: string) => lines.push(line);
+  expect(await fetchManifestLayers({ ...pinned, digest: `sha256:${"0".repeat(64)}` }, { log })).toBeNull();
+
+  const { fetch: altered } = watching({
+    after: async (url, response) => {
+      if (!url.pathname.includes("/manifests/") || response.status !== 200) return;
+      const bytes = new Uint8Array([...new Uint8Array(await response.arrayBuffer()), 32]);
+      return new Response(bytes, { status: 200, headers: { "content-type": MANIFEST_TYPE } });
+    },
+  });
+  expect(await fetchManifestLayers(pinned, { fetch: altered, log })).toBeNull();
+
+  const index = new TextEncoder().encode(JSON.stringify({ schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json", manifests: [] }));
+  expect(await fetchManifestLayers(addRawManifest(index, "application/vnd.oci.image.index.v1+json"), { log })).toBeNull();
+
+  expect(lines).toHaveLength(3);
+  expect(lines[1]).toContain("check of the manifest failed");
+  expect(lines[2]).toContain("expected an OCI or Docker image manifest");
+  expect(existsSync(folder)).toBe(false);
 });

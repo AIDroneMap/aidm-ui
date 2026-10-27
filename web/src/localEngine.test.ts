@@ -60,6 +60,7 @@ test("the install status follows the view", () => {
     kind: "downloading",
     graphics: false,
     size: 683 * 1024 ** 2,
+    reused: null,
     received: 1000,
     speed: 500,
     done: 3,

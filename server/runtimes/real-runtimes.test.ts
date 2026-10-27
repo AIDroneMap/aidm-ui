@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadImage, localName, type DownloadedImage } from "../images/image-download.ts";
+import { tarHeader } from "../images/image-archive.ts";
+import { downloadImage, localName, type BlobEntry, type DownloadedImage } from "../images/image-download.ts";
 import { systemRunner } from "../process/command-runner.ts";
 import { dockerRuntime } from "./docker.ts";
 import { podmanRuntime } from "./podman.ts";
@@ -41,6 +42,73 @@ async function eventually<T>(attempt: () => Promise<T | undefined>, seconds = 10
     if (value !== undefined || Date.now() > until) return value;
     await Bun.sleep(250);
   }
+}
+
+const digestOf = (bytes: Uint8Array) => `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+
+/** An uncompressed layer: a tar of one small file. Its digest is also its diff ID. */
+function layerOf(file: string, text: string): Uint8Array {
+  const body = new TextEncoder().encode(text);
+  const padded = new Uint8Array(Math.ceil(body.length / 512) * 512);
+  padded.set(body);
+  const parts = [tarHeader(file, body.length), padded, new Uint8Array(1024)];
+  const tar = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    tar.set(part, at);
+    at += part.length;
+  }
+  return tar;
+}
+
+/**
+ * A tiny image really on disk, as the downloader leaves it, with the layers
+ * given in order. The layers named in `leftOut` are not written: the download
+ * did not fetch them because the runtime holds them.
+ */
+function layeredImage(folder: string, label: string, layers: Uint8Array[], leftOut: number[] = []): DownloadedImage {
+  mkdirSync(join(folder, "blobs", "sha256"), { recursive: true });
+  const put = (bytes: Uint8Array, write = true) => {
+    const digest = digestOf(bytes);
+    if (write) writeFileSync(join(folder, "blobs", "sha256", digest.slice(7)), bytes);
+    return { digest, size: bytes.length };
+  };
+  const entries = layers.map((layer, index) => put(layer, !leftOut.includes(index)));
+  const architecture = process.arch === "arm64" ? "arm64" : "amd64";
+  const config = put(
+    new TextEncoder().encode(
+      JSON.stringify({ architecture, os: "linux", config: { Labels: { image: label } }, rootfs: { type: "layers", diff_ids: entries.map((entry) => entry.digest) } }),
+    ),
+  );
+  const manifestBytes = new TextEncoder().encode(
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config: { mediaType: "application/vnd.oci.image.config.v1+json", ...config },
+      layers: entries.map((entry) => ({ mediaType: "application/vnd.oci.image.layer.v1.tar", ...entry })),
+    }),
+  );
+  const manifest = put(manifestBytes);
+  const pinned = { repository: "localhost/aidm-ui-ci-reuse", digest: manifest.digest };
+  const name = localName(pinned);
+  writeFileSync(join(folder, "oci-layout"), '{"imageLayoutVersion":"1.0.0"}\n');
+  writeFileSync(
+    join(folder, "index.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      manifests: [{ mediaType: "application/vnd.oci.image.manifest.v1+json", ...manifest, annotations: { "io.containerd.image.name": name } }],
+    }),
+  );
+  const all: BlobEntry[] = entries;
+  return {
+    pinned,
+    folder,
+    name,
+    manifest: { ...manifest, mediaType: "application/vnd.oci.image.manifest.v1+json" },
+    config,
+    layers: all,
+    skipped: all.filter((_, index) => leftOut.includes(index)),
+  };
 }
 
 const makers: Record<string, (runner: ReturnType<typeof systemRunner>) => ContainerRuntime> = {
@@ -193,6 +261,52 @@ for (const id of ["podman", "docker"]) {
       const loadedName = image?.name ?? IMAGE_NAME;
       expect(await runtime.removeImage(loadedName)).toEqual({ ok: true, value: undefined });
       expect(await runtime.removeImage(loadedName)).toEqual({ ok: true, value: undefined });
+    }, SLOW);
+  });
+}
+
+// Two tiny images that share their lower layer. The second is installed the
+// way an update is: its download leaves out the lower layer, which the runtime
+// holds from the first.
+for (const id of ["podman", "docker"]) {
+  describe.skipIf(!requested.includes(id))(`the real ${id} reuses the layers it holds`, () => {
+    const runtime = (makers[id] as (runner: ReturnType<typeof systemRunner>) => ContainerRuntime)(systemRunner());
+    const lower = layerOf("lower.txt", "the lower layer, shared by both images\n");
+    const upper = layerOf("upper.txt", "the layer only the second image has\n");
+    let scratch = "";
+    let first: DownloadedImage;
+    let second: DownloadedImage;
+    let reference = "";
+
+    // Made only when the tests run, so a skipped run leaves nothing on disk.
+    beforeAll(() => {
+      scratch = mkdtempSync(join(tmpdir(), "aidm-ui-ci-reuse-"));
+      first = layeredImage(join(scratch, "first"), "one", [lower]);
+      second = layeredImage(join(scratch, "second"), "two", [lower, upper], [0]);
+    });
+
+    afterAll(async () => {
+      if (second !== undefined) await runtime.removeImage(second.name);
+      if (first !== undefined) await runtime.removeImage(first.name);
+      if (scratch !== "") rmSync(scratch, { recursive: true, force: true });
+    }, SLOW);
+
+    test("the first image loads whole and the runtime vouches for it", async () => {
+      expect(await runtime.load(first)).toEqual({ ok: true, value: undefined });
+      const verified = await runtime.verifyImage(first);
+      expect(verified.ok).toBe(true);
+      if (verified.ok) reference = verified.value;
+    }, SLOW);
+
+    test("it says it holds the lower layer of the second image, and not the upper one", async () => {
+      const held = await runtime.heldLayers(second.layers, [{ ref: reference, layers: first.layers }]);
+      expect(held).toEqual(new Set([digestOf(lower)]));
+    }, SLOW);
+
+    test("the second image loads without the lower layer, and the runtime holds it", async () => {
+      expect(second.skipped).toHaveLength(1);
+      expect(await runtime.load(second)).toEqual({ ok: true, value: undefined });
+      expect((await runtime.verifyImage(second)).ok).toBe(true);
     }, SLOW);
   });
 }

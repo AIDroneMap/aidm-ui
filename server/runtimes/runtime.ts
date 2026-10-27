@@ -1,5 +1,5 @@
 import type { ApiError } from "../../shared/api-error.ts";
-import type { DownloadedImage } from "../images/image-download.ts";
+import type { BlobEntry, DownloadedImage } from "../images/image-download.ts";
 import type { CommandResult } from "../process/command-runner.ts";
 
 import type { RuntimeId } from "../../shared/api-types.ts";
@@ -82,6 +82,13 @@ export interface ContainerStatus {
 
 export type RuntimeResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
+/** An image aidm-ui installed earlier on this runtime, with the layers its manifest lists. */
+export interface KnownImage {
+  /** The reference the runtime runs that image by. */
+  ref: string;
+  layers: BlobEntry[];
+}
+
 export interface ContainerRuntime extends RuntimeProbe {
   /**
    * How many copies of the download a load puts on the runtime's disk, for a
@@ -96,6 +103,13 @@ export interface ContainerRuntime extends RuntimeProbe {
    * output. It does not prove the runtime holds the right image: verifyImage does.
    */
   load(image: DownloadedImage, options?: { signal?: AbortSignal }): Promise<RuntimeResult<void>>;
+  /**
+   * Which of these layers (by digest) a load may leave out because the runtime
+   * already holds them and reuses them from its own storage. `known` are the
+   * images aidm-ui installed on this runtime before, for the runtimes that
+   * can only tell by an image they hold. A runtime that cannot tell gives an empty set.
+   */
+  heldLayers(layers: BlobEntry[], known: KnownImage[]): Promise<ReadonlySet<string>>;
   /**
    * The reference to run a loaded image by, once the runtime has shown that it
    * holds the image under its name with the manifest digest or the config

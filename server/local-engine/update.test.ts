@@ -453,6 +453,21 @@ test("after two successful updates only the current and the previous image remai
   expect(h.settings.get("local.previous")?.packageVersion).toBe("2.6.0");
 });
 
+test("each install asks the runtime about the images of the installed and the previous package, and not about the one it installs", async () => {
+  const runtime = runtimeOf();
+  const h = start({ runtime });
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  await updateTo(h, "2.6.0");
+  await offer(h, release("2.7.0", 3));
+  await updateTo(h, "2.7.0");
+
+  // The first install knows no image, the first update the installed one, the second update the installed one and the previous one.
+  expect(runtime.heldAsks.map((ask) => ask.known)).toEqual([[], [IMAGES["2.5.0"]], [IMAGES["2.6.0"], IMAGES["2.5.0"]]]);
+  // What the installed package recorded about its layers is what the next install knows.
+  expect((h.settings.get("local.package") as InstalledContainerPackage | null)?.layers).toHaveLength(1);
+});
+
 // Criterion: manual rollback starts the previous version and marks it current.
 
 test("a manual rollback starts the previous version and marks it current, keeping the other as the previous", async () => {

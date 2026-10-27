@@ -23,6 +23,13 @@ export interface InstalledContainerPackage {
    * "<image>@<digest>" as it always did.
    */
   imageRef?: string;
+  /**
+   * Every layer of the image, in order, with its size, from the manifest. A
+   * later update asks the runtime which of its own layers it already holds
+   * (issue 47). Absent for a package installed before that: the layers are
+   * then read from the manifest at the registry.
+   */
+  layers?: Array<{ digest: string; size: number }>;
   /** Why the processor package was chosen on a computer with an NVIDIA card: the container tool cannot hand the card over. */
   gpuNote?: ApiError | null;
   /** Set when the graphics card package failed its test run and could not be deleted. */

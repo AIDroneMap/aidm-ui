@@ -35,14 +35,19 @@ export interface DownloadedImage {
   name: string;
   manifest: { digest: string; size: number; mediaType: string };
   config: BlobEntry;
+  /** Every layer of the manifest, in order, those left out of the download too. */
   layers: BlobEntry[];
+  /** The layers the runtime already held and the download left out. They are not in the folder. */
+  skipped: BlobEntry[];
 }
 
 export interface ImageDownloadProgress {
   /** Bytes of the config and the layers on disk. */
   received: number;
-  /** The config and the layers, from the manifest. */
+  /** The config and the layers the download fetches, from the manifest. Layers left out are not counted. */
   total: number;
+  /** Bytes of the layers left out because the runtime already holds them. */
+  reused: number;
   /** Over the last seconds, while bytes arrive. Null until there is enough to tell. */
   bytesPerSecond: number | null;
   blobsDone: number;
@@ -57,6 +62,12 @@ export interface ImageDownloadOptions {
   fetch?: typeof fetch;
   signal?: AbortSignal;
   onProgress?: (progress: ImageDownloadProgress) => void;
+  /**
+   * The layer digests the runtime already holds, asked once after the manifest
+   * is read. A held layer is left out unless its blob is already complete on
+   * disk. If this throws, the error is logged and nothing is left out.
+   */
+  held?: (layers: BlobEntry[]) => Promise<ReadonlySet<string>>;
   stallMs?: number;
   idleMs?: number;
   backoffMs?: DownloadOptions["backoffMs"];
@@ -230,8 +241,16 @@ export async function downloadImage(
 
   // A layer that appears twice is downloaded once.
   const seen = new Set<string>();
-  const blobs = [manifest.config, ...manifest.layers].filter((blob) => !seen.has(blob.digest) && seen.add(blob.digest));
+  const unique = [manifest.config, ...manifest.layers].filter((blob) => !seen.has(blob.digest) && seen.add(blob.digest));
+  const held = await heldDigests(manifest.layers, options);
+  // The config always comes. A held layer whose blob is already complete on disk costs nothing to keep.
+  const skipped = unique.filter(
+    (blob) => blob.digest !== manifest.config.digest && held.has(blob.digest) && sizeOf(blobPath(folder, blob.digest)) !== blob.size,
+  );
+  const skippedDigests = new Set(skipped.map((blob) => blob.digest));
+  const blobs = unique.filter((blob) => !skippedDigests.has(blob.digest));
   const total = blobs.reduce((sum, blob) => sum + blob.size, 0);
+  const reused = skipped.reduce((sum, blob) => sum + blob.size, 0);
 
   let done = 0;
   let doneBytes = 0;
@@ -240,7 +259,7 @@ export async function downloadImage(
   const speed = speedMeter(now);
   const report = (received: number) => {
     const bytesPerSecond = speed(received);
-    options.onProgress?.({ received, total, bytesPerSecond, blobsDone: done, blobsTotal: blobs.length, retries, lastRetry });
+    options.onProgress?.({ received, total, reused, bytesPerSecond, blobsDone: done, blobsTotal: blobs.length, retries, lastRetry });
   };
   report(0);
   const log = options.log ?? (() => {});
@@ -248,7 +267,11 @@ export async function downloadImage(
   const name = pinned.name ?? localName(pinned);
   // Named in full once, with its digest; the lines after it use the short form.
   const short = shortName(pinned);
-  log(`Image download ${short}: ${name}, manifest ${pinned.digest}, ${blobs.length} blobs, ${total} bytes, from ${location.base}`);
+  const heldNote =
+    skipped.length === 0
+      ? ""
+      : `; ${skipped.length} of ${new Set(manifest.layers.map((layer) => layer.digest)).size} layers already held by the runtime, ${reused} bytes not downloaded`;
+  log(`Image download ${short}: ${name}, manifest ${pinned.digest}, ${blobs.length} blobs, ${total} bytes, from ${location.base}${heldNote}`);
 
   for (const [index, blob] of blobs.entries()) {
     const path = blobPath(folder, blob.digest);
@@ -298,8 +321,50 @@ export async function downloadImage(
       manifest: { digest: pinned.digest, size: got.bytes.length, mediaType: manifest.mediaType },
       config: manifest.config,
       layers: manifest.layers,
+      skipped,
     },
   };
+}
+
+/** The digests the runtime holds. A question that fails is logged and counts as an empty answer, so the image is downloaded whole. */
+async function heldDigests(layers: BlobEntry[], options: ImageDownloadOptions): Promise<ReadonlySet<string>> {
+  if (options.held === undefined || layers.length === 0) return new Set();
+  try {
+    return await options.held(layers);
+  } catch (error) {
+    options.log?.(`Image download: the runtime could not say which layers it holds, so none are left out: ${error instanceof Error ? error.message : String(error)}`);
+    return new Set();
+  }
+}
+
+/**
+ * The layers of an image as its manifest at the registry lists them, for an
+ * image whose record does not have them. Nothing is written to disk. Null
+ * when the manifest cannot be had, does not match the digest or is not an
+ * image manifest; the reason goes to the log.
+ */
+export async function fetchManifestLayers(
+  pinned: PinnedImage,
+  options: { fetch?: typeof fetch; signal?: AbortSignal; log?: (line: string) => void } = {},
+): Promise<BlobEntry[] | null> {
+  const label = `Image layers ${pinned.repository}@${pinned.digest}`;
+  if (!DIGEST.test(pinned.digest)) return null;
+  const answer = await new RegistryClient(options.fetch).manifest(locate(pinned.repository), pinned.digest, options.signal);
+  if (!answer.ok) {
+    options.log?.(`${label}: the manifest could not be had: ${answer.error.code}`);
+    return null;
+  }
+  const found = sha256Hex(answer.bytes);
+  if (found !== hexOf(pinned.digest)) {
+    options.log?.(`${label}: check of the manifest failed: expected ${pinned.digest}, found sha256:${found}`);
+    return null;
+  }
+  const manifest = readManifest(answer.bytes);
+  if (manifest === null) {
+    options.log?.(`${label}: check failed: expected an OCI or Docker image manifest, found ${excerptOf(answer.bytes)}`);
+    return null;
+  }
+  return manifest.layers;
 }
 
 /**

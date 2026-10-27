@@ -48,6 +48,7 @@ function Note({ error, kind }: { error: ApiError; kind: "problem" | "warning" })
 /** The download of the engine package, as the one download block. The parts of the image, when it reports them, add a line and a bar of their own while no bytes are counted. */
 export function DownloadProgress({ status, progressId }: { status: Extract<InstallStatus, { kind: "downloading" }>; progressId: string }) {
   const parts = status.done !== null && status.total !== null ? { done: status.done, total: status.total } : null;
+  const reused = status.reused !== null && status.reused > 0;
   return (
     <DownloadBlock
       title={t(status.graphics ? "local.install.downloading_gpu" : "local.install.downloading", { size: formatBytes(status.size) })}
@@ -55,7 +56,14 @@ export function DownloadProgress({ status, progressId }: { status: Extract<Insta
       size={status.size}
       speed={status.speed}
       partsBar={parts === null ? null : { value: parts.done, max: parts.total }}
-      extra={parts === null ? null : <p>{t("local.install.parts", parts)}</p>}
+      extra={
+        parts === null && !reused ? null : (
+          <>
+            {parts !== null && <p>{t("local.install.parts", parts)}</p>}
+            {reused && <p>{t("local.install.reused", { size: formatBytes(status.reused ?? 0) })}</p>}
+          </>
+        )
+      }
       interruption={interruptionText(status.retries, status.lastRetry)}
       progressId={progressId}
     />

@@ -235,24 +235,25 @@ test("closing aidm-ui during the test run stops it: the image stays, no processo
 test("the install tells which package is downloading and loading, that it is being tested, and that the graphics card package is deleted when the test fails", async () => {
   const { h, runtime } = start("podman", gpuRules("podman", { driver: true, passthrough: true }));
   runtime.answerOneOffs(noDriver());
-  const seen: Array<{ phase: string; variant: string; size: number }> = [];
+  const seen: Array<{ phase: string; variant: string }> = [];
   h.localEngine.subscribe((view) => {
     const { install } = view;
     if (install === null) return;
-    const step = { phase: install.phase, variant: install.variant, size: install.size };
+    // The variant says which package it is; the size is what the download fetches, which the fake image source sets.
+    const step = { phase: install.phase, variant: install.variant };
     const last = seen[seen.length - 1];
     if (last === undefined || JSON.stringify(last) !== JSON.stringify(step)) seen.push(step);
   });
   await installAndWaitReady(h);
   expect(seen).toEqual([
-    { phase: "pulling", variant: "linux-amd64-gpu", size: GPU_SIZE },
-    { phase: "loading", variant: "linux-amd64-gpu", size: GPU_SIZE },
-    { phase: "checking_gpu", variant: "linux-amd64-gpu", size: GPU_SIZE },
-    { phase: "removing_gpu_package", variant: "linux-amd64-gpu", size: GPU_SIZE },
-    { phase: "pulling", variant: "linux-amd64-cpu", size: CPU_SIZE },
-    { phase: "loading", variant: "linux-amd64-cpu", size: CPU_SIZE },
-    { phase: "starting", variant: "linux-amd64-cpu", size: CPU_SIZE },
-    { phase: "done", variant: "linux-amd64-cpu", size: CPU_SIZE },
+    { phase: "pulling", variant: "linux-amd64-gpu" },
+    { phase: "loading", variant: "linux-amd64-gpu" },
+    { phase: "checking_gpu", variant: "linux-amd64-gpu" },
+    { phase: "removing_gpu_package", variant: "linux-amd64-gpu" },
+    { phase: "pulling", variant: "linux-amd64-cpu" },
+    { phase: "loading", variant: "linux-amd64-cpu" },
+    { phase: "starting", variant: "linux-amd64-cpu" },
+    { phase: "done", variant: "linux-amd64-cpu" },
   ]);
 });
 

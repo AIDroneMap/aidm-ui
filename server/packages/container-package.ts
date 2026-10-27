@@ -5,23 +5,29 @@ import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
 import {
   bytesOnDisk,
   downloadImage,
+  fetchManifestLayers,
   imageFolder,
   localName,
   removeImageDownload,
+  type BlobEntry,
   type ImageDownloadOptions,
   type ImageDownloadOutcome,
+  type DownloadedImage,
   type ImageDownloadProgress,
   type PinnedImage,
 } from "../images/image-download.ts";
 import { excerpt } from "../app/diagnosis-log.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR } from "../machine/thresholds.ts";
-import { isNativePackage, type InstalledPackage } from "../settings/settings.ts";
+import { isNativePackage, type InstalledContainerPackage, type InstalledPackage } from "../settings/settings.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { IN_IMAGE_CHECK_TIMEOUT_MS, inImageFailed, parseGpuListing } from "../machine/gpu.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
-import type { ContainerRuntime, ContainerSpec, OneOffSpec, RuntimeId } from "../runtimes/runtime.ts";
+import type { ContainerRuntime, ContainerSpec, KnownImage, OneOffSpec, RuntimeId } from "../runtimes/runtime.ts";
 import { SOCKET_ADDRESS_PREFIX } from "../task-api/task-client.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
+
+/** The errors that a second load, with the skipped layers downloaded, can cure. */
+const RETRYABLE = new Set(["install.load_failed", "install.image_not_verified"]);
 
 /** The fixed name, so the manager finds the container again after a restart. */
 export const CONTAINER_NAME = "aidm-local-engine";
@@ -72,9 +78,11 @@ export type ContainerVariant = Extract<ManifestVariant, { kind: "container" }>;
 /** How a container package gets its image; the real one is the image downloader, a test passes one that needs no registry. */
 export interface ImageSource {
   download(pinned: PinnedImage, folder: string, options: ImageDownloadOptions): Promise<ImageDownloadOutcome>;
+  /** The layers of an image as the registry lists them, null when it cannot say. A source with no registry leaves this out. */
+  layers?(pinned: PinnedImage, options: { fetch?: typeof fetch; signal?: AbortSignal; log?: (line: string) => void }): Promise<BlobEntry[] | null>;
 }
 
-export const registryImages: ImageSource = { download: downloadImage };
+export const registryImages: ImageSource = { download: downloadImage, layers: fetchManifestLayers };
 
 export interface ContainerPackageDeps {
   runtime: ContainerRuntime;
@@ -88,6 +96,12 @@ export interface ContainerPackageDeps {
   dataFolder: string;
   /** The reference the runtime runs the image by, from the settings; absent before the image is loaded, or for an image the runtime pulled itself. */
   imageRef?: string;
+  /**
+   * The container packages installed on this runtime earlier (the installed
+   * and the previous one). The runtime may hold layers of their images that
+   * this image shares, and the download then leaves those out.
+   */
+  known?: () => InstalledContainerPackage[];
   /** Default: the image downloader, against the registry the variant names. */
   images?: ImageSource;
   /** Passed to the image downloader; tests make them short. */
@@ -105,6 +119,8 @@ export class ContainerPackage implements EnginePackage {
   /** What the runtime runs: the reference verifyImage gave, else the pinned image. */
   private runAs: string;
   private loadedRef: string | null = null;
+  /** Every layer of the image that was loaded, for the record. */
+  private loadedLayers: BlobEntry[] | null = null;
 
   constructor(private readonly deps: ContainerPackageDeps) {
     this.pinned = { repository: deps.variant.image, digest: deps.variant.digest };
@@ -156,14 +172,17 @@ export class ContainerPackage implements EnginePackage {
     if (!space.ok) return space;
 
     const { runtime, variant } = this.deps;
-    let last: ImageDownloadProgress = { received: 0, total: variant.size, bytesPerSecond: null, blobsDone: 0, blobsTotal: 0, retries: 0, lastRetry: null };
+    let last: ImageDownloadProgress = { received: 0, total: variant.size, reused: 0, bytesPerSecond: null, blobsDone: 0, blobsTotal: 0, retries: 0, lastRetry: null };
+    // Until the download reports its total, the variant's size stands in for it.
+    let reported = false;
     const view = (phase: "pulling" | "loading"): InstallProgressView => ({
       phase,
       variant: this.deps.variantId,
       steps: [{ id: "engine", size: variant.size }],
       step: "engine",
       stepReceived: last.received,
-      size: variant.size,
+      size: reported ? last.total : variant.size,
+      reusedBytes: last.reused,
       layersDone: last.blobsTotal === 0 ? null : last.blobsDone,
       layersTotal: last.blobsTotal === 0 ? null : last.blobsTotal,
       speed: phase === "pulling" ? last.bytesPerSecond : null,
@@ -171,37 +190,82 @@ export class ContainerPackage implements EnginePackage {
       lastRetry: last.lastRetry,
     });
     options.onProgress?.(view("pulling"));
-    const downloaded = await (this.deps.images ?? registryImages).download(this.pinned, this.folder, {
-      ...this.deps.download,
-      log: this.deps.log,
-      signal: options.signal,
-      onProgress: (progress) => {
-        last = progress;
-        options.onProgress?.(view("pulling"));
-      },
-    });
-    if (!downloaded.ok) return fail("install.pull_failed", { cause: downloaded.error });
+    const known = await this.knownImages(options.signal);
+    const fetchImage = (held: ImageDownloadOptions["held"]) =>
+      (this.deps.images ?? registryImages).download(this.pinned, this.folder, {
+        ...this.deps.download,
+        log: this.deps.log,
+        signal: options.signal,
+        held,
+        onProgress: (progress) => {
+          last = progress;
+          reported = true;
+          options.onProgress?.(view("pulling"));
+        },
+      });
+    // Hands the downloaded image to the runtime and checks that it holds it.
+    const handOver = async (image: DownloadedImage): Promise<PackageResult<string>> => {
+      options.onProgress?.(view("loading"));
+      const loaded = await runtime.load(image, { signal: options.signal });
+      // Each failure has its own message: a load the tool refused, and a load whose result is not the image downloaded.
+      if (!loaded.ok) {
+        if (loaded.error.code !== "runtime.load_failed") return loaded;
+        return fail("install.load_failed", { exitCode: loaded.error.data.exitCode ?? null });
+      }
+      const verified = await runtime.verifyImage(image);
+      if (!verified.ok) {
+        if (verified.error.code !== "runtime.image_not_verified") return verified;
+        return fail("install.image_not_verified", {});
+      }
+      return ok(verified.value);
+    };
 
-    options.onProgress?.(view("loading"));
-    const loaded = await runtime.load(downloaded.image, { signal: options.signal });
-    // Each failure has its own message: a load the tool refused, and a load whose result is not the image downloaded.
-    if (!loaded.ok) {
-      if (loaded.error.code !== "runtime.load_failed") return loaded;
-      return fail("install.load_failed", { exitCode: loaded.error.data.exitCode ?? null });
+    let downloaded = await fetchImage((layers) => runtime.heldLayers(layers, known));
+    if (!downloaded.ok) return fail("install.pull_failed", { cause: downloaded.error });
+    let handed = await handOver(downloaded.image);
+    // The runtime did not take the image without the layers it was thought to hold. Only they are missing from the folder, so only they are fetched.
+    if (!handed.ok && downloaded.image.skipped.length > 0 && !options.signal?.aborted && RETRYABLE.has(handed.error.code)) {
+      this.deps.log?.(
+        `The runtime did not take the image without ${downloaded.image.skipped.length} layers it was thought to hold (${handed.error.code}). Downloading them and loading the image again.`,
+      );
+      downloaded = await fetchImage(async () => new Set());
+      if (!downloaded.ok) return fail("install.pull_failed", { cause: downloaded.error });
+      handed = await handOver(downloaded.image);
     }
-    const verified = await runtime.verifyImage(downloaded.image);
-    if (!verified.ok) {
-      if (verified.error.code !== "runtime.image_not_verified") return verified;
-      return fail("install.image_not_verified", {});
-    }
-    this.runAs = verified.value;
-    this.loadedRef = verified.value;
+    if (!handed.ok) return handed;
+    this.runAs = handed.value;
+    this.loadedRef = handed.value;
+    this.loadedLayers = downloaded.image.layers;
     return ok(undefined);
+  }
+
+  /** The images of earlier installs on this runtime with their layers: from the record, else from the manifest at the registry. A record whose layers cannot be had is left out. */
+  private async knownImages(signal: AbortSignal | undefined): Promise<KnownImage[]> {
+    const images: KnownImage[] = [];
+    for (const record of this.deps.known?.() ?? []) {
+      const layers =
+        record.layers ??
+        (await (this.deps.images ?? registryImages).layers?.(
+          { repository: record.container.image, digest: record.container.digest },
+          { fetch: this.deps.download?.fetch, signal, log: this.deps.log },
+        )) ??
+        null;
+      if (layers === null) continue;
+      images.push({
+        ref: record.imageRef ?? `${record.container.image}@${record.container.digest}`,
+        layers: layers.map(({ digest, size }) => ({ digest, size })),
+      });
+    }
+    return images;
   }
 
   installedAs(installed: InstalledPackage): InstalledPackage {
     if (this.loadedRef === null || isNativePackage(installed)) return installed;
-    return { ...installed, imageRef: this.loadedRef };
+    return {
+      ...installed,
+      imageRef: this.loadedRef,
+      ...(this.loadedLayers === null ? {} : { layers: this.loadedLayers.map(({ digest, size }) => ({ digest, size })) }),
+    };
   }
 
   discardDownload(): void {

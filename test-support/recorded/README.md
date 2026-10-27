@@ -47,6 +47,7 @@ a Fedora container). The recordings are from 26 October 2026.
 | `docker/load.txt` | `docker load` with an archive on standard input (the OCI layout and the `manifest.json` of `docker save`, as aidm-ui writes it), on Docker 29.9.2 with the containerd image store | Nothing. |
 | `docker/load-classic.txt` | the same archive on Docker 28.5.2 with the classic image store (overlay2 storage driver) | Nothing. |
 | `docker/load-truncated.*` | `docker load` of the same archive cut after 100000 bytes (containerd image store) | stderr only, exit 1. Nothing changed. |
+| `docker/load-missing-layer.txt` | `docker load` of an archive of a small image that leaves out a layer the content store does not hold, on Docker 29.9.2 with the containerd image store, recorded on the build server on 27 October 2026 | Exit 0, with a line "Error unpacking image". The record does not tell stdout from stderr; it is kept as one block. The image is a throwaway one (`localhost/aidm-reuse:two`). |
 | `docker/image-inspect-containerd.txt` | `docker image inspect NAME` after `docker/load.txt`: the ID is the manifest digest | Timestamps set to `2026-01-01T00:00:00Z`. |
 | `docker/image-inspect-classic.txt` | `docker image inspect NAME` after `docker/load-classic.txt`: the ID is the config digest | Timestamps set to `2026-01-01T00:00:00Z`. |
 | `docker/image-inspect-missing.*` | the same with a tag that does not exist | stdout `[]`, exit 1, stderr `Error response from daemon: No such image: ...`. Nothing changed. |

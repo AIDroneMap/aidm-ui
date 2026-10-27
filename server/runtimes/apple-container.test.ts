@@ -75,7 +75,7 @@ function tinyImage(): DownloadedImage {
       manifests: [{ mediaType: OCI_MANIFEST, ...manifest, annotations: { "io.containerd.image.name": name } }],
     }),
   );
-  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer] };
+  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer], skipped: [] };
 }
 
 const tiny = tinyImage();
@@ -357,6 +357,58 @@ describe("load", () => {
       error: { code: "download.cancelled", data: {} },
     });
     expect(runner.calls).toEqual([]);
+  });
+});
+
+describe("heldLayers", () => {
+  /** A content store as the tool lays it out: blobs named by the hex of their digest, under content/blobs/sha256. */
+  function contentStore(blobs: Record<string, number>): string {
+    const root = mkdtempSync(join(scratch, "app-root-"));
+    const folder = join(root, "content", "blobs", "sha256");
+    mkdirSync(folder, { recursive: true });
+    for (const [hex, size] of Object.entries(blobs)) writeFileSync(join(folder, hex), new Uint8Array(size));
+    return root;
+  }
+  const digest = (character: string) => `sha256:${character.repeat(64)}`;
+  const layers = [
+    { digest: digest("a"), size: 1000 },
+    { digest: digest("b"), size: 2000 },
+    { digest: digest("c"), size: 3000 },
+  ];
+
+  test("a layer whose blob is in the content store with its size is held, and one with another size or no blob is not", async () => {
+    const appRoot = contentStore({ ["a".repeat(64)]: 1000, ["b".repeat(64)]: 1999 });
+    const runtime = appleContainerRuntime(new ScriptedRunner([]), { appRoot });
+    expect(await runtime.heldLayers(layers, [])).toEqual(new Set([digest("a")]));
+  });
+
+  test("it asks the tool nothing: the content store is read from disk, and the images aidm-ui knew do not matter", async () => {
+    const runner = new ScriptedRunner([]);
+    const appRoot = contentStore({ ["c".repeat(64)]: 3000 });
+    const runtime = appleContainerRuntime(runner, { appRoot });
+    const held = await runtime.heldLayers(layers, [{ ref: "name", layers: [] }]);
+    expect(held).toEqual(new Set([digest("c")]));
+    expect(runner.calls).toEqual([]);
+  });
+
+  test("a content store that is not there holds nothing", async () => {
+    const appRoot = join(scratch, "no-such-root");
+    const runtime = appleContainerRuntime(new ScriptedRunner([]), { appRoot });
+    expect(await runtime.heldLayers(layers, [])).toEqual(new Set());
+  });
+
+  test("without an option the root is CONTAINER_APP_ROOT when it is set and not empty", async () => {
+    const before = process.env.CONTAINER_APP_ROOT;
+    try {
+      process.env.CONTAINER_APP_ROOT = contentStore({ ["b".repeat(64)]: 2000 });
+      expect(await appleContainerRuntime(new ScriptedRunner([])).heldLayers(layers, [])).toEqual(new Set([digest("b")]));
+      // An empty value counts as not set: the default under the user's Library, which holds none of these.
+      process.env.CONTAINER_APP_ROOT = "";
+      expect(await appleContainerRuntime(new ScriptedRunner([])).heldLayers(layers, [])).toEqual(new Set());
+    } finally {
+      if (before === undefined) delete process.env.CONTAINER_APP_ROOT;
+      else process.env.CONTAINER_APP_ROOT = before;
+    }
   });
 });
 

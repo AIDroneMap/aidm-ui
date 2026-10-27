@@ -74,5 +74,5 @@ export function dockerRuntime(runner: CommandRunner, log?: (line: string) => voi
   }
 
   // The classic store unpacks the archive into a temporary folder first; the containerd store keeps the blobs in its content store.
-  return cliRuntime({ id: "docker", detect, inspectArgv, loadCopies: 1, load: dockerLoad, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
+  return cliRuntime({ id: "docker", detect, inspectArgv, loadCopies: 1, load: dockerLoad, loadFailureLine: /Error unpacking image/i, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
 }

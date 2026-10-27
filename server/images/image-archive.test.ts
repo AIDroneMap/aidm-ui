@@ -48,7 +48,7 @@ function makeImage(layerBytes: Uint8Array[]): DownloadedImage {
       manifests: [{ mediaType: OCI_MANIFEST, ...manifest, annotations: { "io.containerd.image.name": name } }],
     }),
   );
-  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers };
+  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers, skipped: [] };
 }
 
 /** 1000 bytes: not a multiple of 512, so the archive pads it. */
@@ -233,6 +233,26 @@ describe("the image archive", () => {
     expect(new Set(names).size).toBe(names.length);
     expect(names.filter((name) => name.startsWith("blobs/sha256/"))).toHaveLength(4);
     expect(bytes.length).toBe(archiveSize(image, "oci+docker"));
+  });
+
+  test("the layers the runtime already holds are left out of the archive, but docker's manifest.json still lists every layer", async () => {
+    const image = makeImage([layerA(), layerB()]);
+    const [lower, top] = image.layers;
+    // As the downloader leaves it: the skipped layer is not on disk.
+    rmSync(join(image.folder, "blobs", "sha256", hexOf(lower?.digest ?? "")));
+    const skipped = { ...image, skipped: lower === undefined ? [] : [lower] };
+    for (const format of ["oci", "oci+docker"] as const) {
+      const bytes = await readAll(imageArchive(skipped, format));
+      const entries = tarEntries(bytes);
+      expect(entries.map((entry) => entry.name).filter((name) => name.startsWith("blobs/sha256/")), format).toEqual(
+        [image.manifest, image.config, top].map((blob) => `blobs/sha256/${hexOf(blob?.digest ?? "")}`),
+      );
+      expect(bytes.length, format).toBe(archiveSize(skipped, format));
+      if (format === "oci+docker") {
+        const [entry] = JSON.parse(text(entries.find((candidate) => candidate.name === "manifest.json")?.body ?? new Uint8Array())) as Array<{ Layers: string[] }>;
+        expect(entry?.Layers).toEqual(image.layers.map((layer) => `blobs/sha256/${hexOf(layer.digest)}`));
+      }
+    }
   });
 
   test("a blob file shorter than its manifest size makes the stream error", async () => {

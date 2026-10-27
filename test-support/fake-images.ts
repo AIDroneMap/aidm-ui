@@ -39,8 +39,10 @@ export class FakeImages implements ImageSource {
   async download(pinned: PinnedImage, folder: string, options: ImageDownloadOptions): Promise<ImageDownloadOutcome> {
     this.downloads.push(pinned);
     const total = FAKE_SIZE;
+    // Like the real downloader, it asks the runtime which layers it holds. It leaves none out: the fake has no registry to know what they share.
+    await options.held?.([{ digest: pinned.digest, size: total - 2 }]);
     const progress = (received: number, blobsDone: number) =>
-      options.onProgress?.({ received, total, bytesPerSecond: received === 0 ? null : 1_000_000, blobsDone, blobsTotal: 2, retries: 0, lastRetry: null });
+      options.onProgress?.({ received, total, reused: 0, bytesPerSecond: received === 0 ? null : 1_000_000, blobsDone, blobsTotal: 2, retries: 0, lastRetry: null });
     progress(0, 0);
     if (this.hold !== undefined) {
       const aborted = new Promise<void>((resolve) => options.signal?.addEventListener("abort", () => resolve(), { once: true }));
@@ -63,6 +65,7 @@ export class FakeImages implements ImageSource {
         manifest: { digest: pinned.digest, size: 2, mediaType: "application/vnd.oci.image.manifest.v1+json" },
         config: { digest: config, size: 2 },
         layers: [{ digest: pinned.digest, size: total - 2 }],
+        skipped: [],
       },
     };
   }
