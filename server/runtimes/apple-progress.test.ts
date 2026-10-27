@@ -1,8 +1,9 @@
 // The lines follow the format string of Apple's container tool at 1.6.1
 // (TerminalProgress/ProgressBar.swift) and the figures of the first real Mac
-// test: an Italian Mac writes "215,4/593,9 MB" and "1,0 MB/s". The recording
-// of that test was not at hand, so the lines are made from those two sources.
+// test: an Italian Mac writes "215,4/593,9 MB" and "1,0 MB/s". The last test
+// reads lines recorded in the second Mac test.
 import { expect, test } from "bun:test";
+import { recorded } from "../../test-support/scripted-runner.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
 
 const MiB = 1024 ** 2;
@@ -55,4 +56,15 @@ test("an unpacking line counts entries, grouped the way the locale groups them",
 test("a line that is not a progress line is null", () => {
   expect(parseAppleProgress("Installing base container filesystem...")).toBeNull();
   expect(parseAppleProgress("")).toBeNull();
+});
+
+test("the lines of a pull recorded on a Mac read as progress, and its error line does not", () => {
+  const result = recorded("apple-container", "pull-stream-closed");
+  const lines = result.stderr.trimEnd().split("\n");
+  const error = lines.pop() ?? "";
+  expect(error).toMatch(/^Error: StreamClosed/);
+  expect(parseAppleProgress(error)).toBeNull();
+  for (const line of lines) expect(parseAppleProgress(line), line).not.toBeNull();
+  expect(parseAppleProgress(lines.at(-1) ?? "")).toMatchObject({ task: 1, tasks: 2, percent: 100, elapsedSeconds: 604 });
+  expect(parseAppleProgress(lines[3] ?? "")).toMatchObject({ percent: 0, items: { done: 1, total: 11, name: "blobs" } });
 });

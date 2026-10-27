@@ -1,4 +1,4 @@
 {
   "exitCode": 1,
-  "stderr": "Error: notFound: \"container not found: aidm-engine\"\n"
+  "stderr": "Error: container not found: aidm-local-engine\n"
 }

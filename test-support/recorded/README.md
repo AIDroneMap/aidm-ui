@@ -97,61 +97,62 @@ modern x86-64 CPU and an Armv8.2 CPU, two processors each, in the shape the
 kernel prints. They are not copies of one machine. The other two are edits of
 them (see the table above).
 
-## From the second Mac test
-
-The second install on a real Mac (27 October 2026, Apple's container tool 1.6.1) showed how the tool answers for
-its startup files, which it treats as an infrastructure image and hides from `image inspect`, `image list` and
-`image delete` (`Utility.isInfraImage` in `ImageInspect.swift` at 1.6.1). The recording file itself was not at hand
-when these were written, so they hold the answers as reported from that run; the error text follows the format of
-the tool's other errors here.
-
-| File | Command | What it shows |
-| --- | --- | --- |
-| `apple-container/image-inspect-init-missing.*` | `container image inspect ghcr.io/apple/containerization/vminit:0.53.0` before the load | exit 1, `image not found` |
-| `apple-container/image-load-init.txt` | `container image load` of the startup files | exit 0, the reference it loaded on stdout |
-| `apple-container/image-inspect-init-present.txt` | the same inspect after the load | exit 0, an empty JSON list (`[`, a blank line, `]`) |
-
 ## Recorded on a Mac
 
-From the recording of every runtime command in the second Mac test (27 October 2026). The user name in the paths
-was replaced in the recording already.
+From the recording of every runtime command in the second Mac test (27 October 2026, Apple's container tool 1.6.1,
+macOS 27.0, three sessions). "Session 1" is the first run of the recording (seq 1 to 25), "session 2" the second
+(seq 1 to 16) and "session 3" the third (seq 26 to 60). The user name in the paths was replaced in the recording
+already.
 
 | File | Command | What changed |
 | --- | --- | --- |
 | `apple-container/inspect-running.txt` | `container inspect aidm-local-engine` while the engine ran and answered | The container's MAC address and IPv6 address were set to placeholders. |
+| `apple-container/cli-version.txt` | `container --version` (session 1, seq 19) | Nothing. The commit is `aa8d76b`, not the one the source-built file had. |
+| `apple-container/system-status-running.txt` | `container system status --format json` right after the start (session 1, seq 20) | `cpus` set from 15 to 8. Nothing else. The real key order is alphabetical, there is no `logRoot` key, both paths end with `/`, and `operatingSystem` reads `Version 27.0 (Build 26A428)`. |
+| `apple-container/system-start.*` | `container system start --enable-kernel-install`, streamed (session 1, seq 18) | Nothing. All four lines are on stderr (so they are in the `.json`) and stdout is empty. The real run printed no line about the startup files, so the made-up `Fetching init image...` line is gone. |
+| `apple-container/image-inspect-init-missing.*` | `container image inspect ghcr.io/apple/containerization/vminit:0.53.0` before the load (session 2, seq 3) | Nothing. Exit 1, stderr `Error: image not found: ...` with no `notFound:` prefix. |
+| `apple-container/image-load-init.txt` | `container image load` of the startup files (session 2, seq 12) | Nothing. Exit 0, the reference it loaded on stdout. |
+| `apple-container/image-inspect-init-present.txt` | the same inspect after the load (session 2, seq 13) | Nothing. Exit 0, an empty JSON list (`[`, a blank line, `]`): the tool hides its startup files from `image inspect`. |
+| `apple-container/inspect-missing.*` | `container inspect aidm-local-engine` before the first run (session 3, seq 47) | Nothing. Exit 1, stderr `Error: container not found: aidm-local-engine`, no `notFound:` prefix. |
+| `apple-container/run.*` | `container run -d --name aidm-local-engine ...` of the engine image (session 3, seq 48) | Nothing. Stdout is the name of the container. The six numbered progress steps are on stderr, so they are in the `.json` (exit 0). |
+| `apple-container/logs.txt` | `container logs -f aidm-local-engine`, streamed (session 3, seq 49) | Only the first 7 lines are kept; the recording goes on with the lines of a job. In `Listening on ...:6367 UDP`, the address `0.0.0.0` was set to `127.0.0.1`. |
+| `apple-container/image-inspect-engine.txt` | `container image inspect` of the engine image after its load (session 3, seq 43) | All 24 timestamps (`creationDate`, `created`, the history) set to `2026-01-01T00:00:00Z`. Nothing else. The manifest digest is under `variants`, and the image's own index is under `configuration.descriptor`. |
+| `apple-container/pull-stream-closed.*` | `container image pull --platform linux/arm64 --progress plain ...` of the engine image (session 1, seq 25; seq 21 to 24 ended the same way) | Cut to the first 3 lines, the first line with a percentage, the last 3 progress lines and the error line. Exit 1, stdout empty. The numbers use a decimal comma because that Mac is set to Italian. Nothing else changed. |
+
+The container is called `aidm-local-engine` in the recording. The tests that use these files use that name where they
+read it back (`run.txt`), and a made-up name elsewhere.
 
 ## Reconstructed from source
 
-No Mac was available. These are rebuilt from the output formats in the Apple
-`container` source (release 1.6.1: `SystemStatus.swift` for the status JSON,
-`ReleaseVersion.swift` for the version line) and from the sample lines in
-the runtime research notes. They have not been checked against a real run.
+The recording of the second Mac test does not hold these cases. They are rebuilt from the output formats in the
+Apple `container` source (release 1.6.1: `SystemStatus.swift` for the status JSON) and from the sample lines in the
+runtime research notes. They have not been checked against a real run.
 
 - `docker/run-image-not-found.*` (exit 125, `No such image`, which is what `docker run --pull=never` says for an image that is not stored; from the Docker CLI and daemon sources)
-- `apple-container/system-status-running.txt`, `system-status-not-running.*`,
-  `system-status-unregistered.*` (exit 1, as the source does)
+- `apple-container/system-status-not-running.*`, `system-status-unregistered.*` (exit 1, as the source does; the
+  recording only has the running answer)
 - Every other file in `apple-container/`, for the operations of the adapter. None was captured; each is built from
   the command reference and the source of release 1.6.1, and the error texts are the ones the research notes quote.
   What is a guess is said here, so nobody takes it for a recording:
-  - `cli-version.txt`: the `container --version` line, in the format of `ReleaseVersion.swift`.
-  - `pull.*`: the plain progress lines. The source gives their parts (`[1/2]`, a description, a percent, the
-    parenthesised counts) but the exact text was never captured, so the wording of the counts is a guess. The
-    progress goes to stderr, because the plain renderer writes there. `pull-not-found.*` and `pull-service-down.*`
-    carry error texts the research notes do not quote for a pull; the first is a guess, the second is the
-    rewritten service error of `Application.swift`.
-  - `run.txt` (the ID is the name), `run-name-in-use.*` (`container already exists: <id>`, from the source),
-    `run-service-down.*`. `run-port-in-use.*` and `run-image-not-found.*` are guesses: the research notes found no
+  - `pull.*`: the plain progress lines of a pull that works. The recording only has pulls that failed (see
+    `pull-stream-closed.*` above, whose lines are real), so the wording of the counts here is a guess, and the
+    unpack lines (`[2/2] Unpacking image ...`) were never seen. The progress goes to stderr. `pull-not-found.*` and
+    `pull-service-down.*` carry error texts the research notes do not quote for a pull; the first is a guess, the
+    second is the rewritten service error of `Application.swift`. Only `pull-service-down.*` is used by a test.
+  - `run-name-in-use.*` (`container already exists: <id>`, from the source), `run-service-down.*`.
+    `run-port-in-use.*` and `run-image-not-found.*` are guesses: the research notes found no
     port conflict message and no image message for a run. The adapter matches whole phrases only, and a failed run is never followed by a delete.
   - `inspect-stopped.txt`, `inspect-stopping.txt`, `inspect-unknown.txt`: the shape of the
     documentation sample, with the state in `status.state`. No exit code is in any of them, because
-    the research notes found none. `inspect-missing.*` is `container not found: <id>`, from the source.
-  - `logs.txt`, `logs-missing.*`, `stop.txt`, `stop-not-running.*` (`container <id> is not running`, from the
+    the research notes found none. The real running answer is much longer (see `inspect-running.txt`).
+  - `logs-missing.*`, `stop.txt`, `stop-not-running.*` (`container <id> is not running`, from the
     source), `stop-missing.*`, `delete.txt`, `delete-missing.*`. A real `delete --force` of a missing container may
     print nothing and succeed; the adapter accepts both.
   - `image-delete.txt`, `image-delete-missing.*` and `image-delete-in-use.*`: the first prints the reference, as the
     source does; the other two texts are guesses.
-  - `system-start.*`, `system-start-failed.*`: the lines are `Launching container-apiserver...` and `Installing kernel...` from the source, plus an init line of a made-up wording. The installer step tells the init step from
-    any line that names "init", so that wording is the one thing a real run could change.
+  - `system-start-failed.*`: one line, `Launching container-apiserver...`, from the source, and the error text is a
+    guess. The real tool prints its start lines on stderr (see `system-start.*` above); here the line is on stdout.
+    The streaming runner treats both streams alike.
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
 - `nvidia/smi-l-no-driver.*` (exit 9, the driver message from the `nvidia-smi` manual and the text people quote from it; whether a real machine without a loaded driver exits 9 or 255 was not confirmed). The same file stands for the failing listing inside the engine image.
@@ -198,5 +199,5 @@ values were replaced:
 - No IP addresses were present. Loopback networks in Docker's registry config (`127.0.0.0/8`) stay.
 - Versions, commit hashes and image digests stay: they name public software, not the machine.
 
-The Apple container status text (`apple-container/system-status-running.txt`) is
-reconstructed, and its core count is also 8.
+The Apple container status text (`apple-container/system-status-running.txt`) is recorded, and its core count was
+set to 8 like the others.

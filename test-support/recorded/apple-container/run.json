@@ -1,0 +1,4 @@
+{
+  "exitCode": 0,
+  "stderr": "[0/6] [0s]\n[1/6] Fetching image [0s]\n[2/6] Unpacking image [0s]\n[3/6] Fetching kernel [0s]\n[4/6] Fetching init image [0s]\n[5/6] Unpacking init image [0s]\n[6/6] Starting container [0s]\n[6/6] Starting container [1s]\n[6/6] Starting container [2s]\n[6/6] Starting container [3s]\n[6/6] Starting container [4s]\n[6/6] Starting container [5s]\n[6/6] Starting container [5s]\n"
+}
