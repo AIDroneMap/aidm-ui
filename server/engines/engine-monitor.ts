@@ -313,9 +313,15 @@ export class EngineMonitor {
       this.logOnce(entry, "address", `Engine "${engine.name}" is not called: ${checked.error.code}`);
       return { ok: false, problem: checked.error, event: { type: "no_answer" } };
     }
+    // A local engine that was just started cannot answer yet, and a refused or
+    // reset connection then says nothing worth a line in the log: the client
+    // stays quiet until the engine has answered or its time to come up is over.
+    const quiet = entry.status.state === "starting" && Date.now() < entry.startingUntil;
     const client = this.clientFor(
       { address: engine.address, token: engine.token },
-      { log: this.log, logOnce: (key, line) => this.logOnce(entry, key, line) },
+      quiet
+        ? { log: () => {}, logOnce: () => {} }
+        : { log: this.log, logOnce: (key, line) => this.logOnce(entry, key, line) },
     );
     const result = await client.info();
     if (result.ok) return result;

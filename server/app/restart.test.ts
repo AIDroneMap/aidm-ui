@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SettingsView } from "../../shared/api-types.ts";
 import { assetsFromFolder } from "../http/static-assets.ts";
-import { eventually, freePort, lanAddress } from "../testing/harness.ts";
+import { eventually, freePort, lanAddress, lanTest } from "../testing/harness.ts";
 import { startAidmUi, type StartResult } from "./start.ts";
 
-// An address of this computer that is not loopback; the tests that need one are skipped without it.
+// An address of this computer that is not loopback. The tests that need one skip without it, except in CI (lanTest).
 const address = lanAddress() as string;
 let root: string;
 const running: Array<{ stop(): Promise<void> }> = [];
@@ -88,7 +88,7 @@ test("the command line port wins over the stored one", async () => {
   expect((await settingsOf(second.port)).port).toBe(chosen);
 });
 
-test.skipIf(address === undefined)("a stored LAN switch is kept after a restart and the passphrase still works", async () => {
+lanTest("a stored LAN switch is kept after a restart and the passphrase still works", async () => {
   const port = await freePort();
   const first = await start(["--port", String(port)]);
   await put(first.port, "/api/settings/lan", { enabled: true, passphrase: "field tablet passphrase" });
@@ -104,13 +104,13 @@ test.skipIf(address === undefined)("a stored LAN switch is kept after a restart 
   expect(login.status).toBe(204);
 });
 
-test.skipIf(address === undefined)("the LAN switch off listens on loopback only", async () => {
+lanTest("the LAN switch off listens on loopback only", async () => {
   const result = await start(["--port", String(await freePort())]);
   expect(await refusesConnections(result.port)).toBe(true);
   expect((await fetch(`http://127.0.0.1:${result.port}/api/health`)).status).toBe(200);
 });
 
-test.skipIf(address === undefined)("the LAN switch moves the running server to the network and back", async () => {
+lanTest("the LAN switch moves the running server to the network and back", async () => {
   const port = await freePort();
   const result = await start(["--port", String(port)]);
   expect(await refusesConnections(port)).toBe(true);
