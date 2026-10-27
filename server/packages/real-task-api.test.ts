@@ -13,7 +13,7 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 // This test drives the real task API in test mode (`--test`: it processes
 // nothing), through the native package. It runs only where
 // AIDM_REAL_TASK_API_VERSION names a release of AIDroneMap/aidm-api that
-// has a Linux x64 archive, such as "2.6.0". It skips everywhere else.
+// has a Linux x64 archive, such as "2.6.1". It skips everywhere else.
 //
 // The archive's SHA-256 comes from the release's own SHA256SUMS over HTTPS.
 // That proves only that the download is whole, not that the release is the

@@ -18,4 +18,4 @@ Signing:
 - It writes the raw signature to `2.5.0.json.sig` and its base64 text to `2.5.0.json.sig.b64`. The built-in entry keeps the `.sig.b64` file; the release publishes the raw `manifest.json.sig`.
 - `.gitattributes` marks this folder as not text, so a checkout on Windows keeps the exact bytes the signature covers.
 
-The entry is removed once 2.6.0 is the oldest supported task API version.
+The entry is removed once 2.6.1 is the oldest supported task API version (there is no 2.6.0 release).
