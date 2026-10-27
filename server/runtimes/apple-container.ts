@@ -1,6 +1,9 @@
+import type { ApiError } from "../../shared/api-error.ts";
 import os from "node:os";
-import { describeCommand, EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
 import { imageArchive } from "../images/image-archive.ts";
+import type { DownloadedImage } from "../images/image-download.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
 import { defaultCaps, type Caps } from "../local-engine/caps.ts";
 import { DEFAULT_STOP_TIMEOUT_SECONDS } from "./cli-runtime.ts";
@@ -96,6 +99,44 @@ function hostDefaults(): Caps {
   return defaultCaps(os.totalmem(), os.availableParallelism());
 }
 
+/** What `container image load` printed: the references of the images it loaded, one per line on stdout (1.6.1: ImageLoad.swift). */
+export type AppleLoadResult = { ok: true; references: string[] } | { ok: false; error: ApiError };
+
+/**
+ * Streams an image to `container image load` as an OCI layout archive. The
+ * tool reads only that format, names the image from the layout's
+ * annotations, and has no other way to take a file from a pipe. Only the
+ * exit status counts: the tool can print 100% in the same second as it fails
+ * (seen at 36% and at 50% on a real Mac).
+ */
+export async function loadIntoAppleTool(
+  runner: CommandRunner,
+  image: DownloadedImage,
+  options: { signal?: AbortSignal; log?: (line: string) => void },
+): Promise<AppleLoadResult> {
+  const log = options.log ?? (() => {});
+  const argv = [APPLE_TOOL, "image", "load"];
+  const kept: string[] = [];
+  const references: string[] = [];
+  let said: number | null = null;
+  const result = await runner.stream(argv, {
+    signal: options.signal,
+    stdin: imageArchive(image, "oci"),
+    onLine: (line, from) => {
+      kept.push(line);
+      if (kept.length > LOAD_OUTPUT_LINES) kept.shift();
+      said = parseAppleProgress(line)?.percent ?? said;
+      if (from === "stdout" && line.trim() !== "" && parseAppleProgress(line) === null) references.push(line.trim());
+    },
+  });
+  if (result.exitCode === 0) return { ok: true, references };
+  if (options.signal?.aborted) return { ok: false, error: { code: "download.cancelled", data: {} } };
+  if (SERVICE_DOWN.test(kept.join("\n"))) return { ok: false, error: { code: "runtime.apple_not_started", data: {} } };
+  const percent = said === null ? "" : `, after the tool said ${said}%`;
+  log(`Load check failed for ${image.name}: expected exit 0, found exit ${result.exitCode}${percent}: ${excerpt(kept.slice(-5).join(" / "))}`);
+  return { ok: false, error: { code: "runtime.load_failed", data: { exitCode: result.exitCode } } };
+}
+
 export interface AppleContainerOptions {
   log?: (line: string) => void;
   /** The memory and CPUs to send when the spec names none. Default: what the engine manager gives on this computer. */
@@ -108,7 +149,6 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
   const defaults = options.defaults ?? hostDefaults;
 
   async function run(argv: string[], timeoutMs?: number): Promise<CommandResult> {
-    log(describeCommand(argv));
     return runner.run(argv, timeoutMs === undefined ? {} : { timeoutMs });
   }
 
@@ -165,35 +205,15 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     loadCopies: 3,
 
     async load(image, loadOptions = {}) {
-      // The tool reads only an OCI image layout, and names the image from the
-      // layout's annotations. It has no other way to take a file from a pipe.
-      const argv = [APPLE_TOOL, "image", "load"];
-      log(describeCommand(argv));
-      const kept: string[] = [];
-      let said: number | null = null;
-      const result = await runner.stream(argv, {
-        signal: loadOptions.signal,
-        stdin: imageArchive(image, "oci"),
-        onLine: (line) => {
-          kept.push(line);
-          if (kept.length > LOAD_OUTPUT_LINES) kept.shift();
-          said = parseAppleProgress(line)?.percent ?? said;
-        },
-      });
-      // Only the exit status counts. The tool can print 100% in the same
-      // second as it fails (seen at 36% and at 50% on a real Mac).
-      if (result.exitCode === 0) return ok(undefined);
-      if (loadOptions.signal?.aborted) return fail("download.cancelled");
-      if (SERVICE_DOWN.test(kept.join("\n"))) return fail("runtime.apple_not_started");
-      const percent = said === null ? "" : `, after the tool said ${said}%`;
-      log(`The load ended with exit code ${result.exitCode}${percent}: ${kept.slice(-5).join(" / ")}`);
-      return fail("runtime.load_failed", { exitCode: result.exitCode });
+      const loaded = await loadIntoAppleTool(runner, image, { signal: loadOptions.signal, log });
+      return loaded.ok ? ok(undefined) : loaded;
     },
 
     async verifyImage(image) {
       const result = await run([APPLE_TOOL, "image", "inspect", image.name]);
       if (result.exitCode !== 0) {
         const down = serviceDown(result);
+        if (down === null) log(`Image check failed for ${image.name}: expected exit 0 and the manifest ${image.manifest.digest}, found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
         return down ?? fail("runtime.image_not_verified", { name: image.name });
       }
       // The tool wraps a loaded manifest in an index of its own, so the
@@ -203,7 +223,10 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
       const descriptor = asRecord(asRecord(entry?.configuration)?.descriptor);
       const variants = Array.isArray(entry?.variants) ? entry.variants : [];
       const digests = [descriptor?.digest, ...variants.map((variant) => asRecord(variant)?.digest)];
-      if (!digests.includes(image.manifest.digest)) return fail("runtime.image_not_verified", { name: image.name });
+      if (!digests.includes(image.manifest.digest)) {
+        log(`Image check failed for ${image.name}: expected the manifest ${image.manifest.digest} among the image's digests, found ${digests.filter((digest) => digest !== undefined).join(", ") || "none"}: ${excerpt(result.stdout)}`);
+        return fail("runtime.image_not_verified", { name: image.name });
+      }
       // The tool runs an image by its name.
       return ok(image.name);
     },
@@ -273,7 +296,6 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
         ...(logOptions.tail === undefined ? [] : ["-n", String(logOptions.tail)]),
         name,
       ];
-      log(describeCommand(argv));
       // The tool reports a missing container on the stream the container's own
       // lines use, so that one message is kept back from the caller.
       let missing = false;

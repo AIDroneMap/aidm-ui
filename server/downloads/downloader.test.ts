@@ -386,3 +386,20 @@ test("a request function replaces the GET, is called once per try and gets the R
   expect(seen[1]?.range).toMatch(/^bytes=[1-9]\d*-$/);
   expect(server.requests.map((r) => r.path)).toEqual(["/data.bin", "/data.bin"]);
 });
+
+test("the log says when a download starts, every byte it goes on from after an interruption, and its end with size, time and average speed", async () => {
+  server.cutNextResponseAfter(120_000);
+  const lines: string[] = [];
+  const outcome = await downloadVerified(target, { freeBytes: PLENTY, ...FAST, label: "sample", log: (line) => lines.push(line) });
+  expect(outcome.ok).toBe(true);
+  expect(lines[0]).toBe(`Download sample: started, ${data.length} bytes`);
+  expect(lines[1]).toMatch(/^Download sample: interruption 1 \(download\.connection_interrupted\), goes on from byte [1-9]\d*$/);
+  expect(lines.at(-1)).toMatch(new RegExp(`^Download sample: finished, ${data.length} bytes in \\d+\\.\\d s, [\\d.]+ (MiB|KiB)/s on average, 1 interruption$`));
+});
+
+test("a check that fails is logged with the SHA-256 expected and the one found", async () => {
+  const lines: string[] = [];
+  const outcome = await downloadVerified({ ...target, sha256: "0".repeat(64) }, { freeBytes: PLENTY, ...FAST, label: "sample", log: (line) => lines.push(line) });
+  expect(outcome).toEqual({ ok: false, error: { code: "download.checksum_mismatch", data: {} } });
+  expect(lines.some((line) => line === `Download sample: check failed: expected SHA-256 ${"0".repeat(64)}, found ${SHA}. The file was discarded.`)).toBe(true);
+});

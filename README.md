@@ -36,6 +36,20 @@ AIDM UI talks to every engine only through the task API, so it works the same wi
 - Planned: MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
 - The engine runs as a native package where one exists, and through a container runtime (Podman, Docker or Apple's container tool) until then. The wizard installs the runtime when the computer has none.
 
+## Logs for a bug report
+
+AIDM UI writes a readable log of what it does to the terminal and to `logs/aidm-ui.log` in its data folder: each install step with its time and result, each command it runs (with tokens hidden), each download with every resume and its average speed, and each check that failed with what it expected and what it found. When the file reaches 5 MiB it becomes `aidm-ui.log.1`, and three older files are kept. The engine's own lines go to `logs/engine.log` next to it.
+
+The data folder is, unless `--data-dir` or the `AIDM_UI_DATA_DIR` environment variable names another:
+
+| System | Data folder |
+| --- | --- |
+| macOS | `~/Library/Application Support/aidm-ui` |
+| Linux | `~/.local/share/aidm-ui` (or `$XDG_DATA_HOME/aidm-ui`) |
+| Windows | `%LOCALAPPDATA%\aidm-ui` |
+
+Attach `logs/aidm-ui.log` (and `logs/engine.log` when the engine misbehaves) to a bug report. The log holds no engine token, but it holds the paths of your data folder, so look it over before you share it. For the complete output of every runtime command, start AIDM UI with `--record-runtime-commands`: that file is `diagnostics/runtime-commands.jsonl`.
+
 ## Contributing
 
 The project is pre-alpha and most of the interface has no specification yet, so the most useful contributions right now are ideas and use cases. Open a discussion or an issue describing how you process drone data and what you need from the interface.

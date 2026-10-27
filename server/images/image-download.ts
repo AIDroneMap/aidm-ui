@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import { downloadVerified, sizeOf, type DownloadOptions } from "../downloads/downloader.ts";
+import { speedMeter } from "../downloads/speed.ts";
 import { DOWNLOAD_STALL_MS } from "../machine/thresholds.ts";
 import { locate, RegistryClient } from "./registry-client.ts";
 
@@ -60,6 +61,8 @@ export interface ImageDownloadOptions {
   idleMs?: number;
   backoffMs?: DownloadOptions["backoffMs"];
   now?: () => number;
+  /** The diagnosis log: the image, each blob's start, resumes and end, and the end of the image. */
+  log?: (line: string) => void;
 }
 
 export type ImageDownloadOutcome = { ok: true; image: DownloadedImage } | { ok: false; error: ApiError };
@@ -69,8 +72,6 @@ const DOCKER_MANIFEST = "application/vnd.docker.distribution.manifest.v2+json";
 const DIGEST = /^sha256:([0-9a-f]{64})$/;
 /** A blob that fails its check this many times in a row is not the registry's mistake of the moment. */
 const CHECKSUM_TRIES = 3;
-/** The speed is the bytes of this last stretch of time. */
-const SPEED_WINDOW_MS = 10_000;
 
 /** The name the runtimes keep an image under: the repository, with the manifest digest as its tag. */
 export function localName(pinned: PinnedImage): string {
@@ -104,6 +105,12 @@ export function removeImageDownload(folder: string): void {
 
 function fail(code: ApiError["code"], data: Record<string, unknown> = {}): ImageDownloadOutcome {
   return { ok: false, error: { code, data } };
+}
+
+/** The start of a document, on one line, for the log. */
+function excerptOf(bytes: Uint8Array): string {
+  const text = new TextDecoder().decode(bytes.subarray(0, 300)).replace(/\s+/g, " ").trim();
+  return bytes.length > 300 ? `${text}...` : text;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -169,7 +176,11 @@ async function manifestBytes(
     if (options.signal?.aborted) return { ok: false, error: { code: "download.cancelled", data: {} } };
     const answer = await registry.manifest(location, pinned.digest, options.signal);
     if (answer.ok) {
-      if (sha256Hex(answer.bytes) !== hexOf(pinned.digest)) return { ok: false, error: { code: "download.checksum_mismatch", data: {} } };
+      const found = sha256Hex(answer.bytes);
+      if (found !== hexOf(pinned.digest)) {
+        options.log?.(`Image download ${pinned.repository}: check of the manifest failed: expected ${pinned.digest}, found sha256:${found}`);
+        return { ok: false, error: { code: "download.checksum_mismatch", data: {} } };
+      }
       mkdirSync(join(folder, "blobs", "sha256"), { recursive: true });
       writeFileSync(`${path}.part`, answer.bytes);
       renameSync(`${path}.part`, path);
@@ -202,9 +213,15 @@ export async function downloadImage(
   const now = options.now ?? Date.now;
 
   const got = await manifestBytes(registry, pinned, folder, options);
-  if (!got.ok) return got;
+  if (!got.ok) {
+    options.log?.(`Image download ${pinned.repository}@${pinned.digest}: the manifest could not be had: ${got.error.code}${Object.keys(got.error.data).length === 0 ? "" : ` ${JSON.stringify(got.error.data)}`}`);
+    return got;
+  }
   const manifest = readManifest(got.bytes);
-  if (manifest === null) return fail("image.unsupported_manifest", {});
+  if (manifest === null) {
+    options.log?.(`Image download ${pinned.repository}@${pinned.digest}: check failed: expected an OCI or Docker image manifest, found ${excerptOf(got.bytes)}`);
+    return fail("image.unsupported_manifest", {});
+  }
 
   // A layer that appears twice is downloaded once.
   const seen = new Set<string>();
@@ -215,19 +232,18 @@ export async function downloadImage(
   let doneBytes = 0;
   let retries = 0;
   let lastRetry: ApiError | null = null;
-  const samples: Array<{ at: number; received: number }> = [];
+  const speed = speedMeter(now);
   const report = (received: number) => {
-    const at = now();
-    samples.push({ at, received });
-    while (samples.length > 2 && at - (samples[1]?.at ?? at) >= SPEED_WINDOW_MS) samples.shift();
-    const first = samples[0];
-    const span = first === undefined ? 0 : at - first.at;
-    const bytesPerSecond = first !== undefined && span >= 1000 ? Math.round(((received - first.received) * 1000) / span) : null;
+    const bytesPerSecond = speed(received);
     options.onProgress?.({ received, total, bytesPerSecond, blobsDone: done, blobsTotal: blobs.length, retries, lastRetry });
   };
   report(0);
+  const log = options.log ?? (() => {});
+  const began = now();
+  const name = pinned.name ?? localName(pinned);
+  log(`Image download ${name}: ${blobs.length} blobs, ${total} bytes, from ${location.base}`);
 
-  for (const blob of blobs) {
+  for (const [index, blob] of blobs.entries()) {
     const path = blobPath(folder, blob.digest);
     for (let checks = 1; ; checks++) {
       const outcome = await downloadVerified(
@@ -240,6 +256,8 @@ export async function downloadImage(
           idleMs: options.idleMs,
           backoffMs: options.backoffMs,
           now,
+          log,
+          label: `${index === 0 ? "config" : `layer ${index} of ${blobs.length - 1}`} of ${name} (${blob.digest.slice(0, 19)})`,
           onProgress: (received) => report(doneBytes + received),
           onRetry: (reason) => {
             retries++;
@@ -250,7 +268,10 @@ export async function downloadImage(
       );
       if (outcome.ok) break;
       // A blob that fails its check is discarded alone; the others stay.
-      if (outcome.error.code !== "download.checksum_mismatch" || checks >= CHECKSUM_TRIES) return outcome;
+      if (outcome.error.code !== "download.checksum_mismatch" || checks >= CHECKSUM_TRIES) {
+        log(`Image download ${name}: failed after ${((now() - began) / 1000).toFixed(1)} s at ${blob.digest.slice(0, 19)}: ${outcome.error.code}`);
+        return outcome;
+      }
       retries++;
       lastRetry = outcome.error;
     }
@@ -259,7 +280,7 @@ export async function downloadImage(
     report(doneBytes);
   }
 
-  const name = pinned.name ?? localName(pinned);
+  log(`Image download ${name}: finished, ${total} bytes in ${((now() - began) / 1000).toFixed(1)} s, ${retries} interruption${retries === 1 ? "" : "s"}`);
   writeLayout(folder, { digest: pinned.digest, size: got.bytes.length, mediaType: manifest.mediaType }, name);
   return {
     ok: true,

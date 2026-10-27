@@ -174,16 +174,16 @@ test("the setup is under way from the approval until it is done or has failed", 
 
 test("a Mac that sets up Apple's container tool reports the step, its size and the bytes so far", () => {
   const view: LocalEngineView = { ...fresh, state: "installing", install: macInstall("installer", { stepReceived: 1000 }) };
-  expect(installStatus(view)).toEqual({ kind: "preparing", step: "installer", size: 155_965_213, received: 1000 });
+  expect(installStatus(view)).toEqual({ kind: "preparing", step: "installer", size: 155_965_213, received: 1000, speed: null });
   const approve: LocalEngineView = { ...fresh, state: "installing", install: macInstall("approve") };
-  expect(installStatus(approve)).toEqual({ kind: "preparing", step: "approve", size: null, received: null });
+  expect(installStatus(approve)).toEqual({ kind: "preparing", step: "approve", size: null, received: null, speed: null });
   // The kernel and the startup files are downloads of known size, and the service start is not a download.
   const kernel: LocalEngineView = { ...fresh, state: "installing", install: macInstall("kernel", { stepReceived: 5000 }) };
-  expect(installStatus(kernel)).toEqual({ kind: "preparing", step: "kernel", size: 696_573_576, received: 5000 });
+  expect(installStatus(kernel)).toEqual({ kind: "preparing", step: "kernel", size: 696_573_576, received: 5000, speed: null });
   const init: LocalEngineView = { ...fresh, state: "installing", install: macInstall("init") };
-  expect(installStatus(init)).toEqual({ kind: "preparing", step: "init", size: 69_425_005, received: null });
+  expect(installStatus(init)).toEqual({ kind: "preparing", step: "init", size: 69_425_005, received: null, speed: null });
   const service: LocalEngineView = { ...fresh, state: "installing", install: macInstall("service") };
-  expect(installStatus(service)).toEqual({ kind: "preparing", step: "service", size: null, received: null });
+  expect(installStatus(service)).toEqual({ kind: "preparing", step: "service", size: null, received: null, speed: null });
 });
 
 test("the steps come from the plan before the click and from the install after it, with where each stands", () => {

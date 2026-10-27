@@ -79,20 +79,6 @@ const kernelSetArgv = () => [
 ];
 const initFolder = () => imageFolder(scratch, { repository: initPin.repository, digest: initPin.digest });
 
-/** What the tool's inspect of the startup files prints once it holds them, in the shape of its source at 1.6.1. */
-function inspectOutput(manifestDigest: string): string {
-  return JSON.stringify([
-    {
-      id: "a".repeat(64),
-      configuration: {
-        name: INIT_REFERENCE,
-        descriptor: { mediaType: "application/vnd.oci.image.index.v1+json", digest: `sha256:${"5".repeat(64)}`, size: 306 },
-      },
-      variants: [{ digest: manifestDigest, size: initPin.size }],
-    },
-  ]);
-}
-
 beforeEach(async () => {
   scratch = mkdtempSync(join(os.tmpdir(), "aidm-ui-mac-setup-"));
   good = new Uint8Array(20_000).map((_, index) => (index * 7) % 251);
@@ -188,22 +174,21 @@ function toolAppearsAfter(polls: number): ScriptedRule {
  * The tool's answers about the startup files: it holds them from the start or
  * from the load on. `listed` is the manifest digest its inspect names.
  */
-function startupFiles(there: boolean, options: { listed?: string; onLoad?: () => void } = {}) {
+function startupFiles(there: boolean, options: { named?: string; onLoad?: () => void } = {}) {
   const state = { loaded: false };
   const rules: ScriptedRule[] = [
     {
       argv: INSPECT_INIT,
+      // The tool hides its startup files from inspect: an empty list when they are there (recorded on a real Mac).
       result: () =>
-        there || state.loaded
-          ? { exitCode: 0, stdout: inspectOutput(options.listed ?? initPin.digest), stderr: "" }
-          : { exitCode: 1, stdout: "", stderr: "Error: notFound: image not found\n" },
+        there || state.loaded ? recorded("apple-container", "image-inspect-init-present") : recorded("apple-container", "image-inspect-init-missing"),
     },
     {
       argv: LOAD,
       result: () => {
         state.loaded = true;
         options.onLoad?.();
-        return OK;
+        return options.named === undefined ? recorded("apple-container", "image-load-init") : { exitCode: 0, stdout: `${options.named}\n`, stderr: "" };
       },
     },
   ];
@@ -282,7 +267,7 @@ test("a Mac whose service is stopped but whose kernel is there needs the service
 });
 
 test("a Mac that has the tool running, its kernel and its startup files needs nothing, and the tool was asked about the startup files", async () => {
-  const { service, runner } = looking([{ argv: INSPECT_INIT, result: { exitCode: 0, stdout: inspectOutput(APPLE_CONTAINER_INIT_IMAGE.digest), stderr: "" } }], true);
+  const { service, runner } = looking([{ argv: INSPECT_INIT, result: recorded("apple-container", "image-inspect-init-present") }], true);
   expect(await service.need("running", "1.6.1")).toBeNull();
   expect(runner.calls).toEqual([INSPECT_INIT]);
 });
@@ -679,52 +664,58 @@ test("startup files the tool already holds are not downloaded: the tool is asked
   expect(registry.requests).toEqual([]);
 });
 
-test("missing startup files are downloaded from the registry the pin names, loaded through standard input, checked, and the download is removed", async () => {
+test("missing startup files are downloaded from the registry the pin names, checked blob by blob, loaded through standard input, and the download is removed", async () => {
   let atLoad = "";
   const { rules } = startupFiles(false, { onLoad: () => (atLoad = existsSync(join(initFolder(), "index.json")) ? "download in place" : "no download") });
   const { run, runner, steps, received } = setup(rules);
   expect(await run(INIT_ONLY)).toEqual({ ok: true });
 
-  // Asked, loaded, asked again to check what it holds.
-  expect(runner.calls).toEqual([INSPECT_INIT, LOAD, INSPECT_INIT]);
+  // Asked once, then loaded. The tool shows nothing of its startup files afterwards, so it is not asked again:
+  // the load counts by its exit code and the name it printed, and the first container start is the last proof.
+  expect(runner.calls).toEqual([INSPECT_INIT, LOAD]);
   expect(steps).toEqual(["init"]);
   expect(atLoad).toBe("download in place");
   expect(runner.inputs).toHaveLength(1);
   expect(runner.inputs[0]?.argv).toEqual(LOAD);
   expect(runner.inputs[0]?.bytes.length).toBeGreaterThan(initImage.size);
-  // The bytes came from the registry of the pin, and the progress is in bytes of the image.
   expect(registry.requests.some((request) => request.path.endsWith(`/manifests/${initImage.digest}`))).toBe(true);
   expect(files.requests.some((request) => request.path === "/kernel.tar.zst")).toBe(false);
   expect(received.at(-1)).toBe(initImage.size);
-  // The tool holds the files now, so the download is not kept.
   expect(existsSync(initFolder())).toBe(false);
 });
 
-test("startup files whose check does not list the pinned manifest are mac.init_failed, and the download stays", async () => {
-  const { rules } = startupFiles(false, { listed: `sha256:${"9".repeat(64)}` });
+test("startup files that are there answer inspect with an empty list, which counts as there, not as a wrong version", async () => {
+  const { run, runner } = setup([{ argv: INSPECT_INIT, result: recorded("apple-container", "image-inspect-init-present") }]);
+  expect(await run(INIT_ONLY)).toEqual({ ok: true });
+  expect(runner.calls).toEqual([INSPECT_INIT]);
+  expect(registry.requests).toEqual([]);
+});
+
+test("a load that names another image is mac.init_not_named, and the download stays", async () => {
+  const { rules } = startupFiles(false, { named: "untagged@sha256:1234" });
   const { run, runner } = setup(rules);
-  expect(await run(INIT_ONLY)).toEqual({
-    ok: false,
-    step: "init",
-    error: { code: "mac.init_failed", data: { cause: { code: "runtime.image_not_verified", data: { name: INIT_REFERENCE } } } },
-  });
-  expect(runner.calls).toEqual([INSPECT_INIT, LOAD, INSPECT_INIT]);
+  expect(await run(INIT_ONLY)).toEqual({ ok: false, step: "init", error: { code: "mac.init_not_named", data: {} } });
+  expect(runner.calls).toEqual([INSPECT_INIT, LOAD]);
   expect(existsSync(initFolder())).toBe(true);
 });
 
-test("startup files the tool refuses to load are mac.init_failed with the reason from the load", async () => {
+test("startup files the tool refuses to load are mac.init_load_failed with the exit code, and the download stays", async () => {
   const { run, runner } = setup([
-    { argv: INSPECT_INIT, result: { exitCode: 1, stdout: "", stderr: "Error: notFound: image not found\n" } },
+    { argv: INSPECT_INIT, result: recorded("apple-container", "image-inspect-init-missing") },
     { argv: LOAD, result: { exitCode: 1, stdout: "", stderr: "Error: internalError\n" } },
   ]);
-  expect(await run(INIT_ONLY)).toEqual({
-    ok: false,
-    step: "init",
-    error: { code: "mac.init_failed", data: { cause: { code: "runtime.load_failed", data: { exitCode: 1 } } } },
-  });
-  // Nothing was asked after the failed load, and the download stays for the next try.
+  expect(await run(INIT_ONLY)).toEqual({ ok: false, step: "init", error: { code: "mac.init_load_failed", data: { exitCode: 1 } } });
   expect(runner.calls).toEqual([INSPECT_INIT, LOAD]);
   expect(existsSync(initFolder())).toBe(true);
+});
+
+test("an inspect that neither finds nor misses the startup files is mac.init_check_failed, nothing is downloaded, and the log says what was expected and found", async () => {
+  const { run, log: logs } = setup([{ argv: INSPECT_INIT, result: { exitCode: 1, stdout: "", stderr: "Error: internalError: XPC connection error\n" } }]);
+  expect(await run(INIT_ONLY)).toEqual({ ok: false, step: "init", error: { code: "mac.init_check_failed", data: { exitCode: 1 } } });
+  expect(registry.requests).toEqual([]);
+  expect(logs).toContain(
+    'Startup files check failed: expected exit 0 (there) or "image not found" (missing), found exit 1: Error: internalError: XPC connection error',
+  );
 });
 
 // The whole way.
@@ -749,6 +740,5 @@ test("a Mac without the tool goes through the installer, the approval, the servi
     kernelSetArgv(),
     INSPECT_INIT,
     LOAD,
-    INSPECT_INIT,
   ]);
 });

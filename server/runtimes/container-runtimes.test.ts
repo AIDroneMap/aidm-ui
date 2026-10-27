@@ -1,9 +1,11 @@
+import type { CommandRunner } from "../process/command-runner.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScriptedRunner, recorded, recordedText, type ScriptedRule } from "../../test-support/scripted-runner.ts";
 import { localName, type DownloadedImage } from "../images/image-download.ts";
+import { loggingRunner } from "../process/logging-runner.ts";
 import { dockerRuntime, runArgv as dockerRunArgv } from "./docker.ts";
 import { podmanRuntime, runArgv as podmanRunArgv } from "./podman.ts";
 import type { ContainerRuntime, ContainerSpec, RuntimeDetection } from "./runtime.ts";
@@ -116,7 +118,7 @@ function detection(
 const tools = [
   {
     id: "podman" as const,
-    make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => podmanRuntime(runner, log),
+    make: (runner: CommandRunner, log?: (line: string) => void): ContainerRuntime => podmanRuntime(runner, log),
     runArgv: podmanRunArgv,
     mountSuffix: ":Z",
     readOnlySuffix: ":ro,Z",
@@ -129,7 +131,7 @@ const tools = [
   },
   {
     id: "docker" as const,
-    make: (runner: ScriptedRunner, log?: (line: string) => void): ContainerRuntime => dockerRuntime(runner, log),
+    make: (runner: CommandRunner, log?: (line: string) => void): ContainerRuntime => dockerRuntime(runner, log),
     runArgv: dockerRunArgv,
     mountSuffix: "",
     readOnlySuffix: ":ro",
@@ -580,7 +582,8 @@ for (const tool of tools) {
         { argv: argv.run, result: cases("run-port-in-use") },
         { argv: argv.rm, result: cases("rm") },
       ]);
-      const result = await tool.make(runner, (line) => logged.push(line)).start(spec());
+      // Every command goes through the logging runner, which writes the diagnosis log.
+      const result = await tool.make(loggingRunner(runner, (line) => logged.push(line)), (line) => logged.push(line)).start(spec());
       expect(logged.length).toBeGreaterThan(0);
       expect(logged.join("\n")).not.toContain("s3cret-token");
       expect(logged.some((line) => line.includes("--token ***"))).toBe(true);

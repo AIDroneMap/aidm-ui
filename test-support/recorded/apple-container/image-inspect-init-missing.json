@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "Error: notFound: \"image not found: ghcr.io/apple/containerization/vminit:0.53.0\"\n"
+}

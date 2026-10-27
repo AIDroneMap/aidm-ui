@@ -236,6 +236,8 @@ export class SampleJob {
       { url: dataset.url, size: dataset.size, sha256: dataset.sha256, path: zipPath },
       {
         fetch: this.deps.fetch,
+        log: this.deps.log,
+        label: `sample dataset ${dataset.fileName}`,
         signal,
         freeBytes: this.freeBytes,
         onProgress: (received, total) => {

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import os from "node:os";
 import { dirname } from "node:path";
 import { hideTokenArguments, type CommandRunner } from "./command-runner.ts";
@@ -11,6 +11,44 @@ export interface RecordingOptions {
   now?: () => number;
   /** The whole file stops growing here. Default 64 MiB. */
   maxBytes?: number;
+  /** The version of aidm-ui, for the session record. */
+  version?: string;
+}
+
+/** How much of the end of an earlier file is read to learn where its numbers stopped. */
+const TAIL_BYTES = 1024 * 1024;
+
+/**
+ * The last command number and session number in a file an earlier start left,
+ * read from its last records. A file that cannot be read starts at 0.
+ */
+export function lastNumbers(file: string): { seq: number; session: number } {
+  let seq = 0;
+  let session = 0;
+  try {
+    const size = statSync(file).size;
+    const start = Math.max(0, size - TAIL_BYTES);
+    const fd = openSync(file, "r");
+    const buffer = Buffer.alloc(size - start);
+    try {
+      readSync(fd, buffer, 0, buffer.length, start);
+    } finally {
+      closeSync(fd);
+    }
+    for (const line of buffer.toString("utf8").split("\n")) {
+      if (!line.startsWith("{")) continue;
+      try {
+        const record = JSON.parse(line) as { seq?: unknown; session?: unknown };
+        if (typeof record.seq === "number" && record.seq > seq) seq = record.seq;
+        if (typeof record.session === "number" && record.session > session) session = record.session;
+      } catch {
+        // A line cut by the size limit or a crash says nothing.
+      }
+    }
+  } catch {
+    // No file yet.
+  }
+  return { seq, session };
 }
 
 export const DEFAULT_RECORDING_MAX_BYTES = 64 * 1024 * 1024;
@@ -25,14 +63,16 @@ export const MIN_SECRET_LENGTH = 8;
  * fixtures. Each record is appended at once, so a crash loses nothing already
  * written. The result handed back is the inner one, untouched: only the file
  * is redacted. A write that fails stops the recording and never the command.
- * The first record of each start is a session record, so that a file filled by
- * several starts can be told apart: the numbers of the commands begin at 1 again
- * in every session.
+ * The first record of each start is a session record with the time and the
+ * version of aidm-ui, so that a file filled by several starts can be told
+ * apart, and the numbers of the commands go on where the file left off, so
+ * no two commands in one file share a number.
  */
 export function recordingRunner(inner: CommandRunner, options: RecordingOptions): CommandRunner {
   const now = options.now ?? Date.now;
   const maxBytes = options.maxBytes ?? DEFAULT_RECORDING_MAX_BYTES;
-  let sequence = 0;
+  const earlier = lastNumbers(options.file);
+  let sequence = earlier.seq;
   let stopped = false;
   let written = 0;
 
@@ -77,7 +117,10 @@ export function recordingRunner(inner: CommandRunner, options: RecordingOptions)
   // Only what tells one machine type from another, and nothing that names this machine or its owner.
   write(() => ({
     kind: "session",
+    session: earlier.session + 1,
     at: new Date(now()).toISOString(),
+    version: options.version ?? null,
+    firstSeq: earlier.seq + 1,
     platform: process.platform,
     arch: process.arch,
     osRelease: os.release(),

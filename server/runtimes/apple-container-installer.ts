@@ -6,9 +6,10 @@ import type { InstallStepId, InstallStepView } from "../../shared/api-types.ts";
 import { downloadVerified, type DownloadOptions } from "../downloads/downloader.ts";
 import { downloadImage, imageFolder, removeImageDownload, type ImageDownloadOptions, type PinnedImage } from "../images/image-download.ts";
 import type { FreeBytes } from "../machine/disk.ts";
-import { describeCommand, type CommandRunner } from "../process/command-runner.ts";
-import { APPLE_TOOL, appleContainerRuntime, parseToolVersion } from "./apple-container.ts";
+import type { CommandRunner } from "../process/command-runner.ts";
+import { APPLE_TOOL, loadIntoAppleTool, parseToolVersion } from "./apple-container.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
 
 export interface InstallerPin {
   version: string;
@@ -86,6 +87,8 @@ export const INSTALLER_WAIT_MS = 10 * 60 * 1000;
 /** Installing the kernel unpacks 664 MiB of archive. */
 const KERNEL_SET_TIMEOUT_MS = 10 * 60 * 1000;
 const INSPECT_TIMEOUT_MS = 30_000;
+/** What the tool says for an image it does not hold: "image not found: <name>" (1.6.1: ImageInspect.swift). */
+const IMAGE_NOT_FOUND = /image not found/i;
 
 /**
  * Where the tool keeps its default kernel: a link named after the processor
@@ -164,8 +167,8 @@ export interface MacSetupRun {
   stopWaiting?: AbortSignal;
   /** A step began. */
   onStep: (step: InstallStepId) => void;
-  /** Bytes the step under way has received so far. */
-  onReceived: (received: number) => void;
+  /** Bytes the step under way has received so far, and its speed in bytes per second when that is known. */
+  onReceived: (received: number, bytesPerSecond?: number | null) => void;
 }
 
 /**
@@ -200,7 +203,12 @@ export class MacSetup {
     const pinned = tool ? this.installer.version === this.kernel.forTool : toolVersion === this.kernel.forTool;
     const kernel = !this.hasKernel();
     let init: MacNeed["init"] = null;
-    if (pinned) init = state === "running" ? ((await this.initPresent()) ? null : "missing") : "unknown";
+    if (pinned && state === "running") {
+      const found = await this.initState();
+      init = found.state === "present" ? null : found.state === "absent" ? "missing" : "unknown";
+    } else if (pinned) {
+      init = "unknown";
+    }
     const need: MacNeed = { tool, service: state !== "running", kernel, init, pinned };
     return need.tool || need.service || need.kernel || need.init !== null ? need : null;
   }
@@ -252,7 +260,7 @@ export class MacSetup {
     return (this.deps.kernelPresent ?? (() => kernelPresent()))();
   }
 
-  private downloadOptions(run: MacSetupRun): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress"> {
+  private downloadOptions(run: MacSetupRun): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress" | "log"> {
     return {
       fetch: this.deps.fetch,
       signal: run.signal,
@@ -261,6 +269,7 @@ export class MacSetup {
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
       onProgress: (received) => run.onReceived(received),
+      log: this.deps.log,
     };
   }
 
@@ -271,14 +280,13 @@ export class MacSetup {
     // Nothing below runs unless that check passed.
     const downloaded = await downloadVerified(
       { url: this.installer.url, size: this.installer.size, sha256: this.installer.sha256, path },
-      this.downloadOptions(run),
+      { ...this.downloadOptions(run), label: `Apple's installer ${this.installer.version}` },
     );
     if (!downloaded.ok) return { ok: false, step: "installer", error: downloaded.error };
 
     run.onStep("approve");
     // Opening the package makes macOS ask for the administrator password, once.
     const opening = ["open", downloaded.path];
-    this.deps.log(describeCommand(opening));
     const opened = await this.deps.runner.run(opening);
     if (opened.exitCode !== 0) return this.notFinished("open_failed");
 
@@ -336,7 +344,6 @@ export class MacSetup {
     const argv = [APPLE_TOOL, "system", "start", ownKernel ? "--enable-kernel-install" : "--disable-kernel-install"];
     const step: InstallStepId = ownKernel ? "kernel" : "service";
     run.onStep(step);
-    this.deps.log(describeCommand(argv));
     const result = await this.deps.runner.stream(argv, {
       signal: run.signal,
       onLine: (line) => {
@@ -348,6 +355,7 @@ export class MacSetup {
     });
     if (result.exitCode === 0) return { ok: true };
     if (run.signal?.aborted) return { ok: false, step, error: { code: "download.cancelled", data: {} } };
+    this.deps.log(`Service check failed: expected "container system start" to exit 0, found exit ${result.exitCode}`);
     return { ok: false, step, error: { code: "mac.start_failed", data: { step, exitCode: result.exitCode } } };
   }
 
@@ -363,35 +371,53 @@ export class MacSetup {
     const path = join(this.deps.dataFolder, "downloads", `kata-static-${this.kernel.version}-arm64.tar.zst`);
     const downloaded = await downloadVerified(
       { url: this.kernel.url, size: this.kernel.size, sha256: this.kernel.sha256, path },
-      this.downloadOptions(run),
+      { ...this.downloadOptions(run), label: `Linux system for Apple's tool (Kata ${this.kernel.version})` },
     );
     if (!downloaded.ok) return { ok: false, step: "kernel", error: downloaded.error };
     const argv = [APPLE_TOOL, "system", "kernel", "set", "--tar", path, "--binary", this.kernel.member, "--digest", `sha256:${this.kernel.sha256}`];
-    this.deps.log(describeCommand(argv));
     const result = await this.deps.runner.run(argv, { timeoutMs: KERNEL_SET_TIMEOUT_MS });
     if (result.exitCode !== 0) {
-      this.deps.log(`The tool did not take the kernel (exit code ${result.exitCode}): ${result.stderr.trim().split("\n").slice(-3).join(" / ")}`);
+      this.deps.log(`Kernel check failed: expected the tool's kernel set to exit 0, found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
       return { ok: false, step: "kernel", error: { code: "mac.kernel_failed", data: { exitCode: result.exitCode } } };
     }
     rmSync(path, { force: true });
     return { ok: true };
   }
 
-  /** True when the tool holds the startup files under the name it looks for. Needs the service. */
-  private async initPresent(): Promise<boolean> {
+  /**
+   * Whether the tool holds the startup files under the name it looks for.
+   * Needs the service. The tool hides its own infrastructure images (the
+   * startup files and the builder) from inspect, list and delete
+   * (1.6.1: Utility.isInfraImage in ImageInspect.swift), so for them inspect
+   * exits 0 with an empty list when the image is there, and exits 1 with
+   * "image not found" when it is not. The empty list is the answer "present":
+   * nothing in it can be checked.
+   */
+  private async initState(): Promise<{ state: "present" | "absent" } | { state: "unknown"; exitCode: number }> {
     const argv = [APPLE_TOOL, "image", "inspect", this.initImage.reference];
     const result = await this.deps.runner.run(argv, { timeoutMs: INSPECT_TIMEOUT_MS });
-    return result.exitCode === 0;
+    if (result.exitCode === 0) return { state: "present" };
+    if (IMAGE_NOT_FOUND.test(`${result.stderr}\n${result.stdout}`)) return { state: "absent" };
+    this.deps.log(`Startup files check failed: expected exit 0 (there) or "image not found" (missing), found exit ${result.exitCode}: ${excerpt(result.stderr || result.stdout)}`);
+    return { state: "unknown", exitCode: result.exitCode };
   }
 
   /**
    * The startup files come through the image downloader and the tool's own
    * load, like the engine (ADR 0005): the tool's pull keeps nothing from a
-   * failed try. Startup files that are there are left as they are.
+   * failed try. Startup files that are there are left as they are. Every blob
+   * is checked against its digest before the load, and the load counts when
+   * it exits 0 and names the image it loaded. The tool shows no digest of its
+   * infrastructure images afterwards, so nothing more can be asked: the first
+   * container start is the last proof.
    */
   private async installInitImage(run: MacSetupRun): Promise<MacSetupResult> {
     run.onStep("init");
-    if (await this.initPresent()) return { ok: true };
+    const before = await this.initState();
+    if (before.state === "present") return { ok: true };
+    if (before.state === "unknown") {
+      return { ok: false, step: "init", error: { code: "mac.init_check_failed", data: { exitCode: before.exitCode } } };
+    }
     const pinned: PinnedImage = { repository: this.initImage.repository, digest: this.initImage.digest, name: this.initImage.reference };
     const folder = imageFolder(this.deps.dataFolder, pinned);
     const options: ImageDownloadOptions = {
@@ -400,15 +426,22 @@ export class MacSetup {
       backoffMs: this.deps.backoffMs,
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
-      onProgress: (progress) => run.onReceived(progress.received),
+      onProgress: (progress) => run.onReceived(progress.received, progress.bytesPerSecond),
+      log: this.deps.log,
     };
     const downloaded = await downloadImage(pinned, folder, options);
     if (!downloaded.ok) return { ok: false, step: "init", error: downloaded.error };
-    const tool = appleContainerRuntime(this.deps.runner, { log: this.deps.log });
-    const loaded = await tool.load(downloaded.image, { signal: run.signal });
-    if (!loaded.ok) return { ok: false, step: "init", error: { code: "mac.init_failed", data: { cause: loaded.error } } };
-    const verified = await tool.verifyImage(downloaded.image);
-    if (!verified.ok) return { ok: false, step: "init", error: { code: "mac.init_failed", data: { cause: verified.error } } };
+    const loaded = await loadIntoAppleTool(this.deps.runner, downloaded.image, { signal: run.signal, log: this.deps.log });
+    if (!loaded.ok) {
+      if (loaded.error.code === "download.cancelled" || loaded.error.code === "runtime.apple_not_started") {
+        return { ok: false, step: "init", error: loaded.error };
+      }
+      return { ok: false, step: "init", error: { code: "mac.init_load_failed", data: { exitCode: loaded.error.data.exitCode ?? null } } };
+    }
+    if (!loaded.references.includes(this.initImage.reference)) {
+      this.deps.log(`Startup files check failed: expected the load to name ${this.initImage.reference}, found ${loaded.references.join(", ") || "no name"}`);
+      return { ok: false, step: "init", error: { code: "mac.init_not_named", data: {} } };
+    }
     removeImageDownload(folder);
     return { ok: true };
   }

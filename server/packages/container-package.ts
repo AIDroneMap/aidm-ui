@@ -13,6 +13,7 @@ import {
   type ImageDownloadProgress,
   type PinnedImage,
 } from "../images/image-download.ts";
+import { excerpt } from "../app/diagnosis-log.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR } from "../machine/thresholds.ts";
 import { isNativePackage, type InstalledPackage } from "../settings/settings.ts";
 import type { FreeBytes } from "../machine/disk.ts";
@@ -64,6 +65,8 @@ export interface ContainerPackageDeps {
   images?: ImageSource;
   /** Passed to the image downloader; tests make them short. */
   download?: Pick<ImageDownloadOptions, "fetch" | "stallMs" | "idleMs" | "backoffMs" | "now">;
+  /** The diagnosis log. */
+  log?: (line: string) => void;
 }
 
 /** An engine package that is an image run through a container runtime. */
@@ -143,6 +146,7 @@ export class ContainerPackage implements EnginePackage {
     options.onProgress?.(view("pulling"));
     const downloaded = await (this.deps.images ?? registryImages).download(this.pinned, this.folder, {
       ...this.deps.download,
+      log: this.deps.log,
       signal: options.signal,
       onProgress: (progress) => {
         last = progress;
@@ -153,9 +157,16 @@ export class ContainerPackage implements EnginePackage {
 
     options.onProgress?.(view("loading"));
     const loaded = await runtime.load(downloaded.image, { signal: options.signal });
-    if (!loaded.ok) return fail("install.load_failed", { cause: loaded.error });
+    // Each failure has its own message: a load the tool refused, and a load whose result is not the image downloaded.
+    if (!loaded.ok) {
+      if (loaded.error.code !== "runtime.load_failed") return loaded;
+      return fail("install.load_failed", { exitCode: loaded.error.data.exitCode ?? null });
+    }
     const verified = await runtime.verifyImage(downloaded.image);
-    if (!verified.ok) return fail("install.load_failed", { cause: verified.error });
+    if (!verified.ok) {
+      if (verified.error.code !== "runtime.image_not_verified") return verified;
+      return fail("install.image_not_verified", {});
+    }
     this.runAs = verified.value;
     this.loadedRef = verified.value;
     return ok(undefined);
@@ -184,9 +195,13 @@ export class ContainerPackage implements EnginePackage {
       args: ["-L"],
     };
     const ran = await this.deps.runtime.runOnce(spec, IN_IMAGE_CHECK_TIMEOUT_MS, signal);
-    if (!ran.ok) return { ok: false, error: inImageFailed() };
-    const { exitCode, stdout } = ran.value;
+    if (!ran.ok) {
+      this.deps.log?.(`Graphics card check failed: the test run could not be started: ${ran.error.code}`);
+      return { ok: false, error: inImageFailed() };
+    }
+    const { exitCode, stdout, stderr } = ran.value;
     if (exitCode === 0 && parseGpuListing(stdout).length > 0) return ok(undefined);
+    this.deps.log?.(`Graphics card check failed: expected exit 0 and at least one card listed by nvidia-smi -L, found exit ${exitCode}: ${excerpt(stdout || stderr)}`);
     return { ok: false, error: inImageFailed(exitCode) };
   }
 

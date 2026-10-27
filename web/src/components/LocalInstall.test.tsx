@@ -240,3 +240,26 @@ test("a step that failed is marked Failed with the reason in words, and nothing 
   expect(html).toContain("Apple&#x27;s container tool was not installed.");
   expect(untranslatedText(html)).toEqual([]);
 });
+
+// After the second Mac test.
+
+test("the startup files show their bytes and speed in the same words as the engine", () => {
+  const html = render(mac("init", { install: macInstall("init", { stepReceived: 20 * 1024 * 1024, speed: 1024 * 1024 }) }));
+  expect(html).toContain("20 MiB of 66 MiB, 1 MiB per second");
+  const engine = render({ ...fresh, state: "installing", install: engineInstall({ size: 683 * 1024 * 1024, stepReceived: 20 * 1024 * 1024, speed: 1024 * 1024 }) });
+  expect(engine).toContain("20 MiB of 683 MiB, 1 MiB per second");
+});
+
+test("a failed step says which step stopped, and its message is only its own", () => {
+  const html = render(
+    mac("init", {
+      state: "failed",
+      install: macInstall("init", { phase: "failed" }),
+      problem: { code: "mac.init_load_failed", data: { exitCode: 1 } },
+    }),
+  );
+  expect(html).toContain("Apple&#x27;s container tool could not load its startup files (exit code 1).");
+  expect(html).toContain("The step that stopped: Startup files.");
+  expect(html).not.toContain("engine, but it does not hold");
+  expect(untranslatedText(html)).toEqual([]);
+});

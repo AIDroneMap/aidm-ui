@@ -235,7 +235,7 @@ test("a load that fails ends in failed and keeps the download, and the next inst
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "failed");
   const failed = await localView(h);
-  expect(failed.problem).toMatchObject({ code: "install.load_failed", data: { cause: { code: "runtime.load_failed" } } });
+  expect(failed.problem).toEqual({ code: "install.load_failed", data: { exitCode: 1 } });
   expect(failed.installed).toBeNull();
   expect(await engineList(h)).toEqual([]);
   expect(existsSync(join(folder, "index.json"))).toBe(true);
