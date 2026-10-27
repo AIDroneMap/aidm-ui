@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ApiError } from "../../shared/api-error.ts";
-import { checkEngineAddress } from "./address-rule.ts";
+import { checkEngineAddress, plainHttpWarning } from "./address-rule.ts";
 
 const noDns = async (): Promise<string[]> => {
   throw new Error("The address rule must not look this name up.");
@@ -19,18 +19,21 @@ async function refusedWith(address: string, resolve = noDns): Promise<string> {
   return check.error.code;
 }
 
-test("plain http is accepted, with a warning, on loopback, private and link-local addresses", async () => {
+test("plain http is accepted without a warning on loopback, whose traffic never leaves the computer", async () => {
+  for (const address of ["http://127.0.0.1:3000", "http://127.255.255.254:3000", "http://localhost:3000", "http://LOCALHOST:3000", "http://[::1]:3000"]) {
+    expect((await accepts(address)).warning, address).toBeNull();
+    expect(plainHttpWarning(address), address).toBeNull();
+  }
+});
+
+test("plain http is accepted, with a warning, on private and link-local addresses", async () => {
   for (const address of [
-    "http://127.0.0.1:3000",
-    "http://127.255.255.254:3000",
-    "http://localhost:3000",
     "http://10.0.0.1:3000",
     "http://10.255.255.255:3000",
     "http://172.16.0.0:3000",
     "http://172.31.255.255:3000",
     "http://192.168.1.5:3000",
     "http://169.254.10.20:3000",
-    "http://[::1]:3000",
     "http://[fc00::1]:3000",
     "http://[fd12:3456::1]:3000",
     "http://[fe80::1]:3000",
@@ -38,7 +41,9 @@ test("plain http is accepted, with a warning, on loopback, private and link-loca
     "http://[::ffff:192.168.1.5]:3000",
   ]) {
     expect((await accepts(address)).warning, address).toEqual(WARNING);
+    expect(plainHttpWarning(address), address).toEqual(WARNING);
   }
+  expect(plainHttpWarning("https://192.168.1.5:3000")).toBeNull();
 });
 
 test("plain http to a public address needs https", async () => {

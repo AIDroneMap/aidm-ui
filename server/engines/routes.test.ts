@@ -85,7 +85,8 @@ test("testing an engine shows its version, cores, memory and queue length and sa
     queueCount: 2,
   });
   expect(view.supported).toBe(true);
-  expect(view.warning).toEqual({ code: "engine.plain_http_local", data: {} });
+  // The fake listens on 127.0.0.1, whose traffic never leaves the computer.
+  expect(view.warning).toBeNull();
   expect(await listEngines()).toEqual([]);
 });
 
@@ -158,11 +159,11 @@ test("saving does not need the engine to answer, and it becomes unreachable afte
   expect(harness.engines.isUsable(added.id)).toBe(false);
 });
 
-test("a saved engine appears as ready with its details and the plain http warning", async () => {
+test("a saved engine on this computer appears as ready with its details and no plain http warning", async () => {
   const added = await addEngine();
   expect(added).toMatchObject({ kind: "remote", name: "Office", address: fake.address, enabled: true, state: "ready", supported: true });
   expect(added.info?.cpuCores).toBe(24);
-  expect(added.warning).toEqual({ code: "engine.plain_http_local", data: {} });
+  expect(added.warning).toBeNull();
   expect(harness.engineStore.get(added.id)?.lastState).toBe("ready");
 });
 

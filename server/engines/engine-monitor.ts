@@ -8,7 +8,7 @@ import {
   type TaskApiFailure,
   type TaskClientOptions,
 } from "../task-api/task-client.ts";
-import { checkEngineAddress, PLAIN_HTTP_WARNING, type AddressCheck, type Resolve } from "./address-rule.ts";
+import { checkEngineAddress, plainHttpWarning, type AddressCheck, type Resolve } from "./address-rule.ts";
 import { nextEngineStatus, type EngineEvent, type EngineStatus } from "./engine-state.ts";
 import type { EngineRecord, EngineStore } from "./engine-store.ts";
 import { problemFromFailure } from "./problems.ts";
@@ -227,8 +227,8 @@ export class EngineMonitor {
       supported: entry.supported,
       info: entry.info,
       problem: entry.problem,
-      // The address rule only lets plain http through for the local network, so a stored http address always earns the warning.
-      warning: engine.kind === "remote" && engine.address.startsWith("http:") ? PLAIN_HTTP_WARNING : null,
+      // The address rule only lets plain http through for this computer and the local network; only the local network earns the warning.
+      warning: engine.kind === "remote" ? plainHttpWarning(engine.address) : null,
     };
   }
 

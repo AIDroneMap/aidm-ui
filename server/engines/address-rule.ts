@@ -68,6 +68,28 @@ export function isLocalIpAddress(address: string): boolean {
   return false;
 }
 
+/** 127.0.0.0/8, ::1 and localhost: traffic to them never leaves this computer. */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "localhost") return true;
+  const literal = literalAddress(host);
+  if (literal === null) return false;
+  return isIPv4(literal) ? literal.startsWith("127.") : literal === "::1" || /^::ffff:127\./.test(literal);
+}
+
+/**
+ * The warning a stored plain http address earns: none for https, and none for
+ * a loopback address, whose traffic, token included, never leaves the computer.
+ */
+export function plainHttpWarning(address: string): ApiError | null {
+  try {
+    const url = new URL(address);
+    return url.protocol === "http:" && !isLoopbackHost(url.hostname) ? PLAIN_HTTP_WARNING : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The host part of a URL as an IP address if it is one (IPv6 loses its brackets). */
 function literalAddress(hostname: string): string | null {
   const bare = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
@@ -98,7 +120,7 @@ export async function checkEngineAddress(input: string, resolve: Resolve = resol
   if (url.protocol === "https:") return { ok: true, address, warning: null };
 
   const host = url.hostname.toLowerCase();
-  if (host === "localhost") return { ok: true, address, warning: PLAIN_HTTP_WARNING };
+  if (isLoopbackHost(host)) return { ok: true, address, warning: null };
 
   const literal = literalAddress(host);
   if (literal !== null) {
