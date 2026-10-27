@@ -205,11 +205,36 @@ test("every run state has words", () => {
   expect(renderRun({ state: "unknown" })).toContain("The engine reported a status AIDM UI does not know");
 });
 
-test("the download step shows the bytes received and the total", () => {
-  const html = renderRun({ step: "download", download: { received: 312 * 1024 ** 2, total: 888735308 } });
-  expect(html).toContain("Downloading the photos: 312 MiB of 848 MiB");
+test("the download step says what it downloads, then the bar, then the bytes and the speed", () => {
+  const html = renderRun({
+    step: "download",
+    download: { received: 312 * 1024 ** 2, total: 888735308, speed: 3 * 1024 ** 2, retries: 0, lastRetry: null },
+  });
+  expect(html).toContain('<label for="run-download">Downloading the sample photos</label>');
+  expect(html).not.toContain("Downloading the sample photos:");
   expect(html).toMatch(/<progress id="run-download" max="888735308" value="327155712"/);
-  expect(html).toContain('<label for="run-download">');
+  expect(html).toContain("<p>312 MiB of 848 MiB, 3 MiB per second</p>");
+  expect(html).not.toContain("Interruptions");
+  expect(html.indexOf("Downloading the sample photos")).toBeLessThan(html.indexOf("<progress"));
+  expect(html.indexOf("<progress")).toBeLessThan(html.indexOf("312 MiB of 848 MiB"));
+  expect(untranslatedText(html, runData)).toEqual([]);
+});
+
+test("the download step names no speed before there is one, and says why the connection last broke", () => {
+  const html = renderRun({
+    step: "download",
+    download: {
+      received: 100 * 1024 ** 2,
+      total: 888735308,
+      speed: null,
+      retries: 2,
+      lastRetry: { code: "download.connection_interrupted", data: {} },
+    },
+  });
+  expect(html).toContain("<p>100 MiB of 848 MiB</p>");
+  expect(html).not.toContain("per second");
+  expect(html).toContain("The connection was interrupted. The download continues from where it stopped. Interruptions so far: 2.");
+  expect(html.indexOf("100 MiB of 848 MiB")).toBeLessThan(html.indexOf("Interruptions so far"));
 });
 
 test("the upload step shows images done of total", () => {

@@ -147,7 +147,7 @@ export class SampleJob {
     const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.deps.tracker.update(run.id, {
       step: "download",
-      download: { received: 0, total: this.deps.dataset.size },
+      download: { received: 0, total: this.deps.dataset.size, speed: null, retries: 0, lastRetry: null },
     });
     preparing.done = this.prepare(run.id, engineId, preparing).catch((error: unknown) => {
       this.deps.log(`Run ${run.id} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -346,6 +346,12 @@ export class SampleJob {
     const zipPath = this.zipPath();
 
     let lastShown = 0;
+    let lastReceived = 0;
+    let retries = 0;
+    let lastRetry: ApiError | null = null;
+    const speed = speedMeter();
+    const showDownload = (received: number, total: number) =>
+      tracker.update(runId, { download: { received, total, speed: speed(received), retries, lastRetry } });
     const downloaded = await downloadVerified(
       { url: dataset.url, size: dataset.size, sha256: dataset.sha256, path: zipPath },
       {
@@ -355,10 +361,16 @@ export class SampleJob {
         signal,
         freeBytes: this.freeBytes,
         onProgress: (received, total) => {
+          lastReceived = received;
           const now = Date.now();
           if (received < total && now - lastShown < PROGRESS_INTERVAL_MS) return;
           lastShown = now;
-          tracker.update(runId, { download: { received, total } });
+          showDownload(received, total);
+        },
+        onRetry: (reason) => {
+          retries++;
+          lastRetry = reason;
+          showDownload(lastReceived, dataset.size);
         },
       },
     );

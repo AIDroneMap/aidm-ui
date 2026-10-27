@@ -181,13 +181,35 @@ test("starting answers at once with a run that is downloading", async () => {
   expect(run).toMatchObject({
     state: "created",
     step: "download",
-    download: { received: 0, total: zipBytes.length },
+    download: { received: 0, total: zipBytes.length, speed: null, retries: 0, lastRetry: null },
     engineId: engine.id,
     engineName: "Office",
     engineLocal: false,
     resultsAvailable: false,
   });
   expect((await getJson<SampleView>("/api/sample")).run?.id).toBe(run.id);
+});
+
+test("a download that breaks reports its speed, how often it broke and why, like the engine's download", async () => {
+  files.cutNextResponseAfter(10);
+  const engine = await addEngine();
+  const seen: NonNullable<RunView["download"]>[] = [];
+  const run = await startedRun(engine.id);
+  const unsubscribe = harness.tracker.subscribe(run.id, (event) => {
+    if (event.type === "run" && event.run.download !== null) seen.push(event.run.download);
+  });
+  await waitRun(run.id, (candidate) => candidate.state === "queued");
+  unsubscribe();
+
+  expect(seen.some((download) => download.retries === 0 && download.speed === null)).toBe(true);
+  const broken = seen.find((download) => download.retries === 1);
+  expect(broken?.lastRetry).toEqual({ code: "download.connection_interrupted", data: {} });
+  // The speed is measured over the last seconds, so it exists once the download has gone on for one.
+  const last = seen.at(-1);
+  expect(last).toMatchObject({ received: zipBytes.length, total: zipBytes.length, retries: 1 });
+  expect(last?.speed).toBeGreaterThan(0);
+  // Once the photos are on their way to the engine, the download is no longer shown.
+  expect((await getJson<RunView>(`/api/runs/${run.id}`)).download).toBeNull();
 });
 
 // Criterion: init, upload per image, commit.

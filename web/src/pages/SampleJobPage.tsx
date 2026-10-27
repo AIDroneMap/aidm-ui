@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiFailure, asApiFailure } from "../api.ts";
+import { DownloadBlock, interruptionText } from "../components/DownloadBlock.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { formatCount, formatMemory } from "../engines.ts";
 import { formatBytes, formatDuration } from "../format.ts";
@@ -214,16 +215,14 @@ export function RunProgress({
       {run.restarted && <p className="warning">{t("run.restarted")}</p>}
 
       {run.step === "download" && run.download && (
-        <div className="field">
-          <label htmlFor="run-download">
-            {t("run.download", { received: formatBytes(run.download.received), total: formatBytes(run.download.total) })}
-          </label>
-          <progress
-            id="run-download"
-            max={run.download.total > 0 ? run.download.total : undefined}
-            value={run.download.total > 0 ? run.download.received : undefined}
-          />
-        </div>
+        <DownloadBlock
+          title={t("run.download")}
+          received={run.download.received}
+          size={run.download.total > 0 ? run.download.total : null}
+          speed={run.download.speed}
+          interruption={interruptionText(run.download.retries, run.download.lastRetry)}
+          progressId="run-download"
+        />
       )}
       {run.step === "upload" && run.upload && (
         <div className="field">

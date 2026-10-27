@@ -172,7 +172,7 @@
   "run.state.cancelled": "Cancelled",
   "run.state.engine_unreachable": "The engine is not answering",
   "run.state.unknown": "The engine reported a status AIDM UI does not know",
-  "run.download": "Downloading the photos: {received} of {total}",
+  "run.download": "Downloading the sample photos",
   "run.upload": "Sending images: {done} of {total}",
   "run.processing": "Processing: {percent}%",
   "run.log_title": "Log",

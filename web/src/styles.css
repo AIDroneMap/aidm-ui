@@ -190,6 +190,10 @@ button.secondary[aria-disabled="true"] {
   margin: 0;
 }
 
+.download-block {
+  margin: 0.5rem 0;
+}
+
 .hint {
   margin: 0;
   color: #444746;
