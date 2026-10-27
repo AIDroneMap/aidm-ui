@@ -108,6 +108,18 @@ export function localEngineRoutes(ctx: RouteContext): RouteTable {
       },
     },
 
+    "/api/local-engine/network/move": {
+      // Restarts Apple's tool and every container on it, so the page asks first and the body says it did.
+      POST: async (req) => {
+        const parsed = await readJson(req);
+        if (!parsed.ok) return parsed.response;
+        if ((parsed.body as { confirm?: unknown }).confirm !== true) return errorResponse(400, "api.invalid_body");
+        const moved = await localEngine.moveNetwork();
+        if (!moved.ok) return errorResponse(moved.status, moved.error.code, moved.error.data);
+        return Response.json(localEngine.view());
+      },
+    },
+
     "/api/local-engine/start": {
       // Also the way back from every failure while the switch is on, and it ends a restart that is waiting.
       POST: async () => {

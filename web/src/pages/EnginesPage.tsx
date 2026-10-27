@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
+import { ConnectionHelp } from "../components/ConnectionHelp.tsx";
 import { EngineLog } from "../components/EngineLog.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { LocalAdvanced } from "../components/LocalAdvanced.tsx";
@@ -109,6 +110,8 @@ export interface EngineListProps {
   log?: { open: boolean; lines: string[]; onToggle: () => void };
   /** The switch of the local engine, when the page has it. */
   localSwitch?: ReactNode;
+  /** Why the local engine runs and cannot be reached, when the checks on a Mac found it. */
+  localConnection?: ReactNode;
   /** How the local engine is installed, when the page has it. */
   localKind?: "container" | "native" | null;
 }
@@ -127,9 +130,7 @@ export function EngineList(props: EngineListProps) {
       {props.engines.map((engine) => (
         <li key={engine.id} className="engine">
           <h2>{displayName(engine)}</h2>
-          <p>
-            <code>{engine.address}</code>
-          </p>
+          <p>{engine.kind === "local" && engine.address.startsWith("unix:") ? t("engines.address_socket") : <code>{engine.address}</code>}</p>
           <p>
             <span className="state">
               {t(engine.enabled || engine.kind === "local" ? "engines.state" : "engines.state_last_known", {
@@ -146,6 +147,7 @@ export function EngineList(props: EngineListProps) {
             <>
               {/* The local engine is turned on and off by its own switch, not by enabling it like a remote one. */}
               {props.localSwitch}
+              {props.localConnection}
               <div className="actions">
                 {props.log && (
                   <button type="button" className="secondary" aria-controls={LOG_ID} onClick={props.log.onToggle}>
@@ -493,6 +495,9 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
             local.view?.installed ? (
               <LocalSwitch view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} />
             ) : undefined
+          }
+          localConnection={
+            local.view ? <ConnectionHelp view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} /> : undefined
           }
         />
       )}

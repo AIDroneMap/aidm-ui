@@ -334,6 +334,7 @@ test("before any click the view already holds the plan of what the Mac lacks, an
   expect((await localView(missing.h)).plan).toEqual([
     { id: "installer", size: pin.size },
     { id: "approve", size: null },
+    { id: "network", size: null },
     { id: "service", size: null },
     { id: "kernel", size: kernelBytes.length },
     { id: "init", size: initSize },
@@ -368,6 +369,7 @@ test("the step list is complete, with the sizes of the downloads, before the fir
   expect(accepted.install?.steps).toEqual([
     { id: "installer", size: pin.size },
     { id: "approve", size: null },
+    { id: "network", size: null },
     { id: "service", size: null },
     { id: "kernel", size: kernelBytes.length },
     { id: "init", size: initSize },
@@ -378,8 +380,9 @@ test("the step list is complete, with the sizes of the downloads, before the fir
 
   await eventually(async () => (await localView(h)).state === "ready");
   const installViews = views.filter((view) => view.install !== null).map((view) => view.install);
-  for (const install of installViews) expect(ids(install?.steps ?? [])).toEqual(["installer", "approve", "service", "kernel", "init", "engine"]);
-  // The steps came in order, and the engine's download came last.
+  for (const install of installViews) expect(ids(install?.steps ?? [])).toEqual(["installer", "approve", "network", "service", "kernel", "init", "engine"]);
+  // The steps came in order, and the engine's download came last. The Local Network permission is the operator's
+  // answer when the engine first starts, so the install never stands on that step.
   const seen = installViews.map((install) => install?.step).filter((step, index, all) => step !== all[index - 1]);
   expect(seen).toEqual(["installer", "approve", "service", "kernel", "init", "engine"]);
   const firstEngine = installViews.findIndex((install) => install?.step === "engine");

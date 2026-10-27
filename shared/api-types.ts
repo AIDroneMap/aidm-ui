@@ -319,7 +319,7 @@ export type RuntimeId = (typeof RUNTIME_IDS)[number];
 // The local engine (ticket #9).
 
 /** The steps of an install. Only a Mac without Apple's container tool has more than "engine". */
-export const INSTALL_STEPS = ["installer", "approve", "service", "kernel", "init", "engine"] as const;
+export const INSTALL_STEPS = ["installer", "approve", "network", "service", "kernel", "init", "engine"] as const;
 export type InstallStepId = (typeof INSTALL_STEPS)[number];
 
 export interface InstallStepView {
@@ -410,6 +410,22 @@ export interface LocalEngineView {
    */
   restarts: { attempts: number; max: number; nextAt: string | null } | null;
   update: LocalEngineUpdateView;
+  /**
+   * How aidm-ui reaches the engine on Apple's tool, and what stands in the way
+   * when it runs and does not answer (ADR 0006). Null for any other runtime.
+   */
+  connection: LocalConnectionView | null;
+}
+
+export interface LocalConnectionView {
+  /** "socket": through a Unix socket, with no network. "port": through a port the tool publishes on 127.0.0.1. */
+  via: "socket" | "port";
+  /** Why the engine runs and does not answer from this Mac: mac.vpn_route, mac.local_network_denied or mac.engine_unreachable. */
+  problem: ApiError | null;
+  /** Another interface of this Mac uses the addresses of the tool's network: mac.subnet_conflict. */
+  conflict: ApiError | null;
+  /** Moving the tool's network to other addresses can help (POST /api/local-engine/network/move). */
+  canMove: boolean;
 }
 
 /** Updates, rollback and the one previous version (ticket #14). */

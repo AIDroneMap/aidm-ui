@@ -154,7 +154,7 @@ for (const id of ["podman", "docker"]) {
     }, SLOW);
 
     test("a second container under the same name is refused", async () => {
-      const again = await runtime.start({ ...spec, publish: { ...spec.publish, hostPort: await freePort() } });
+      const again = await runtime.start({ ...spec, publish: { hostAddress: "127.0.0.1", containerPort: 3000, hostPort: await freePort() } });
       expect(again).toEqual({ ok: false, error: { code: "runtime.name_in_use", data: { name } } });
     }, SLOW);
 

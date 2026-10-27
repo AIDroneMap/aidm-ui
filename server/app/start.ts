@@ -23,6 +23,7 @@ import { freeBytes } from "../machine/disk.ts";
 import { systemRunner } from "../process/command-runner.ts";
 import { recordingRunner } from "../process/recording-runner.ts";
 import { MacSetup } from "../runtimes/apple-container-installer.ts";
+import { AppleNetwork } from "../runtimes/apple-network.ts";
 import { RuntimeSetup, pkexecRunner } from "../runtimes/podman-setup.ts";
 import { allRuntimes, containerRuntime } from "../runtimes/registry.ts";
 import { runSetupFromCommandLine, SETUP_EXIT, systemFiles } from "../runtimes/setup-command.ts";
@@ -156,6 +157,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const machine = systemMachine(dataFolder, runner);
     const machineChecks = new MachineChecks({ machine, settings, now: Date.now });
     const onMac = process.platform === "darwin";
+    // The checks of an engine that runs and does not answer, and the subnet of the tool's network (ADR 0006).
+    const appleNetwork = onMac ? new AppleNetwork({ runner, log }) : undefined;
     const localEngine = new LocalEngineManager({
       settings,
       engineStore,
@@ -174,7 +177,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       dataFolder,
       freeBytes,
       log: log,
-      macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: log }) : undefined,
+      macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: log, network: appleNetwork }) : undefined,
+      appleNetwork,
       localEngineOffer: async () => (await machineChecks.read()).localEngine,
       nativeRunner: runner,
     });

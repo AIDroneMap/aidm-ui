@@ -23,11 +23,13 @@ import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
 import { speedMeter } from "../downloads/speed.ts";
 import { StepLog } from "./step-log.ts";
-import { ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
+import { MacConnection } from "./mac-connection.ts";
+import { connectionFor, ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
 import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
 import type { MacNeed, MacSetup, MacState } from "../runtimes/apple-container-installer.ts";
+import type { AppleNetwork } from "../runtimes/apple-network.ts";
 import type { RunStore } from "../runs/run-store.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
@@ -192,6 +194,8 @@ export interface LocalEngineDeps {
   log: (line: string) => void;
   /** On a Mac: puts Apple's container tool there first when it is missing or was never started. */
   macSetup?: MacSetup;
+  /** On a Mac: the checks of an engine that runs and does not answer, and the tool's subnet (ADR 0006). */
+  appleNetwork?: Pick<AppleNetwork, "diagnose" | "conflicts" | "move">;
   /**
    * What the machine check says about the local engine. On a Mac the install
    * refuses with its reason (an Intel Mac, macOS 15), so the route and the
@@ -255,6 +259,7 @@ export class LocalEngineManager {
   private readonly unsubscribeMonitor: () => void;
   private readonly abort = new AbortController();
   private readonly runner: CommandRunner;
+  private readonly macConnection: MacConnection | null;
 
   private detections: RuntimeDetection[] = [];
   private detectedAt = 0;
@@ -316,6 +321,20 @@ export class LocalEngineManager {
     this.store = deps.engineStore;
     this.monitor = deps.monitor;
     this.engineLog = new EngineLog({ dataFolder: deps.dataFolder, token: () => this.token, log: deps.log, ...deps.logOptions });
+    this.macConnection =
+      deps.appleNetwork === undefined
+        ? null
+        : new MacConnection({
+            network: deps.appleNetwork,
+            running: async () => {
+              const installed = this.settings.get("local.package");
+              const pkg = installed === null ? null : this.packageFor(installed);
+              const status = await pkg?.status();
+              return status?.ok === true && status.value.state === "running";
+            },
+            onChange: () => this.publish(),
+            log: deps.log,
+          });
     this.unsubscribeMonitor = this.monitor.subscribe((views) => {
       this.publish();
       this.watch(views);
@@ -398,6 +417,7 @@ export class LocalEngineManager {
         applied: this.settings.get("local.applied"),
       },
       runtime: { chosen, available: available.map((candidate) => candidate.id), preferred },
+      connection: this.connectionView(),
       warnings,
       forceCpu: this.settings.get("local.forceCpu"),
       problem,
@@ -647,7 +667,8 @@ export class LocalEngineManager {
               })
             : null;
       }
-      const steps: InstallStepView[] = [...(mac?.setup.steps(mac.need) ?? []), { id: "engine", size: variant.size }];
+      const localNetwork = variant.kind === "container" && connectionFor("apple-container", variant, this.deps.dataFolder).via === "port";
+      const steps: InstallStepView[] = [...(mac?.setup.steps(mac.need, { localNetwork }) ?? []), { id: "engine", size: variant.size }];
       // Refused here, before anything is downloaded, so the operator hears it in the answer to the click.
       // On a Mac the installer and the kernel come on top of the engine, in the data folder.
       const before = steps.filter((step) => step.id !== "engine").reduce((sum, step) => sum + (step.size ?? 0), 0);
@@ -1135,6 +1156,7 @@ export class LocalEngineManager {
         if (answer.ok || answer.failure.kind !== "engine_error") {
           this.token = engine.token;
           this.engineLog.follow(pkg, { fresh: false });
+          if (this.isPortOnApple()) void this.macConnection?.checkSubnet();
           return;
         }
         this.deps.log("The running engine refused the stored token, so it is started again.");
@@ -1157,6 +1179,7 @@ export class LocalEngineManager {
   async close(): Promise<void> {
     this.closed = true;
     this.abort.abort();
+    this.macConnection?.close();
     this.unsubscribeMonitor();
     this.unsubscribeManifests();
     clearTimeout(this.runRecheck);
@@ -1402,7 +1425,10 @@ export class LocalEngineManager {
     this.plan =
       mac === null || variant === null || variant.kind !== "container"
         ? null
-        : [...mac.setup.steps(mac.need), { id: "engine", size: variant.size }];
+        : [
+            ...mac.setup.steps(mac.need, { localNetwork: connectionFor("apple-container", variant, this.deps.dataFolder).via === "port" }),
+            { id: "engine", size: variant.size },
+          ];
   }
 
   /**
@@ -1542,6 +1568,7 @@ export class LocalEngineManager {
       return this.failStart(engine.id, { code: "server.internal_error", data: {} });
     }
     this.engineLog.follow(pkg, { fresh: true });
+    if (this.isPortOnApple()) void this.macConnection?.checkSubnet();
     if (this.progress !== null) this.progress = { ...this.progress, phase: "done" };
     this.publish();
     await this.monitor.pollNow(engine.id);
@@ -1602,6 +1629,10 @@ export class LocalEngineManager {
       const engine = this.store.local();
       const state = views.find((candidate) => candidate.id === engine?.id)?.state;
       if (engine === null || state === undefined) return;
+      if (this.macConnection !== null) {
+        if (state === "unreachable" && this.isPortOnApple()) this.macConnection.notAnswering();
+        else this.macConnection.settled(state === "ready" || state === "busy");
+      }
       const restart = this.restart;
       const now = this.now();
       if (state === "ready" || state === "busy") {
@@ -1736,6 +1767,48 @@ export class LocalEngineManager {
       if (!removed.ok) this.deps.log(`The engine container could not be removed (${removed.error.code}).`);
     } catch (error) {
       this.deps.log(`Clearing away the engine container failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** How the installed engine is reached, on Apple's tool; null for any other runtime and for a native package. */
+  private appleConnection(): "socket" | "port" | null {
+    const installed = this.settings.get("local.package");
+    if (installed === null || isNativePackage(installed) || installed.runtime !== "apple-container") return null;
+    return connectionFor("apple-container", installed.container, this.deps.dataFolder).via;
+  }
+
+  /** The engine runs on Apple's tool behind a published port, where the Mac's network can stand in the way (ADR 0006). */
+  private isPortOnApple(): boolean {
+    return this.appleConnection() === "port";
+  }
+
+  private connectionView(): LocalEngineView["connection"] {
+    const via = this.appleConnection();
+    if (via === null) return null;
+    // Through the socket the Mac's network is not in the way, so nothing about it is shown.
+    const found = via === "port" && this.macConnection !== null ? this.macConnection.view() : { problem: null, conflict: null };
+    return { via, ...found, canMove: found.problem?.code === "mac.vpn_route" || found.conflict !== null };
+  }
+
+  /**
+   * Moves the network of Apple's tool to another subnet, on the operator's
+   * word: the tool's service stops with every container on it and starts
+   * again, and then the engine starts again.
+   */
+  async moveNetwork(): Promise<{ ok: true } | { ok: false; status: number; error: ApiError }> {
+    if (this.macConnection === null || !this.isPortOnApple()) return { ok: false, status: 409, error: { code: "mac.network_not_movable", data: {} } };
+    if (this.busy || this.installing) return { ok: false, status: 409, error: { code: "local.busy", data: {} } };
+    this.busy = true;
+    try {
+      const moved = await this.macConnection.move();
+      if (!moved.ok) return { ok: false, status: 409, error: moved.error };
+      this.progress = null;
+      const started = await this.startEngine();
+      if (!started.ok) return { ok: false, status: 409, error: started.error };
+      return { ok: true };
+    } finally {
+      this.busy = false;
+      this.publish();
     }
   }
 

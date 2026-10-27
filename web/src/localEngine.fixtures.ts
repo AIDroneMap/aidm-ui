@@ -28,6 +28,7 @@ export const fresh: LocalEngineView = {
   lastTry: null,
   restarts: null,
   update: { available: null, previous: null, blockedBy: null, applying: null },
+  connection: null,
 };
 
 /** Test data: the install of the engine alone, as on Linux. */

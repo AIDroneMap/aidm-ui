@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
 import {
@@ -19,7 +19,8 @@ import { isNativePackage, type InstalledPackage } from "../settings/settings.ts"
 import type { FreeBytes } from "../machine/disk.ts";
 import { IN_IMAGE_CHECK_TIMEOUT_MS, inImageFailed, parseGpuListing } from "../machine/gpu.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
-import type { ContainerRuntime, ContainerSpec, OneOffSpec } from "../runtimes/runtime.ts";
+import type { ContainerRuntime, ContainerSpec, OneOffSpec, RuntimeId } from "../runtimes/runtime.ts";
+import { SOCKET_ADDRESS_PREFIX } from "../task-api/task-client.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
 
 /** The fixed name, so the manager finds the container again after a restart. */
@@ -31,6 +32,32 @@ export const ENGINE_PORT = 3000;
 /** Where the folder with the task API's config file is mounted inside the container. */
 export const ENGINE_CONFIG_FOLDER_IN_CONTAINER = "/etc/aidm-ui";
 export const ENGINE_CONFIG_FILE_NAME = "task-api.json";
+/** Where the task API listens inside the container when it can use a socket (ADR 0006). Every engine image has /run. */
+export const ENGINE_SOCKET_IN_CONTAINER = "/run/task-api.sock";
+/** A Unix socket path on macOS holds 104 bytes with the closing zero (sun_path). */
+export const MAX_SOCKET_PATH_BYTES = 103;
+
+/** The socket on this computer that Apple's tool relays the task API to. */
+export function engineSocketPath(dataFolder: string): string {
+  return join(resolve(dataFolder), "run", "task-api.sock");
+}
+
+/**
+ * How aidm-ui reaches the engine of this package (ADR 0006): through a socket
+ * when Apple's tool runs it, the manifest says its task API can listen on one,
+ * and the path fits; else through the published port. `tooLong` is the
+ * length of a path that did not fit, so the log can say why.
+ */
+export function connectionFor(
+  runtime: RuntimeId,
+  variant: ContainerVariant,
+  dataFolder: string,
+): { via: "socket"; path: string } | { via: "port"; tooLong: number | null } {
+  if (runtime !== "apple-container" || variant.taskApiSocket !== true) return { via: "port", tooLong: null };
+  const path = engineSocketPath(dataFolder);
+  const length = Buffer.byteLength(path);
+  return length > MAX_SOCKET_PATH_BYTES ? { via: "port", tooLong: length } : { via: "socket", path };
+}
 
 /**
  * The folder on this computer that holds the task API's config file. It holds
@@ -215,9 +242,21 @@ export class ContainerPackage implements EnginePackage {
       if (!removed.ok) return removed;
     }
 
+    const connection = connectionFor(runtime.id, this.deps.variant, this.deps.dataFolder);
+    if (connection.via === "port" && connection.tooLong !== null) {
+      this.deps.log?.(
+        `The engine is reached through its port: the socket path in the data folder would be ${connection.tooLong} bytes, and macOS allows ${MAX_SOCKET_PATH_BYTES}.`,
+      );
+    }
     const configFolder = containerConfigFolder(this.deps.dataFolder);
     try {
-      writeEngineConfig(configFolder, options.token);
+      if (connection.via === "socket") {
+        mkdirSync(dirname(connection.path), { recursive: true, mode: 0o700 });
+        // The tool refuses a socket file that is already there. One left by a
+        // container that did not stop cleanly is ours: the leftover is gone.
+        rmSync(connection.path, { force: true });
+      }
+      writeEngineConfig(configFolder, options.token, connection.via === "socket" ? ENGINE_SOCKET_IN_CONTAINER : null);
     } catch {
       return fail("local.engine_config_write_failed", {});
     }
@@ -226,7 +265,8 @@ export class ContainerPackage implements EnginePackage {
       name: CONTAINER_NAME,
       image: this.runAs,
       platform: null,
-      publish: { hostAddress: "127.0.0.1", hostPort: options.hostPort, containerPort: ENGINE_PORT },
+      publish: connection.via === "socket" ? null : { hostAddress: "127.0.0.1", hostPort: options.hostPort, containerPort: ENGINE_PORT },
+      ...(connection.via === "socket" ? { publishSocket: { hostPath: connection.path, containerPath: ENGINE_SOCKET_IN_CONTAINER } } : {}),
       mounts: [
         { hostPath: options.engineDataFolder, containerPath: ENGINE_DATA_PATH, readOnly: false },
         { hostPath: configFolder, containerPath: ENGINE_CONFIG_FOLDER_IN_CONTAINER, readOnly: true },
@@ -240,7 +280,12 @@ export class ContainerPackage implements EnginePackage {
     };
     const started = await runtime.start(spec);
     if (!started.ok) return started;
-    return ok({ address: `http://127.0.0.1:${options.hostPort}` });
+    this.deps.log?.(
+      connection.via === "socket"
+        ? `The engine is reached through the socket ${connection.path}, with no port and no network.`
+        : `The engine is reached through port ${options.hostPort} on 127.0.0.1.`,
+    );
+    return ok({ address: connection.via === "socket" ? `${SOCKET_ADDRESS_PREFIX}${connection.path}` : `http://127.0.0.1:${options.hostPort}` });
   }
 
   stop(): Promise<PackageResult<void>> {
@@ -301,14 +346,15 @@ function sameDisk(a: string, b: string): boolean {
  * and renamed, so the engine never reads half a file. Both the folder and the
  * file are private to this user, because the file holds the token.
  */
-function writeEngineConfig(folder: string, token: string): void {
+function writeEngineConfig(folder: string, token: string, socket: string | null): void {
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   // A folder that already exists keeps its old mode otherwise.
   chmodSync(folder, 0o700);
   const file = join(folder, ENGINE_CONFIG_FILE_NAME);
   const temporary = `${file}.new`;
   rmSync(temporary, { force: true });
-  const config = { token, port: ENGINE_PORT, parallelQueueProcessing: 1 };
+  // The port stays open inside the container even with the socket: the connection checks knock on it from inside.
+  const config = { token, port: ENGINE_PORT, parallelQueueProcessing: 1, ...(socket === null ? {} : { socket }) };
   writeFileSync(temporary, `${JSON.stringify(config)}\n`, { mode: 0o600 });
   renameSync(temporary, file);
 }

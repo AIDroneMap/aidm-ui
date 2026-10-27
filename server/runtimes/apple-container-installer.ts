@@ -9,6 +9,7 @@ import type { FreeBytes } from "../machine/disk.ts";
 import type { CommandRunner } from "../process/command-runner.ts";
 import { APPLE_TOOL, loadIntoAppleTool, parseToolVersion } from "./apple-container.ts";
 import { parseAppleProgress } from "./apple-progress.ts";
+import type { AppleNetwork } from "./apple-network.ts";
 import { excerpt } from "../app/diagnosis-log.ts";
 
 export interface InstallerPin {
@@ -158,6 +159,8 @@ export interface MacSetupDeps {
   now?: () => number;
   pollMs?: number;
   waitMs?: number;
+  /** Picks the subnet of the tool's network before the first start of a tool aidm-ui installed (ADR 0006). */
+  network?: Pick<AppleNetwork, "prepareFirstStart">;
   log: (line: string) => void;
 }
 
@@ -213,10 +216,16 @@ export class MacSetup {
     return need.tool || need.service || need.kernel || need.init !== null ? need : null;
   }
 
-  /** The steps `run` will take, with what each downloads, before any of them starts. */
-  steps(need: MacNeed): InstallStepView[] {
+  /**
+   * The steps `run` will take, with what each downloads, before any of them
+   * starts. `localNetwork`: the engine will be reached through a published
+   * port, so macOS asks for the Local Network permission when it first
+   * starts. The step is the operator's to answer, and `run` never waits on it.
+   */
+  steps(need: MacNeed, options: { localNetwork: boolean } = { localNetwork: true }): InstallStepView[] {
     const steps: InstallStepView[] = [];
     if (need.tool) steps.push({ id: "installer", size: this.installer.size }, { id: "approve", size: null });
+    if (need.tool && options.localNetwork) steps.push({ id: "network", size: null });
     if (need.service || need.tool) steps.push({ id: "service", size: null });
     // Another release of the tool downloads a kernel of its own, whose size is not pinned.
     if (need.kernel) steps.push({ id: "kernel", size: need.pinned ? this.kernel.size : null });
@@ -344,6 +353,8 @@ export class MacSetup {
     const argv = [APPLE_TOOL, "system", "start", ownKernel ? "--enable-kernel-install" : "--disable-kernel-install"];
     const step: InstallStepId = ownKernel ? "kernel" : "service";
     run.onStep(step);
+    // The tool reads its subnet at this start, and a fresh tool has never had one.
+    if (need.tool) await this.deps.network?.prepareFirstStart();
     const result = await this.deps.runner.stream(argv, {
       signal: run.signal,
       onLine: (line) => {

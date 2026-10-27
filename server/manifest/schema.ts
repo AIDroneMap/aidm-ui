@@ -12,6 +12,12 @@ export type ManifestVariant =
       /** Bytes to download. */
       size: number;
       gpu: boolean;
+      /**
+       * The task API in the image can listen on a Unix socket named in its
+       * config file (AIDroneMap/aidm-api#34). On a Mac aidm-ui then reaches it
+       * through the socket and publishes no port (ADR 0006). Absent: false.
+       */
+      taskApiSocket?: boolean;
     }
   | {
       kind: "native";
@@ -102,7 +108,8 @@ function parseVariant(value: unknown, id: VariantId): ManifestVariant {
     if (!IMAGE.test(image)) throw new Malformed(at("image"));
     const digest = asString(entry.digest, at("digest"));
     if (!DIGEST.test(digest)) throw new Malformed(at("digest"));
-    return { kind: "container", image, digest, size, gpu };
+    if (entry.taskApiSocket === undefined) return { kind: "container", image, digest, size, gpu };
+    return { kind: "container", image, digest, size, gpu, taskApiSocket: asBoolean(entry.taskApiSocket, at("taskApiSocket")) };
   }
   if (entry.kind === "native") {
     const url = asString(entry.url, at("url"));

@@ -247,10 +247,13 @@ test("a Mac without the tool needs the installer, the approval, the service, the
   expect(service.steps(need as MacNeed)).toEqual([
     { id: "installer", size: 155965213 },
     { id: "approve", size: null },
+    { id: "network", size: null },
     { id: "service", size: null },
     { id: "kernel", size: 696573576 },
     { id: "init", size: 69425005 },
   ]);
+  // An engine reached through a socket needs no Local Network permission, so that step goes.
+  expect(service.steps(need as MacNeed, { localNetwork: false }).map((step) => step.id)).toEqual(["installer", "approve", "service", "kernel", "init"]);
   // The startup files can only be asked for while the service runs, so nothing was asked.
   expect(runner.calls).toEqual([]);
 });

@@ -150,7 +150,7 @@ export function LocalInstallStatus({ view, withSteps = true }: { view: LocalEngi
         ) : status.kind === "removing_gpu_package" ? (
           <p>{t("local.install.removing_gpu_package", { size: formatBytes(status.size) })}</p>
         ) : status.kind === "starting" ? (
-          <p>{t("local.install.starting")}</p>
+          <p>{t(view.install?.steps.some((step) => step.id === "network") ? "local.install.starting_network" : "local.install.starting")}</p>
         ) : status.kind === "ready" ? (
           <p>{t("local.install.ready")}</p>
         ) : status.kind === "failed" ? (

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { LocalEngineView } from "../../shared/api-types.ts";
+import type { InstallStepView, LocalEngineView } from "../../shared/api-types.ts";
 import { caps, engineInstall, fresh, macInstall, macPlan } from "./localEngine.fixtures.ts";
 import {
   appendLogLines,
@@ -205,6 +205,17 @@ test("the steps come from the plan before the click and from the install after i
   expect(at("approve", "failed")).toEqual(["done", "failed", "pending", "pending", "pending", "pending"]);
   expect(at("engine", "pulling")).toEqual(["done", "done", "done", "done", "done", "current"]);
   expect(at("engine", "done")).toEqual(["done", "done", "done", "done", "done", "done"]);
+});
+
+test("the Local Network permission is current while the engine first starts, since macOS asks then, whatever its place", () => {
+  const plan: InstallStepView[] = [...macPlan.slice(0, 2), { id: "network", size: null }, ...macPlan.slice(2)];
+  const network = (install: LocalEngineView["install"]) =>
+    installSteps({ ...fresh, plan, install: install === null ? null : { ...install, steps: plan } }).find((step) => step.id === "network")?.state;
+  expect(network(null)).toBe("pending");
+  expect(network(macInstall("kernel"))).toBe("pending");
+  expect(network(macInstall("engine", { phase: "pulling" }))).toBe("pending");
+  expect(network(macInstall("engine", { phase: "starting" }))).toBe("current");
+  expect(network(macInstall("engine", { phase: "done" }))).toBe("done");
 });
 
 const applying = engineInstall({ phase: "starting", size: 1 });

@@ -1,9 +1,20 @@
 import type { EngineInfoView } from "../../shared/api-types.ts";
 import { isReadableVersion } from "../engines/versions.ts";
 
+/**
+ * The address of an engine reached through a Unix socket instead of a port:
+ * "unix:" and the socket's full path. Only the local engine has one (ADR 0006).
+ */
+export const SOCKET_ADDRESS_PREFIX = "unix:";
+
+/** The socket's path, or null for an address with a host and a port. */
+export function socketOf(address: string): string | null {
+  return address.startsWith(SOCKET_ADDRESS_PREFIX) ? address.slice(SOCKET_ADDRESS_PREFIX.length) : null;
+}
+
 /** Where an engine is and the token it wants. The token never leaves the server. */
 export interface EngineEndpoint {
-  /** For example "http://192.168.1.5:3000", no trailing slash. */
+  /** For example "http://192.168.1.5:3000", no trailing slash, or "unix:/path/to/task-api.sock". */
   address: string;
   token: string;
 }
@@ -195,7 +206,7 @@ export class TaskClient {
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_HEADER_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await this.fetchFn(this.urlFor(`/task/${encodeURIComponent(uuid)}/download/all.zip`), {
+      response = await this.send(`/task/${encodeURIComponent(uuid)}/download/all.zip`, {}, {
         method: "GET",
         redirect: "manual",
         signal: controller.signal,
@@ -239,11 +250,19 @@ export class TaskClient {
     return this.badResponse(`${this.endpoint.address}${path}`, "The answer does not say success.");
   }
 
+  /** One HTTP request, over the engine's socket when it has one: Bun's fetch takes the socket's path as `unix`. */
+  private send(path: string, query: Record<string, string>, init: RequestInit): Promise<Response> {
+    const socket = socketOf(this.endpoint.address);
+    return this.fetchFn(this.urlFor(path, query), socket === null ? init : { ...init, unix: socket });
+  }
+
   private urlFor(path: string, query: Record<string, string> = {}): string {
     const extra = Object.entries(query)
       .map(([key, value]) => `&${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
       .join("");
-    return `${this.endpoint.address}${path}?token=${encodeURIComponent(this.endpoint.token)}${extra}`;
+    // Over a socket the host name is only the request's Host header.
+    const base = socketOf(this.endpoint.address) === null ? this.endpoint.address : "http://localhost";
+    return `${base}${path}?token=${encodeURIComponent(this.endpoint.token)}${extra}`;
   }
 
   /** A GET of one path. The path must not contain a query. */
@@ -271,7 +290,7 @@ export class TaskClient {
     let response: Response;
     let text: string;
     try {
-      response = await this.fetchFn(this.urlFor(path, options.query), {
+      response = await this.send(path, options.query ?? {}, {
         method,
         body: options.body,
         // A redirect would carry the token to wherever it points.

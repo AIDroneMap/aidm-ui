@@ -137,7 +137,7 @@ export function cliRuntime(
       // A name that is in use belongs to someone else's container: leave it.
       if (PORT_IN_USE.test(text)) {
         await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
-        return fail("runtime.port_in_use", { port: spec.publish.hostPort });
+        return fail("runtime.port_in_use", { port: spec.publish?.hostPort ?? null });
       }
       if (NAME_IN_USE.test(text)) return fail("runtime.name_in_use", { name: spec.name });
       await run([binary, "rm", "-f", spec.name], REMOVE_TIMEOUT_MS);
@@ -239,7 +239,8 @@ export function sharedRunArgs(
   spec: ContainerSpec,
   options: { selinuxLabel: boolean; memoryCap: boolean; cpuCap: boolean; gpuFlags: readonly string[] },
 ): string[] {
-  const { hostAddress, hostPort, containerPort } = spec.publish;
+  // Docker and Podman always publish the port: only Apple's tool relays a socket (ADR 0006).
+  const publish = spec.publish === null ? [] : ["-p", `${spec.publish.hostAddress}:${spec.publish.hostPort}:${spec.publish.containerPort}`];
   return [
     binary,
     "run",
@@ -248,8 +249,7 @@ export function sharedRunArgs(
     "--pull=never",
     "--name",
     spec.name,
-    "-p",
-    `${hostAddress}:${hostPort}:${containerPort}`,
+    ...publish,
     ...spec.mounts.flatMap((mount) => {
       const mountOptions = [...(mount.readOnly ? ["ro"] : []), ...(options.selinuxLabel ? ["Z"] : [])];
       const suffix = mountOptions.length === 0 ? "" : `:${mountOptions.join(",")}`;

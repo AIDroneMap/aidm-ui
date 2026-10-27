@@ -38,7 +38,14 @@ export interface ContainerSpec {
   image: string;
   /** e.g. "linux/arm64"; null lets the runtime pick. Apple's tool takes the platform at the pull and has no platform flag for run. */
   platform: string | null;
-  publish: { hostAddress: "127.0.0.1"; hostPort: number; containerPort: number };
+  /** The task API's port on the loopback interface. Null for an engine reached through `publishSocket` alone. */
+  publish: { hostAddress: "127.0.0.1"; hostPort: number; containerPort: number } | null;
+  /**
+   * A Unix socket inside the container relayed to one on this computer
+   * (Apple's tool: `--publish-socket host:container`, ADR 0006). The program
+   * inside listens on `containerPath`; the tool makes `hostPath` at each start.
+   */
+  publishSocket?: { hostPath: string; containerPath: string };
   /**
    * Folders shared with the container. A read-only mount cannot be changed from
    * inside, which protects a folder that holds a secret or a setting.
