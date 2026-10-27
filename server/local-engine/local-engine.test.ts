@@ -3,12 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { EngineView, LocalEngineView, RunView, SampleView } from "../../shared/api-types.ts";
+import type { EngineView, InstallProgressView, LocalEngineView, RunView, SampleView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { linuxInputs, podmanRules, recordedMachine } from "../../test-support/recorded-machine.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
-import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
+import { imageFolder } from "../images/image-download.ts";
+import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR, SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, freePort, openHarness, type Harness } from "../testing/harness.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
@@ -17,6 +18,10 @@ import { CONTAINER_NAME, containerConfigFolder, ENGINE_CONFIG_FILE_NAME } from "
 const GiB = 1024 ** 3;
 const DIGEST_2_5_0 = "sha256:a58c2a633f0f7c1df2a1a441321b1404bad98ece8896ef01ca9b18dfeb2e035e";
 const IMAGE_2_5_0 = `ghcr.io/aidronemap/aidm-api@${DIGEST_2_5_0}`;
+const PINNED_2_5_0 = { repository: "ghcr.io/aidronemap/aidm-api", digest: DIGEST_2_5_0 };
+const SIZE_2_5_0 = 682_533_845;
+/** The bytes a download of the fake image source reports. */
+const FAKE_DOWNLOAD_SIZE = 3 * 1024 * 1024;
 /** 32 GiB less 20 percent, the way the default is made. */
 const DEFAULT_MEMORY = Math.floor(32 * GiB - 0.2 * 32 * GiB);
 
@@ -114,9 +119,16 @@ function listen(h: Harness, path: string) {
 
 const asView = (data: unknown) => data as LocalEngineView;
 
-// Criterion: with the fake runtime, the install pulls 2.5.0, shows progress with a total, starts the engine, and the engines list shows it ready on the loopback.
+/** The room an install needs on one disk when none of the download is there yet and the fake runtime's load makes one copy. */
+function neededFor(size: number, bytesAlreadyOnDisk = 0, loadCopies = 1): number {
+  const forDownload = size - bytesAlreadyOnDisk + DOWNLOAD_FREE_DISK_MARGIN * size;
+  const forRuntime = Math.ceil((loadCopies + IMAGE_UNPACKED_FACTOR) * size + DOWNLOAD_FREE_DISK_MARGIN * size);
+  return Math.ceil(forDownload + forRuntime);
+}
 
-test("the install pulls the built-in 2.5.0 package, shows progress with a total, and the engine is ready on the loopback", async () => {
+// Criterion: with the fake runtime, the install downloads and loads 2.5.0, shows progress with a total, starts the engine, and the engines list shows it ready on the loopback.
+
+test("the install downloads and loads the built-in 2.5.0 package, shows progress with a total, and the engine is ready on the loopback", async () => {
   const h = start();
   expect((await localView(h)).state).toBe("not_installed");
   const stream = listen(h, "/api/local-engine/events");
@@ -126,13 +138,14 @@ test("the install pulls the built-in 2.5.0 package, shows progress with a total,
   expect(response.status).toBe(202);
   const accepted = (await response.json()) as LocalEngineView;
   expect(["installing", "starting", "ready", "busy"]).toContain(accepted.state);
-  expect(accepted.install).toMatchObject({ size: 682_533_845, maxAttempts: 5 });
+  expect(accepted.install).toMatchObject({ size: SIZE_2_5_0, retries: 0 });
 
   await eventually(async () => (await localView(h)).state === "ready");
-  expect(podman(h).pulls).toEqual([IMAGE_2_5_0]);
+  expect(h.images.downloads).toEqual([PINNED_2_5_0]);
+  expect(podman(h).loads).toEqual([IMAGE_2_5_0]);
 
   const views = stream.events.filter((event) => event.event === "local-engine").map((event) => asView(event.data));
-  expect(views.some((view) => view.state === "installing" && view.install?.size === 682_533_845)).toBe(true);
+  expect(views.some((view) => view.state === "installing" && view.install?.size === SIZE_2_5_0)).toBe(true);
   expect(views.some((view) => (view.install?.layersTotal ?? 0) > 0)).toBe(true);
   expect(views.some((view) => view.state === "starting")).toBe(true);
 
@@ -154,54 +167,92 @@ test("the install pulls the built-in 2.5.0 package, shows progress with a total,
   });
 });
 
-// Criterion: too little free disk refuses the pull before it starts.
+// Criterion: too little free disk refuses the download before it starts.
 
-test("with too little free disk the install is refused before any pull, with both sizes", async () => {
+test("with too little free disk the install is refused before any download, with both sizes", async () => {
   const h = start({ freeBytes: () => 700_000_000 });
   const response = await send(h, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
   expect(await errorOf(response)).toEqual({
     code: "install.not_enough_space",
-    data: { needed: Math.ceil(682_533_845 * 1.2), free: 700_000_000 },
+    data: { needed: neededFor(SIZE_2_5_0), free: 700_000_000 },
   });
-  expect(podman(h).pulls).toEqual([]);
+  expect(h.images.downloads).toEqual([]);
+  expect(podman(h).loads).toEqual([]);
   expect(await localView(h)).toMatchObject({ state: "not_installed", install: null, installed: null });
   expect(await engineList(h)).toEqual([]);
 });
 
-// Criterion: an interrupted pull is retried and completes.
+// Criterion: the download shows its progress, and a failed download or load ends the install in failed.
 
-test("an interrupted pull is retried and completes, and the third of five attempts is shown", async () => {
+test("the progress of an install goes from the download to the load to the start, and the bytes grow to the size of the image", async () => {
   const h = start();
-  podman(h).failNextPulls(2);
   const stream = listen(h, "/api/local-engine/events");
   await eventually(async () => stream.events.length > 0);
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "ready");
 
-  expect(podman(h).pulls).toHaveLength(3);
-  const attempts = stream.events.map((event) => asView(event.data).install?.attempt);
-  expect(attempts).toContain(1);
-  expect(attempts).toContain(3);
-  const third = stream.events.map((event) => asView(event.data)).find((view) => view.install?.attempt === 3);
-  expect(third?.install).toMatchObject({ phase: "pulling", maxAttempts: 5, size: 682_533_845 });
+  const installs = stream.events.flatMap((event) => asView(event.data).install ?? []);
+  const phases = installs.map((install) => install.phase);
+  const first = (phase: InstallProgressView["phase"]) => phases.indexOf(phase);
+  expect(first("pulling")).toBeGreaterThanOrEqual(0);
+  expect(first("loading")).toBeGreaterThan(first("pulling"));
+  expect(first("starting")).toBeGreaterThan(first("loading"));
+  expect(phases.lastIndexOf("pulling")).toBeLessThan(first("loading"));
+
+  const received = installs.filter((install) => install.phase === "pulling").map((install) => install.stepReceived ?? 0);
+  expect(received).toEqual([...received].sort((a, b) => a - b));
+  expect(received.at(-1)).toBe(FAKE_DOWNLOAD_SIZE);
+  expect(installs.filter((install) => install.phase === "pulling").some((install) => install.layersTotal === 2)).toBe(true);
+  expect(installs.find((install) => install.phase === "loading")).toMatchObject({ layersTotal: 2, layersDone: 2, speed: null });
 });
 
-test("a pull that fails five times ends in failed with the attempts, and a later install works", async () => {
+test("a download that fails ends in failed with its cause, nothing is installed, and a later install works", async () => {
   const h = start();
-  podman(h).failNextPulls(5);
+  const stalled: ApiError = { code: "download.stalled", data: { seconds: 300 } };
+  h.images.failNext(stalled);
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "failed");
   const failed = await localView(h);
-  expect(failed.problem).toMatchObject({ code: "install.pull_failed", data: { attempts: 5 } });
+  expect(failed.problem).toEqual({ code: "install.pull_failed", data: { cause: stalled } });
   expect(failed.install?.phase).toBe("failed");
   expect(failed.installed).toBeNull();
   expect(await engineList(h)).toEqual([]);
+  expect(podman(h).loads).toEqual([]);
 
   await installAndWaitReady(h);
   const view = await localView(h);
   expect(view.problem).toBeNull();
   expect(view.installed?.packageVersion).toBe("2.5.0");
+  expect(h.images.downloads).toHaveLength(2);
+  expect(podman(h).loads).toEqual([IMAGE_2_5_0]);
+});
+
+test("a load that fails ends in failed and keeps the download, and the next install loads it again and removes it", async () => {
+  const h = start();
+  const folder = imageFolder(h.dataFolder, PINNED_2_5_0);
+  podman(h).failNextLoads(1);
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  await eventually(async () => (await localView(h)).state === "failed");
+  const failed = await localView(h);
+  expect(failed.problem).toMatchObject({ code: "install.load_failed", data: { cause: { code: "runtime.load_failed" } } });
+  expect(failed.installed).toBeNull();
+  expect(await engineList(h)).toEqual([]);
+  expect(existsSync(join(folder, "index.json"))).toBe(true);
+  expect(podman(h).loads).toEqual([IMAGE_2_5_0]);
+
+  await installAndWaitReady(h);
+  expect(podman(h).loads).toEqual([IMAGE_2_5_0, IMAGE_2_5_0]);
+  expect((await localView(h)).problem).toBeNull();
+  expect(existsSync(folder)).toBe(false);
+});
+
+test("the download is removed once the engine started from a fresh install, and the engine runs the image the runtime verified", async () => {
+  const h = start();
+  await installAndWaitReady(h);
+  expect(existsSync(imageFolder(h.dataFolder, PINNED_2_5_0))).toBe(false);
+  expect(podman(h).starts[0]?.spec.image).toBe(IMAGE_2_5_0);
+  expect(podman(h).images.has(IMAGE_2_5_0)).toBe(true);
 });
 
 // Criterion: the start command carries the loopback publish, the config file with the token, the caps, the bind mounts and the fixed name.
@@ -503,8 +554,8 @@ test("Podman is used over Docker when both work, and the operator's choice wins"
   expect(h.settings.get("runtime.preferred")).toBe("docker");
 
   await installAndWaitReady(h);
-  expect(h.runtimes.docker?.pulls).toEqual([IMAGE_2_5_0]);
-  expect(h.runtimes.podman?.pulls).toEqual([]);
+  expect(h.runtimes.docker?.loads).toEqual([IMAGE_2_5_0]);
+  expect(h.runtimes.podman?.loads).toEqual([]);
   expect(h.runtimes.docker?.starts).toHaveLength(1);
   expect((await localView(h)).installed?.runtime).toBe("docker");
 
@@ -537,7 +588,7 @@ test("without a working runtime the install is refused where Podman cannot be se
   const response = await send(h, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
   expect((await errorOf(response)).code).toBe("install.no_runtime");
-  expect(podman(h).pulls).toEqual([]);
+  expect(podman(h).loads).toEqual([]);
 });
 
 test("a computer with no package on offer is refused with the offer's reason", async () => {
@@ -561,7 +612,8 @@ test("an install that is already running is refused", async () => {
   const refused = first.status === 409 ? first : second;
   expect((await errorOf(refused)).code).toBe("install.already_running");
   await h.localEngine.settled();
-  expect(podman(h).pulls).toHaveLength(1);
+  expect(podman(h).loads).toHaveLength(1);
+  expect(h.images.downloads).toHaveLength(1);
 });
 
 // The token.
@@ -611,7 +663,7 @@ test("an install over an installed engine is refused, and the engine, its token 
   expect(response.status).toBe(409);
   expect(await errorOf(response)).toEqual({ code: "install.already_installed", data: {} });
 
-  expect(podman(h).pulls).toHaveLength(1);
+  expect(podman(h).loads).toHaveLength(1);
   expect(podman(h).starts).toHaveLength(1);
   expect(podman(h).removals).toEqual([]);
   expect(tokenOf(h)).toBe(token);
@@ -703,8 +755,8 @@ test("closing the manager leaves the container running", async () => {
 
 // The disk check looks at where the runtime keeps its images.
 
-test("the free space is asked for where the runtime keeps its images, and for the data folder when it does not say", async () => {
-  const stored = ["/var/lib/containers/storage", null] as const;
+test("the free space is asked for the data folder when the runtime keeps its images on the same disk, or does not say where", async () => {
+  const stored = [os.tmpdir(), null] as const;
   for (const storagePath of stored) {
     const asked: string[] = [];
     const h = start({
@@ -715,20 +767,22 @@ test("the free space is asked for where the runtime keeps its images, and for th
       },
     });
     await installAndWaitReady(h);
-    // The preflight in the install route and the one right before the pull.
-    expect(asked).toEqual(Array(2).fill(storagePath ?? h.dataFolder));
+    // The preflight in the install route and the one right before the download.
+    expect(asked).toEqual(Array(2).fill(h.dataFolder));
   }
 });
 
-test("too little room where the runtime keeps its images refuses the install, whatever the data folder has", async () => {
-  const h = start({
-    runtimes: { podman: new FakeRuntime({ detection: { storagePath: "/var/lib/containers/storage" } }) },
-    freeBytes: (path) => (path === "/var/lib/containers/storage" ? 700_000_000 : 1024 * GiB),
-  });
+test("on one disk the room for the download alone is not enough: the runtime's copies and unpacked layers are counted too", async () => {
+  const forDownloadOnly = Math.ceil((1 + DOWNLOAD_FREE_DISK_MARGIN) * SIZE_2_5_0);
+  const h = start({ freeBytes: () => forDownloadOnly });
   const response = await send(h, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
-  expect((await errorOf(response)).code).toBe("install.not_enough_space");
-  expect(podman(h).pulls).toEqual([]);
+  expect(await errorOf(response)).toEqual({
+    code: "install.not_enough_space",
+    data: { needed: neededFor(SIZE_2_5_0), free: forDownloadOnly },
+  });
+  expect(h.images.downloads).toEqual([]);
+  expect(podman(h).loads).toEqual([]);
 });
 
 // The folder that goes into the mount.

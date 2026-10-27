@@ -1,12 +1,94 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ScriptedRunner, recorded, recordedText, type ScriptedRule } from "../../test-support/scripted-runner.ts";
-import { dockerPullParser, dockerRuntime, runArgv as dockerRunArgv } from "./docker.ts";
-import { podmanPullParser, podmanRuntime, runArgv as podmanRunArgv } from "./podman.ts";
-import type { ContainerRuntime, ContainerSpec, PullProgress, RuntimeDetection } from "./runtime.ts";
+import { localName, type DownloadedImage } from "../images/image-download.ts";
+import { dockerRuntime, runArgv as dockerRunArgv } from "./docker.ts";
+import { podmanRuntime, runArgv as podmanRunArgv } from "./podman.ts";
+import type { ContainerRuntime, ContainerSpec, RuntimeDetection } from "./runtime.ts";
 
 const IMAGE = "docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e";
 const NAME = "aidm-engine";
 const GIB = 1024 ** 3;
+
+const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+const BUSYBOX_MANIFEST = "sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4";
+const BUSYBOX_CONFIG = "sha256:30ecbe1509090b38ef3260f3609d64d8261230464eaa4d235901db496e9647fb";
+const BUSYBOX_LAYER = "sha256:68fe9bff2ad4ad46da3e58db03faa64eb73c0ff16d546b0c42539eaa9854cb7f";
+const BUSYBOX_PINNED = { repository: "ghcr.io/aidm-ui-loadtest/busybox", digest: BUSYBOX_MANIFEST };
+
+/**
+ * The image behind the recordings of load and inspect (busybox 1.37, linux/amd64).
+ * The blobs are not on disk: the tests that use it only read its digests and its
+ * name. The config size is not known from the recordings and no test reads it.
+ */
+const busybox: DownloadedImage = {
+  pinned: BUSYBOX_PINNED,
+  folder: "/home/operator/aidm-ui/downloads/images/busybox",
+  name: localName(BUSYBOX_PINNED),
+  manifest: { digest: BUSYBOX_MANIFEST, size: 610, mediaType: OCI_MANIFEST },
+  config: { digest: BUSYBOX_CONFIG, size: 0 },
+  layers: [{ digest: BUSYBOX_LAYER, size: 2211514 }],
+};
+
+const scratch = mkdtempSync(join(tmpdir(), "aidm-ui-runtimes-test-"));
+afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+const digestOf = (bytes: Uint8Array) => `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+
+/** A small image really on disk, as the downloader leaves it: blobs whose contents hash to their digests, `oci-layout` and `index.json`. */
+function tinyImage(): DownloadedImage {
+  const folder = mkdtempSync(join(scratch, "image-"));
+  mkdirSync(join(folder, "blobs", "sha256"), { recursive: true });
+  const put = (bytes: Uint8Array) => {
+    const digest = digestOf(bytes);
+    writeFileSync(join(folder, "blobs", "sha256", digest.slice(7)), bytes);
+    return { digest, size: bytes.length };
+  };
+  const config = put(new TextEncoder().encode('{"architecture":"amd64","os":"linux"}\n'));
+  // Not a multiple of 512, so the archive has to pad it.
+  const layer = put(new Uint8Array(1000).map((_, index) => index % 251));
+  const manifestBytes = new TextEncoder().encode(
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MANIFEST,
+      config: { mediaType: "application/vnd.oci.image.config.v1+json", ...config },
+      layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar", ...layer }],
+    }),
+  );
+  const manifest = put(manifestBytes);
+  const pinned = { repository: "ghcr.io/aidm-ui-loadtest/tiny", digest: manifest.digest };
+  const name = localName(pinned);
+  writeFileSync(join(folder, "oci-layout"), '{"imageLayoutVersion":"1.0.0"}\n');
+  writeFileSync(
+    join(folder, "index.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      manifests: [{ mediaType: OCI_MANIFEST, ...manifest, annotations: { "io.containerd.image.name": name } }],
+    }),
+  );
+  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer] };
+}
+
+/** The entries of a tar, by the 512-byte headers: name and bytes. */
+function tarEntries(bytes: Uint8Array): Array<{ name: string; body: Uint8Array }> {
+  const entries: Array<{ name: string; body: Uint8Array }> = [];
+  for (let at = 0; at + 512 <= bytes.length; ) {
+    const header = bytes.subarray(at, at + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = new TextDecoder().decode(header.subarray(0, header.indexOf(0)));
+    const size = Number.parseInt(new TextDecoder().decode(header.subarray(124, 135)), 8);
+    at += 512;
+    entries.push({ name, body: bytes.subarray(at, at + size) });
+    at += Math.ceil(size / 512) * 512;
+  }
+  return entries;
+}
+
+/** The blob entries an archive of this image must hold, as tar names. */
+const blobNames = (image: DownloadedImage) =>
+  [image.manifest, image.config, ...image.layers].map((blob) => `blobs/sha256/${blob.digest.slice(7)}`);
 
 function spec(patch: Partial<ContainerSpec> = {}): ContainerSpec {
   return {
@@ -43,8 +125,7 @@ const tools = [
       { argv: ["podman", "version", "--format", "json"], result: recorded("podman", "version") },
       { argv: ["podman", "info", "--format", "json"], result: recorded("podman", "info-rootless") },
     ] as ScriptedRule[],
-    pull: "pull",
-    pullNotFound: "pull-not-found",
+    imageInspect: "image-inspect-loaded",
   },
   {
     id: "docker" as const,
@@ -57,8 +138,7 @@ const tools = [
       { argv: ["docker", "version", "--format", "json"], result: recorded("docker", "version") },
       { argv: ["docker", "info", "--format", "json"], result: recorded("docker", "info") },
     ] as ScriptedRule[],
-    pull: "pull-busybox",
-    pullNotFound: "pull-not-found",
+    imageInspect: "image-inspect-containerd",
   },
 ];
 
@@ -340,58 +420,43 @@ for (const tool of tools) {
       expect(runner.calls).toContainEqual(argv.rm);
     });
 
-    test("a pull passes the image, and the platform when there is one", async () => {
-      const runner = new ScriptedRunner([
-        { argv: [binary, "pull", "--platform", "linux/arm64", IMAGE], result: cases(tool.pull) },
-      ]);
-      expect(await tool.make(runner).pull(IMAGE, { platform: "linux/arm64" })).toEqual({ ok: true, value: undefined });
+    test("a loaded image is verified by asking the tool for the image by its name", async () => {
+      const runner = new ScriptedRunner([{ argv: [binary, "image", "inspect", busybox.name], result: cases(tool.imageInspect) }]);
+      const result = await tool.make(runner).verifyImage(busybox);
+      expect(result.ok).toBe(true);
+      expect(runner.calls).toEqual([[binary, "image", "inspect", busybox.name]]);
     });
 
-    test("a pull gives progress from the plain output", async () => {
-      const runner = new ScriptedRunner([{ argv: [binary, "pull", IMAGE], result: cases(tool.pull) }]);
-      const seen: PullProgress[] = [];
-      const result = await tool.make(runner).pull(IMAGE, { onProgress: (progress) => seen.push(progress) });
-      expect(result).toEqual({ ok: true, value: undefined });
-      expect(seen.length).toBeGreaterThan(0);
-      expect(seen.at(-1)?.phase).toBe("writing");
-    });
-
-    test("a pull keeps only the last 1000 lines of the tool's output to judge a failure by", async () => {
-      const noise = Array.from({ length: 2000 }, (_, index) => `layer ${index}`);
-      const early = new ScriptedRunner([
-        { argv: [binary, "pull", IMAGE], result: { exitCode: 1, stdout: ["manifest unknown", ...noise].join("\n"), stderr: "" } },
-      ]);
-      // The line that says the image is missing came 2000 lines ago and is forgotten.
-      expect(await tool.make(early).pull(IMAGE)).toEqual({
+    test("an image the tool does not hold is runtime.image_not_verified", async () => {
+      const runner = new ScriptedRunner([{ argv: [binary, "image", "inspect", busybox.name], result: cases("image-inspect-missing") }]);
+      expect(await tool.make(runner).verifyImage(busybox)).toEqual({
         ok: false,
-        error: { code: "runtime.pull_failed", data: { exitCode: 1 } },
-      });
-      const late = new ScriptedRunner([
-        { argv: [binary, "pull", IMAGE], result: { exitCode: 1, stdout: [...noise, "manifest unknown"].join("\n"), stderr: "" } },
-      ]);
-      expect(await tool.make(late).pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
-    });
-
-    test("an image the registry does not have gives runtime.image_not_found", async () => {
-      const runner = new ScriptedRunner([{ argv: [binary, "pull", IMAGE], result: cases(tool.pullNotFound) }]);
-      expect(await tool.make(runner).pull(IMAGE)).toEqual({ ok: false, error: { code: "runtime.image_not_found", data: {} } });
-    });
-
-    test("any other failed pull gives runtime.pull_failed with the exit code", async () => {
-      const runner = new ScriptedRunner([
-        { argv: [binary, "pull", IMAGE], result: { exitCode: 1, stdout: "", stderr: "dial tcp: i/o timeout\n" } },
-      ]);
-      expect(await tool.make(runner).pull(IMAGE)).toEqual({
-        ok: false,
-        error: { code: "runtime.pull_failed", data: { exitCode: 1 } },
+        error: { code: "runtime.image_not_verified", data: { name: busybox.name } },
       });
     });
 
-    test("a pull with the tool not installed gives runtime.pull_failed, never a missing image", async () => {
-      const result = await tool.make(new ScriptedRunner([])).pull(IMAGE);
-      expect(result).toEqual({ ok: false, error: { code: "runtime.pull_failed", data: { exitCode: 127 } } });
+    test("an image whose ID and digest are neither digest of the download is runtime.image_not_verified", async () => {
+      // A copy of the recording, edited: some other image under the same name.
+      const [entry] = JSON.parse(recordedText(binary, tool.imageInspect)) as Array<Record<string, unknown>>;
+      const other = { ...entry, Id: `sha256:${"0".repeat(64)}`, Digest: `sha256:${"1".repeat(64)}` };
+      const runner = new ScriptedRunner([
+        { argv: [binary, "image", "inspect", busybox.name], result: { exitCode: 0, stdout: JSON.stringify([other]), stderr: "" } },
+      ]);
+      expect(await tool.make(runner).verifyImage(busybox)).toEqual({
+        ok: false,
+        error: { code: "runtime.image_not_verified", data: { name: busybox.name } },
+      });
     });
 
+    test("a tool that cannot be run cannot verify an image", async () => {
+      const result = await tool.make(new ScriptedRunner([])).verifyImage(busybox);
+      expect(result).toEqual({ ok: false, error: { code: "runtime.image_not_verified", data: { name: busybox.name } } });
+    });
+
+    test("the loaded name is removed with the tool's rmi, and the recording of that is a success", async () => {
+      const runner = new ScriptedRunner([{ argv: [binary, "rmi", busybox.name], result: cases("rmi-loaded") }]);
+      expect(await tool.make(runner).removeImage(busybox.name)).toEqual({ ok: true, value: undefined });
+    });
     test("a running container reports running, with no exit code", async () => {
       const runner = new ScriptedRunner([{ argv: argv.inspect, result: cases("inspect-running") }]);
       expect(await tool.make(runner).status(NAME)).toEqual({
@@ -524,22 +589,134 @@ for (const tool of tools) {
   });
 }
 
-test("Podman's pull progress counts the layers it has started, and says writing at the end", async () => {
-  const runner = new ScriptedRunner([{ argv: ["podman", "pull", IMAGE], result: recorded("podman", "pull-three-layers") }]);
-  const progress: PullProgress[] = [];
-  await podmanRuntime(runner).pull(IMAGE, { onProgress: (step) => progress.push(step) });
-  expect(progress).toEqual([
-    { layersDone: null, layersTotal: 1, phase: "downloading" },
-    { layersDone: null, layersTotal: 2, phase: "downloading" },
-    { layersDone: null, layersTotal: 3, phase: "downloading" },
-    { layersDone: null, layersTotal: 3, phase: "writing" },
-  ]);
+describe("Podman loads a downloaded image", () => {
+  const load = ["podman", "load", "-i", busybox.folder];
+  const tag = ["podman", "tag", BUSYBOX_CONFIG, busybox.name];
+
+  test("it loads the folder in place, then tags the config digest with the name, and is ok", async () => {
+    const runner = new ScriptedRunner([
+      { argv: load, result: recorded("podman", "load-dir") },
+      { argv: tag, result: recorded("podman", "tag") },
+    ]);
+    expect(await podmanRuntime(runner).load(busybox)).toEqual({ ok: true, value: undefined });
+    expect(runner.calls).toEqual([load, tag]);
+    // The folder is read where it is: nothing is sent on the standard input.
+    expect(runner.inputs).toEqual([]);
+  });
+
+  test("a load that fails is runtime.load_failed with the exit code, and nothing is tagged", async () => {
+    const runner = new ScriptedRunner([
+      { argv: load, result: recorded("podman", "load-missing") },
+      { argv: tag, result: recorded("podman", "tag") },
+    ]);
+    expect(await podmanRuntime(runner).load(busybox)).toEqual({
+      ok: false,
+      error: { code: "runtime.load_failed", data: { exitCode: 125 } },
+    });
+    expect(runner.calls).toEqual([load]);
+  });
+
+  // The text is made up for the test: only the exit code of the tag counts.
+  test("a tag that fails is runtime.load_failed too", async () => {
+    const runner = new ScriptedRunner([
+      { argv: load, result: recorded("podman", "load-dir") },
+      { argv: tag, result: { exitCode: 125, stdout: "", stderr: "Error: no such image\n" } },
+    ]);
+    expect(await podmanRuntime(runner).load(busybox)).toEqual({
+      ok: false,
+      error: { code: "runtime.load_failed", data: { exitCode: 125 } },
+    });
+  });
+
+  test("a signal that fired before the load gives download.cancelled and runs nothing", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const runner = new ScriptedRunner([{ argv: load, result: recorded("podman", "load-dir") }]);
+    const result = await podmanRuntime(runner).load(busybox, { signal: controller.signal });
+    expect(result).toEqual({ ok: false, error: { code: "download.cancelled", data: {} } });
+    expect(runner.calls).toEqual([]);
+  });
+
+  test("it counts one copy of the download on the disk while it loads", () => {
+    expect(podmanRuntime(new ScriptedRunner([])).loadCopies).toBe(1);
+  });
+
+  test("the recorded inspect gives the ID of the image with its algorithm, which is the config digest", async () => {
+    const runner = new ScriptedRunner([
+      { argv: ["podman", "image", "inspect", busybox.name], result: recorded("podman", "image-inspect-loaded") },
+    ]);
+    expect(await podmanRuntime(runner).verifyImage(busybox)).toEqual({ ok: true, value: BUSYBOX_CONFIG });
+  });
+
+  test("an image with the manifest digest of the download is verified even when its ID is another", async () => {
+    const [entry] = JSON.parse(recordedText("podman", "image-inspect-loaded")) as Array<Record<string, unknown>>;
+    const other = { ...entry, Id: "2".repeat(64) };
+    const runner = new ScriptedRunner([
+      { argv: ["podman", "image", "inspect", busybox.name], result: { exitCode: 0, stdout: JSON.stringify([other]), stderr: "" } },
+    ]);
+    expect(await podmanRuntime(runner).verifyImage(busybox)).toEqual({ ok: true, value: `sha256:${"2".repeat(64)}` });
+  });
 });
 
-test("Podman's other pull lines say nothing about progress", () => {
-  const parse = podmanPullParser();
-  expect(parse("Trying to pull docker.io/library/busybox@sha256:abc...")).toBeNull();
-  expect(parse("Getting image source signatures")).toBeNull();
+describe("Docker loads a downloaded image", () => {
+  const tiny = tinyImage();
+  const load = ["docker", "load"];
+
+  test("it streams an archive to the standard input of docker load, and is ok for both image stores", async () => {
+    for (const recording of ["load", "load-classic"]) {
+      const runner = new ScriptedRunner([{ argv: load, result: recorded("docker", recording) }]);
+      expect(await dockerRuntime(runner).load(tiny), recording).toEqual({ ok: true, value: undefined });
+      expect(runner.calls, recording).toEqual([load]);
+      expect(runner.inputs.map((input) => input.argv), recording).toEqual([load]);
+    }
+  });
+
+  test("the archive holds the layout files, the manifest.json of docker save, and then the blobs", async () => {
+    const runner = new ScriptedRunner([{ argv: load, result: recorded("docker", "load") }]);
+    await dockerRuntime(runner).load(tiny);
+    const entries = tarEntries(runner.inputs[0]?.bytes ?? new Uint8Array());
+    expect(entries.map((entry) => entry.name)).toEqual(["oci-layout", "index.json", "manifest.json", ...blobNames(tiny)]);
+    for (const entry of entries.filter((entry) => entry.name.startsWith("blobs/sha256/"))) {
+      expect(digestOf(entry.body)).toBe(`sha256:${entry.name.slice("blobs/sha256/".length)}`);
+    }
+    const [saved] = JSON.parse(new TextDecoder().decode(entries[2]?.body)) as Array<{ RepoTags: string[] }>;
+    expect(saved?.RepoTags).toEqual([tiny.name]);
+  });
+
+  test("a load that fails is runtime.load_failed with the exit code", async () => {
+    const runner = new ScriptedRunner([{ argv: load, result: recorded("docker", "load-truncated") }]);
+    expect(await dockerRuntime(runner).load(tiny)).toEqual({
+      ok: false,
+      error: { code: "runtime.load_failed", data: { exitCode: 1 } },
+    });
+  });
+
+  test("a signal that fired before the load gives download.cancelled and runs nothing", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const runner = new ScriptedRunner([{ argv: load, result: recorded("docker", "load") }]);
+    const result = await dockerRuntime(runner).load(tiny, { signal: controller.signal });
+    expect(result).toEqual({ ok: false, error: { code: "download.cancelled", data: {} } });
+    expect(runner.calls).toEqual([]);
+  });
+
+  test("it counts one copy of the download on the disk while it loads", () => {
+    expect(dockerRuntime(new ScriptedRunner([])).loadCopies).toBe(1);
+  });
+
+  test("the containerd image store gives the manifest digest as the ID, and that is the reference", async () => {
+    const runner = new ScriptedRunner([
+      { argv: ["docker", "image", "inspect", busybox.name], result: recorded("docker", "image-inspect-containerd") },
+    ]);
+    expect(await dockerRuntime(runner).verifyImage(busybox)).toEqual({ ok: true, value: BUSYBOX_MANIFEST });
+  });
+
+  test("the classic image store gives the config digest as the ID, and that is the reference", async () => {
+    const runner = new ScriptedRunner([
+      { argv: ["docker", "image", "inspect", busybox.name], result: recorded("docker", "image-inspect-classic") },
+    ]);
+    expect(await dockerRuntime(runner).verifyImage(busybox)).toEqual({ ok: true, value: BUSYBOX_CONFIG });
+  });
 });
 
 for (const [missing, info, memory, cpus] of [
@@ -571,43 +748,4 @@ test("Docker whose daemon cannot apply a CPU quota starts the container without 
   expect(runner.calls.at(-1)).toEqual(expected);
   expect(expected).toContain("--memory");
   expect(expected).not.toContain("--cpus");
-});
-
-test("Podman's recorded pull of one layer gives one layer and then writing", async () => {
-  const runner = new ScriptedRunner([{ argv: ["podman", "pull", IMAGE], result: recorded("podman", "pull") }]);
-  const progress: PullProgress[] = [];
-  await podmanRuntime(runner).pull(IMAGE, { onProgress: (step) => progress.push(step) });
-  expect(progress).toEqual([
-    { layersDone: null, layersTotal: 1, phase: "downloading" },
-    { layersDone: null, layersTotal: 1, phase: "writing" },
-  ]);
-});
-
-test("Docker's progress counts layers started and layers finished", () => {
-  const parse = dockerPullParser();
-  const progress = recordedText("docker", "pull-no-tty")
-    .split("\n")
-    .map((line) => parse(line))
-    .filter((step): step is PullProgress => step !== null);
-  expect(progress[0]).toEqual({ layersDone: 0, layersTotal: 1, phase: "downloading" });
-  expect(progress.at(-1)).toEqual({ layersDone: 10, layersTotal: 10, phase: "writing" });
-  // Never goes backwards, and finished never passes the total.
-  for (const step of progress) expect(step.layersDone ?? 0).toBeLessThanOrEqual(step.layersTotal ?? 0);
-  expect(progress.map((step) => step.layersDone)).toEqual([...progress.map((step) => step.layersDone)].sort((a, b) => (a ?? 0) - (b ?? 0)));
-});
-
-test("Docker's newer pull output, with the image ID on the first line, gives one layer", async () => {
-  const runner = new ScriptedRunner([{ argv: ["docker", "pull", IMAGE], result: recorded("docker", "pull-busybox") }]);
-  const progress: PullProgress[] = [];
-  await dockerRuntime(runner).pull(IMAGE, { onProgress: (step) => progress.push(step) });
-  expect(progress).toEqual([
-    { layersDone: 0, layersTotal: 1, phase: "downloading" },
-    { layersDone: 0, layersTotal: 1, phase: "writing" },
-    { layersDone: 1, layersTotal: 1, phase: "writing" },
-  ]);
-});
-
-test("a layer that Docker already has counts as done", () => {
-  const parse = dockerPullParser();
-  expect(parse("aaaaaaaaaaaa: Already exists")).toEqual({ layersDone: 1, layersTotal: 1, phase: "writing" });
 });

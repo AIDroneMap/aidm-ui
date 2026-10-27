@@ -90,8 +90,8 @@ for (const tool of ["docker", "podman"] as const) {
     });
 
     const view = await installAndWaitReady(h);
-    expect(runtime.pulls).toEqual([GPU_IMAGE]);
-    // Check c ran in the pulled image with the same flag, and the image stayed.
+    expect(runtime.loads).toEqual([GPU_IMAGE]);
+    // Check c ran in the loaded image with the same flag, and the image stayed.
     expect(runtime.oneOffs).toHaveLength(1);
     expect(runtime.oneOffs[0]?.argv).toEqual([
       tool, "run", "--rm", "--name", CHECK_NAME, "--pull=never", "--entrypoint", "nvidia-smi", ...GPU_FLAGS[tool], GPU_IMAGE, "-L",
@@ -113,7 +113,7 @@ for (const tool of ["docker", "podman"] as const) {
     });
 
     const view = await installAndWaitReady(h);
-    expect(runtime.pulls).toEqual([CPU_IMAGE]);
+    expect(runtime.loads).toEqual([CPU_IMAGE]);
     expect(runtime.oneOffs).toEqual([]);
     expect(view.installed?.variant).toBe("linux-amd64-cpu");
     expect(view.warnings).toEqual([reason]);
@@ -129,7 +129,7 @@ for (const tool of ["docker", "podman"] as const) {
     expect((await packages(h)).gpu.state).toBe("used");
 
     const view = await installAndWaitReady(h);
-    expect(runtime.pulls).toEqual([GPU_IMAGE, CPU_IMAGE]);
+    expect(runtime.loads).toEqual([GPU_IMAGE, CPU_IMAGE]);
     expect(runtime.removedImages).toEqual([GPU_IMAGE]);
     expect(runtime.images.has(GPU_IMAGE)).toBe(false);
     expect(runtime.images.has(CPU_IMAGE)).toBe(true);
@@ -154,7 +154,7 @@ for (const tool of ["docker", "podman"] as const) {
     });
 
     const view = await installAndWaitReady(h);
-    expect(runtime.pulls).toEqual([CPU_IMAGE]);
+    expect(runtime.loads).toEqual([CPU_IMAGE]);
     expect(runtime.oneOffs).toEqual([]);
     expect(runtime.removedImages).toEqual([]);
     expect(view.installed?.variant).toBe("linux-amd64-cpu");
@@ -189,7 +189,7 @@ test("a computer with no NVIDIA driver gets the CPU image and no GPU message at 
   });
   const view = await installAndWaitReady(h);
   expect(view.warnings).toEqual([]);
-  expect(runtime.pulls).toEqual([CPU_IMAGE]);
+  expect(runtime.loads).toEqual([CPU_IMAGE]);
   // The toolkit was never asked about a card that is not there.
   expect(runner.calls.every((call) => call[0] === "nvidia-smi")).toBe(true);
 });
@@ -227,12 +227,12 @@ test("closing aidm-ui during the test run stops it: the image stays, no processo
   release();
   expect(runtime.oneOffs[0]?.signal?.aborted).toBe(true);
   expect(runtime.removedImages).toEqual([]);
-  expect(runtime.pulls).toEqual([GPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE]);
   expect(h.settings.get("local.gpuCheckFailed")).toBeNull();
   expect(h.localEngine.view().problem).toBeNull();
 });
 
-test("the install tells which package is downloading, that it is being tested, and that the graphics card package is deleted when the test fails", async () => {
+test("the install tells which package is downloading and loading, that it is being tested, and that the graphics card package is deleted when the test fails", async () => {
   const { h, runtime } = start("podman", gpuRules("podman", { driver: true, passthrough: true }));
   runtime.answerOneOffs(noDriver());
   const seen: Array<{ phase: string; variant: string; size: number }> = [];
@@ -246,9 +246,11 @@ test("the install tells which package is downloading, that it is being tested, a
   await installAndWaitReady(h);
   expect(seen).toEqual([
     { phase: "pulling", variant: "linux-amd64-gpu", size: GPU_SIZE },
+    { phase: "loading", variant: "linux-amd64-gpu", size: GPU_SIZE },
     { phase: "checking_gpu", variant: "linux-amd64-gpu", size: GPU_SIZE },
     { phase: "removing_gpu_package", variant: "linux-amd64-gpu", size: GPU_SIZE },
     { phase: "pulling", variant: "linux-amd64-cpu", size: CPU_SIZE },
+    { phase: "loading", variant: "linux-amd64-cpu", size: CPU_SIZE },
     { phase: "starting", variant: "linux-amd64-cpu", size: CPU_SIZE },
     { phase: "done", variant: "linux-amd64-cpu", size: CPU_SIZE },
   ]);
@@ -259,7 +261,7 @@ test("when the graphics card package cannot be removed the operator is told how 
   runtime.answerOneOffs(noDriver());
   runtime.refuseImageRemoval();
   const view = await installAndWaitReady(h);
-  expect(runtime.pulls).toEqual([GPU_IMAGE, CPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE, CPU_IMAGE]);
   expect(runtime.images.has(GPU_IMAGE)).toBe(true);
   expect(view.installed?.variant).toBe("linux-amd64-cpu");
   expect(view.warnings).toEqual([
@@ -279,7 +281,7 @@ test("the fallback does its own disk check: with the graphics card package still
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await h.localEngine.settled();
   const view = await localView(h);
-  expect(runtime.pulls).toEqual([GPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE]);
   expect(view.state).toBe("failed");
   expect(view.problem?.code).toBe("install.not_enough_space");
   expect(view.warnings).toEqual([{ code: "gpu.package_not_removed", data: { size: GPU_SIZE } }]);
@@ -301,7 +303,7 @@ test("a failed test run is remembered: the next install does not pull the graphi
   expect((await h.localEngine.stop()).ok).toBe(true);
   h.settings.set("local.package", null);
   await installAndWaitReady(h);
-  expect(runtime.pulls).toEqual([GPU_IMAGE, CPU_IMAGE, CPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE, CPU_IMAGE, CPU_IMAGE]);
   expect(runtime.oneOffs).toHaveLength(1);
 });
 
@@ -311,7 +313,7 @@ test("a failure recorded for another digest does not rule out this package, and 
   expect((await packages(h)).offer?.variant).toBe("linux-amd64-gpu");
 
   const view = await installAndWaitReady(h);
-  expect(runtime.pulls).toEqual([GPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE]);
   expect(runtime.oneOffs).toHaveLength(1);
   expect(view.installed?.variant).toBe("linux-amd64-gpu");
   expect(view.warnings).toEqual([]);
@@ -424,6 +426,6 @@ test("the processor package of the fallback comes from the manifest the graphics
   release();
 
   await eventually(async () => (await localView(h)).state === "ready");
-  expect(runtime.pulls).toEqual([GPU_IMAGE, CPU_IMAGE]);
+  expect(runtime.loads).toEqual([GPU_IMAGE, CPU_IMAGE]);
   expect((await localView(h)).installed).toMatchObject({ packageVersion: "2.5.0", variant: "linux-amd64-cpu" });
 });

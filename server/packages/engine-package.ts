@@ -1,3 +1,4 @@
+import type { InstalledPackage } from "../settings/settings.ts";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
 
@@ -23,8 +24,12 @@ export type PackageResult<T> = { ok: true; value: T } | { ok: false; error: ApiE
  */
 export interface EnginePackage {
   readonly kind: "container" | "native";
-  /** What can be known without downloading: the free disk. Nothing is fetched when this refuses. */
-  preflight(): Promise<PackageResult<void>>;
+  /**
+   * What can be known without downloading: the free disk. Nothing is fetched
+   * when this refuses. `dataFolderExtra` is room other downloads of the same
+   * install need in the data folder, such as Apple's installer on a Mac.
+   */
+  preflight(options?: { dataFolderExtra?: number }): Promise<PackageResult<void>>;
   install(options: {
     onProgress?: (progress: InstallProgressView) => void;
     signal?: AbortSignal;
@@ -47,6 +52,14 @@ export interface EnginePackage {
   removeContainer(): Promise<PackageResult<void>>;
   /** This version's container and image, or its folder. */
   remove(): Promise<PackageResult<void>>;
+  /**
+   * What the settings keep for this package once install() worked: the record
+   * it was made from, plus what the install learned (for a container, the
+   * reference the runtime runs the loaded image by).
+   */
+  installedAs?(installed: InstalledPackage): InstalledPackage;
+  /** Deletes what install() downloaded and no longer needs, once the engine has started from it. */
+  discardDownload?(): void;
 }
 
 export function ok<T>(value: T): PackageResult<T> {

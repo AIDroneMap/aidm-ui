@@ -1,5 +1,6 @@
 import os from "node:os";
 import { describeCommand, EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { imageArchive } from "../images/image-archive.ts";
 import { defaultCaps, type Caps } from "../local-engine/caps.ts";
 import { DEFAULT_STOP_TIMEOUT_SECONDS } from "./cli-runtime.ts";
 import {
@@ -13,7 +14,6 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
-  type PullProgress,
   type RuntimeDetection,
   type RuntimeResult,
 } from "./runtime.ts";
@@ -36,13 +36,11 @@ export function parseToolVersion(stdout: string): string | null {
   return VERSION_LINE.exec(stdout.split("\n")[0] ?? "")?.[1] ?? null;
 }
 
-/** Apple's tool runs Linux on Apple silicon only. The image is pulled for this platform, and run uses that copy. */
-const PLATFORM = "linux/arm64";
 
 const START_TIMEOUT_MS = 60_000;
 const REMOVE_TIMEOUT_MS = 60_000;
-/** A pull can print thousands of lines. Only the last ones are kept, because the failure is told at the end. */
-const PULL_OUTPUT_LINES = 1000;
+/** A load can print many lines. Only the last ones are kept, because the failure is told at the end. */
+const LOAD_OUTPUT_LINES = 200;
 
 /** Any call fails like this when the tool's system service is off. */
 const SERVICE_DOWN = /container system service has been started/i;
@@ -67,7 +65,7 @@ const PORT_IN_USE = /address already in use|port .* (is )?(already )?(in use|all
  * `defaults`, the same numbers the engine manager would give. The tool has no
  * restart policy, so there is no restart flag. The tool's list of flags for
  * `run` has no platform flag, so none is sent: `spec.platform` is not used,
- * and the image is the arm64 copy that the pull stored. A read-only mount
+ * and the image is the arm64 one aidm-ui loaded. A read-only mount
  * ends in ":ro", the one mount option the tool reads (1.6.1: the volume
  * parser keeps the third part as options, and the folder is shared into the
  * VM read-only when they hold "ro").
@@ -95,38 +93,6 @@ export function runArgv(spec: ContainerSpec, defaults: Caps = hostDefaults()): s
 
 function hostDefaults(): Caps {
   return defaultCaps(os.totalmem(), os.availableParallelism());
-}
-
-/**
- * Turns the plain progress lines of `container image pull` into progress.
- * Plain output has one line per render, such as
- * "[1/2] Fetching image 31% (2 of 7 blobs, ...)" and then
- * "[2/2] Unpacking image 52% (214 of 412 entries)". Those lines do not say
- * which blobs are layers and which are the image's config and manifests, so
- * the counts are reported as they are and the page calls them parts.
- * Unpacking is the writing phase.
- */
-export function applePullParser(): (line: string) => PullProgress | null {
-  let layersDone: number | null = null;
-  let layersTotal: number | null = null;
-  let last = "";
-  return (line) => {
-    const phase = /^\[\d+\/\d+\]\s+(Fetching|Unpacking)\b/.exec(line)?.[1];
-    if (phase === undefined) return null;
-    const counts = /\((\d+) of (\d+) blobs\b/.exec(line);
-    if (counts !== null) {
-      layersDone = Number(counts[1]);
-      layersTotal = Number(counts[2]);
-    }
-    const progress: PullProgress =
-      phase === "Fetching"
-        ? { layersDone, layersTotal, phase: "downloading" }
-        : { layersDone: layersTotal, layersTotal, phase: "writing" };
-    const key = JSON.stringify(progress);
-    if (key === last) return null;
-    last = key;
-    return progress;
-  };
 }
 
 export interface AppleContainerOptions {
@@ -192,25 +158,50 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     id: "apple-container",
     detect,
 
-    async pull(image, pullOptions = {}) {
-      const argv = [APPLE_TOOL, "image", "pull", "--platform", pullOptions.platform ?? PLATFORM, "--progress", "plain", image];
+    // The tool spools the archive from standard input to a temporary file,
+    // its service unpacks that file into a temporary folder, and the blobs
+    // stay in its content store (1.6.1: ImageLoad.swift, ImagesService.load).
+    loadCopies: 3,
+
+    async load(image, loadOptions = {}) {
+      // The tool reads only an OCI image layout, and names the image from the
+      // layout's annotations. It has no other way to take a file from a pipe.
+      const argv = [APPLE_TOOL, "image", "load"];
       log(describeCommand(argv));
-      const parse = applePullParser();
       const kept: string[] = [];
       const result = await runner.stream(argv, {
-        signal: pullOptions.signal,
+        signal: loadOptions.signal,
+        stdin: imageArchive(image, "oci"),
         onLine: (line) => {
           kept.push(line);
-          if (kept.length > PULL_OUTPUT_LINES) kept.shift();
-          const progress = parse(line);
-          if (progress !== null) pullOptions.onProgress?.(progress);
+          if (kept.length > LOAD_OUTPUT_LINES) kept.shift();
         },
       });
+      // Only the exit status counts. The tool can print 100% in the same
+      // second as it fails (seen at 36% and at 50% on a real Mac).
       if (result.exitCode === 0) return ok(undefined);
-      const output = kept.join("\n");
-      if (SERVICE_DOWN.test(output)) return fail("runtime.apple_not_started");
-      if (result.exitCode !== EXIT_NOT_FOUND && NOT_AT_REGISTRY.test(output)) return fail("runtime.image_not_found");
-      return fail("runtime.pull_failed", { exitCode: result.exitCode });
+      if (loadOptions.signal?.aborted) return fail("download.cancelled");
+      if (SERVICE_DOWN.test(kept.join("\n"))) return fail("runtime.apple_not_started");
+      log(`The load ended with exit code ${result.exitCode}: ${kept.slice(-5).join(" / ")}`);
+      return fail("runtime.load_failed", { exitCode: result.exitCode });
+    },
+
+    async verifyImage(image) {
+      const result = await run([APPLE_TOOL, "image", "inspect", image.name]);
+      if (result.exitCode !== 0) {
+        const down = serviceDown(result);
+        return down ?? fail("runtime.image_not_verified", { name: image.name });
+      }
+      // The tool wraps a loaded manifest in an index of its own, so the
+      // manifest digest is found among the image's variants (1.6.1: ImageResource).
+      const parsed = parseJson(result.stdout);
+      const entry = asRecord(Array.isArray(parsed) ? parsed[0] : parsed);
+      const descriptor = asRecord(asRecord(entry?.configuration)?.descriptor);
+      const variants = Array.isArray(entry?.variants) ? entry.variants : [];
+      const digests = [descriptor?.digest, ...variants.map((variant) => asRecord(variant)?.digest)];
+      if (!digests.includes(image.manifest.digest)) return fail("runtime.image_not_verified", { name: image.name });
+      // The tool runs an image by its name.
+      return ok(image.name);
     },
 
     async start(spec) {

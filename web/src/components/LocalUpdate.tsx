@@ -69,6 +69,8 @@ export function UpdateView({ view, requesting, failure, announcement = null, onU
           <p>
             <label htmlFor={progressId}>{t("local.install.downloading", { size: formatBytes(status.size) })}</label>
           </p>
+        ) : status.kind === "loading" ? (
+          <p>{t("local.install.loading")}</p>
         ) : status.kind === "starting" ? (
           <p>{t("local.update.starting")}</p>
         ) : announcement !== null ? (

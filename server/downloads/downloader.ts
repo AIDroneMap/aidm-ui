@@ -3,7 +3,7 @@ import { open } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import { freeBytes as defaultFreeBytes, type FreeBytes } from "../machine/disk.ts";
-import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
+import { DOWNLOAD_FREE_DISK_MARGIN, DOWNLOAD_IDLE_MS, DOWNLOAD_STALL_MS } from "../machine/thresholds.ts";
 
 export interface DownloadTarget {
   url: string;
@@ -13,21 +13,37 @@ export interface DownloadTarget {
   path: string;
 }
 
+/**
+ * Makes the request of one try. It gets the headers the try needs (a Range
+ * header when bytes are on disk) and a signal that ends the try. A host that
+ * needs more than a GET of the URL brings its own: the image downloader asks
+ * the registry each time, which gives it a fresh signed address.
+ */
+export type DownloadRequest = (headers: Record<string, string>, signal: AbortSignal) => Promise<Response>;
+
 export interface DownloadOptions {
   fetch?: typeof fetch;
+  /** Replaces the GET of target.url. */
+  request?: DownloadRequest;
   /** The operator cancelled. */
   signal?: AbortSignal;
   /** Total is the target's size. */
   onProgress?: (received: number, total: number) => void;
-  /** Attempts after the first one. */
-  retries?: number;
+  /** A try stopped and another one follows. The reason is a message code: download.connection_interrupted, download.connection_silent or download.host_busy. */
+  onRetry?: (reason: ApiError) => void;
+  /** The download fails when no byte has arrived for this long. There is no cap on tries before that. */
+  stallMs?: number;
+  /** A try that stays open but sends nothing for this long is dropped and made again. */
+  idleMs?: number;
   backoffMs?: (attempt: number) => number;
   freeBytes?: FreeBytes;
+  /** False when the caller has checked the disk for this file and others together. */
+  checkSpace?: boolean;
+  /** Milliseconds since the epoch. */
+  now?: () => number;
 }
 
 export type DownloadOutcome = { ok: true; path: string } | { ok: false; error: ApiError };
-
-const DEFAULT_RETRIES = 5;
 
 function defaultBackoff(attempt: number): number {
   return Math.min(1000 * 2 ** (attempt - 1), 30_000);
@@ -37,7 +53,7 @@ function fail(code: ApiError["code"], data: Record<string, unknown> = {}): Downl
   return { ok: false, error: { code, data } };
 }
 
-function sizeOf(path: string): number {
+export function sizeOf(path: string): number {
   try {
     return statSync(path).size;
   } catch {
@@ -54,7 +70,7 @@ function remove(path: string): void {
 }
 
 /** The checksum of a file, or null when the operator cancelled before it was done. A big file takes seconds to read. */
-async function sha256Of(path: string, signal: AbortSignal | undefined): Promise<string | null> {
+export async function sha256Of(path: string, signal: AbortSignal | undefined): Promise<string | null> {
   const hasher = new Bun.CryptoHasher("sha256");
   for await (const chunk of Bun.file(path).stream()) {
     if (signal?.aborted) return null;
@@ -76,23 +92,40 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
-/** What one attempt came to. */
-type Attempt = "complete" | "retry" | "restart" | "cancelled" | "too_long" | "refused";
+/** What one try came to. A retry carries the reason the operator is told. */
+type Attempt =
+  | { result: "complete" }
+  | { result: "restart" }
+  | { result: "cancelled" }
+  | { result: "too_long" }
+  | { result: "refused" }
+  | { result: "retry"; reason: ApiError };
+
+const interrupted: Attempt = { result: "retry", reason: { code: "download.connection_interrupted", data: {} } };
 
 /** A 4xx answer will not change by asking again, except when the host asks us to wait or says we were slow. */
 function isFinalRefusal(status: number): boolean {
   return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
+/**
+ * Downloads one file with resume and checks its SHA-256 before it gets its
+ * name. A try that breaks is made again from the last byte on disk, with
+ * backoff, as long as bytes keep arriving: it fails only when no byte has
+ * arrived for the stall time.
+ */
 export async function downloadVerified(
   target: DownloadTarget,
   options: DownloadOptions = {},
 ): Promise<DownloadOutcome> {
   const doFetch = options.fetch ?? fetch;
+  const request: DownloadRequest =
+    options.request ?? ((headers, signal) => doFetch(target.url, { headers, signal, redirect: "follow" }));
   const signal = options.signal;
-  const retries = options.retries ?? DEFAULT_RETRIES;
   const backoff = options.backoffMs ?? defaultBackoff;
-  const freeBytes = options.freeBytes ?? defaultFreeBytes;
+  const stallMs = options.stallMs ?? DOWNLOAD_STALL_MS;
+  const idleMs = options.idleMs ?? DOWNLOAD_IDLE_MS;
+  const now = options.now ?? Date.now;
   const part = `${target.path}.part`;
 
   mkdirSync(dirname(target.path), { recursive: true });
@@ -104,23 +137,46 @@ export async function downloadVerified(
     remove(target.path);
   }
 
-  const needed = Math.max(0, target.size - sizeOf(part)) + DOWNLOAD_FREE_DISK_MARGIN * target.size;
-  const free = freeBytes(dirname(target.path));
-  if (free < needed) return fail("download.not_enough_space", { needed, free });
+  if (options.checkSpace !== false) {
+    const needed = Math.max(0, target.size - sizeOf(part)) + DOWNLOAD_FREE_DISK_MARGIN * target.size;
+    const free = (options.freeBytes ?? defaultFreeBytes)(dirname(target.path));
+    if (free < needed) return fail("download.not_enough_space", { needed, free });
+  }
 
   // A host that cannot serve the range we ask for gets one fresh start from byte 0.
   let startedOver = false;
+  let lastByteAt = now();
 
   async function attempt(): Promise<Attempt> {
     let have = sizeOf(part);
-    if (have < target.size) {
-      const headers: Record<string, string> = {};
-      if (have > 0) headers.range = `bytes=${have}-`;
+    if (have >= target.size) return { result: "complete" };
+    const headers: Record<string, string> = {};
+    if (have > 0) headers.range = `bytes=${have}-`;
+
+    // The try has a signal of its own, so a silent connection can be dropped
+    // without the operator's signal firing.
+    const tryController = new AbortController();
+    const endTry = () => tryController.abort();
+    signal?.addEventListener("abort", endTry);
+    let silent = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const watchIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        silent = true;
+        tryController.abort();
+      }, idleMs);
+    };
+    const silence: Attempt = { result: "retry", reason: { code: "download.connection_silent", data: { seconds: Math.round(idleMs / 1000) } } };
+    const broken = (): Attempt => (signal?.aborted ? { result: "cancelled" } : silent ? silence : interrupted);
+
+    try {
+      watchIdle();
       let response: Response;
       try {
-        response = await doFetch(target.url, { headers, signal, redirect: "follow" });
+        response = await request(headers, tryController.signal);
       } catch {
-        return signal?.aborted ? "cancelled" : "retry";
+        return broken();
       }
 
       let append = true;
@@ -128,7 +184,7 @@ export async function downloadVerified(
         const match = /^bytes (\d+)-/.exec(response.headers.get("content-range") ?? "");
         if (!match || Number(match[1]) !== have) {
           await response.body?.cancel().catch(() => {});
-          return "retry";
+          return interrupted;
         }
       } else if (response.status === 200) {
         append = false;
@@ -138,55 +194,65 @@ export async function downloadVerified(
         await response.body?.cancel().catch(() => {});
         startedOver = true;
         remove(part);
-        return "restart";
+        return { result: "restart" };
       } else {
         await response.body?.cancel().catch(() => {});
-        return isFinalRefusal(response.status) ? "refused" : "retry";
+        if (isFinalRefusal(response.status)) return { result: "refused" };
+        return { result: "retry", reason: { code: "download.host_busy", data: { status: response.status } } };
       }
 
-      if (!response.body) return "retry";
+      if (!response.body) return interrupted;
       const file = await open(part, append ? "a" : "w");
       let received = have;
       try {
         options.onProgress?.(received, target.size);
         for await (const chunk of response.body) {
-          if (signal?.aborted) return "cancelled";
+          if (signal?.aborted) return { result: "cancelled" };
           // More bytes than pinned can only be the wrong file. Stop before it fills the disk.
-          if (received + chunk.byteLength > target.size) return "too_long";
+          if (received + chunk.byteLength > target.size) return { result: "too_long" };
           await file.write(chunk);
           received += chunk.byteLength;
+          if (chunk.byteLength > 0) {
+            lastByteAt = now();
+            watchIdle();
+          }
           options.onProgress?.(received, target.size);
         }
       } catch {
-        return signal?.aborted ? "cancelled" : "retry";
+        return broken();
       } finally {
         await file.close();
       }
-      if (signal?.aborted) return "cancelled";
-      if (received < target.size) return "retry";
+      if (signal?.aborted) return { result: "cancelled" };
+      if (received < target.size) return interrupted;
+      return { result: "complete" };
+    } finally {
+      clearTimeout(idleTimer);
+      signal?.removeEventListener("abort", endTry);
     }
-    return "complete";
   }
 
   for (let tries = 0; ; tries++) {
     if (signal?.aborted) return fail("download.cancelled");
     const before = sizeOf(part);
-    const result = await attempt();
-    if (result === "cancelled") return fail("download.cancelled");
-    if (result === "refused") return fail("download.failed");
-    if (result === "restart") {
+    const outcome = await attempt();
+    if (outcome.result === "cancelled") return fail("download.cancelled");
+    if (outcome.result === "refused") return fail("download.failed");
+    if (outcome.result === "restart") {
       tries--;
       continue;
     }
-    if (result === "too_long") {
+    if (outcome.result === "too_long") {
       remove(part);
       return fail("download.checksum_mismatch");
     }
-    if (result === "complete") break;
-    // A slow link that keeps making progress gets its retries back.
+    if (outcome.result === "complete") break;
+    // A link that keeps making progress starts its backoff again.
     if (sizeOf(part) > before) tries = 0;
-    if (tries >= retries) return fail("download.failed");
-    await sleep(backoff(tries + 1), signal);
+    const left = stallMs - (now() - lastByteAt);
+    if (left <= 0) return fail("download.stalled", { seconds: Math.round(stallMs / 1000) });
+    options.onRetry?.(outcome.reason);
+    await sleep(Math.min(backoff(tries + 1), left), signal);
   }
 
   const checksum = await sha256Of(part, signal);

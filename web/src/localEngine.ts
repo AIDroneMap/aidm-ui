@@ -85,11 +85,17 @@ export type InstallStatus =
       /** True for the graphics card package. */
       graphics: boolean;
       size: number;
+      /** Bytes on disk so far, when the download reports them. */
+      received: number | null;
+      /** Bytes per second over the last seconds, or null. */
+      speed: number | null;
       done: number | null;
       total: number | null;
-      attempt: number;
-      maxAttempts: number;
+      /** How often the connection broke and the download went on, and why it last broke. */
+      retries: number;
+      lastRetry: ApiError | null;
     }
+  | { kind: "loading" }
   | { kind: "checking_gpu" }
   | { kind: "removing_gpu_package"; size: number }
   | { kind: "starting" }
@@ -131,7 +137,7 @@ export function installSteps(view: LocalEngineView | null): Array<InstallStepVie
   });
 }
 
-/** Where a pull stands, in the same words for an install and an update: the step, the parts, the try and the graphics card's test run. */
+/** Where a download stands, in the same words for an install and an update: the step, the bytes, the speed, why it last broke, and the graphics card's test run. */
 export function progressStatus(progress: InstallProgressView | null): InstallStatus {
   if (progress?.phase === "preparing") {
     const size = progress.steps.find((candidate) => candidate.id === progress.step)?.size ?? null;
@@ -142,12 +148,15 @@ export function progressStatus(progress: InstallProgressView | null): InstallSta
       kind: "downloading",
       graphics: progress.variant.endsWith("-gpu"),
       size: progress.size,
+      received: progress.stepReceived,
+      speed: progress.speed,
       done: progress.layersDone,
       total: progress.layersTotal,
-      attempt: progress.attempt,
-      maxAttempts: progress.maxAttempts,
+      retries: progress.retries,
+      lastRetry: progress.lastRetry,
     };
   }
+  if (progress?.phase === "loading") return { kind: "loading" };
   if (progress?.phase === "checking_gpu") return { kind: "checking_gpu" };
   if (progress?.phase === "removing_gpu_package") return { kind: "removing_gpu_package", size: progress.size };
   if (progress?.phase === "starting") return { kind: "starting" };

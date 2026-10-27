@@ -1,0 +1,41 @@
+[
+    {
+        "Id": "sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+        "RepoTags": [
+            "ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4"
+        ],
+        "RepoDigests": [
+            "ghcr.io/aidm-ui-loadtest/busybox@sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4"
+        ],
+        "Created": "2026-01-01T00:00:00Z",
+        "Config": {
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Cmd": [
+                "sh"
+            ]
+        },
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 6767335,
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:5a9bfd996c6d49c6c3cb4ddfb76e8d09cf16b6b7cf6601d1f2dffbdbc3edb5d4"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "2026-01-01T00:00:00Z"
+        },
+        "Descriptor": {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+            "size": 610,
+            "annotations": {
+                "io.containerd.image.name": "ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+                "org.opencontainers.image.ref.name": "ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4"
+            }
+        }
+    }
+]

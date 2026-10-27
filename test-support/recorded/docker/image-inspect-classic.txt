@@ -1,0 +1,48 @@
+[
+    {
+        "Id": "sha256:30ecbe1509090b38ef3260f3609d64d8261230464eaa4d235901db496e9647fb",
+        "RepoTags": [
+            "ghcr.io/aidm-ui-loadtest/busybox:sha256-66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4"
+        ],
+        "RepoDigests": [],
+        "Parent": "",
+        "Comment": "",
+        "Created": "2026-01-01T00:00:00Z",
+        "DockerVersion": "",
+        "Author": "",
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 4421262,
+        "GraphDriver": {
+            "Data": {
+                "MergedDir": "/var/lib/docker/overlay2/1e036baa5c50718429703ac20d5c9f2f1da39f313d5da76982363fbd9069e4ba/merged",
+                "UpperDir": "/var/lib/docker/overlay2/1e036baa5c50718429703ac20d5c9f2f1da39f313d5da76982363fbd9069e4ba/diff",
+                "WorkDir": "/var/lib/docker/overlay2/1e036baa5c50718429703ac20d5c9f2f1da39f313d5da76982363fbd9069e4ba/work"
+            },
+            "Name": "overlay2"
+        },
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:5a9bfd996c6d49c6c3cb4ddfb76e8d09cf16b6b7cf6601d1f2dffbdbc3edb5d4"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "0001-01-01T00:00:00Z"
+        },
+        "Config": {
+            "Cmd": [
+                "sh"
+            ],
+            "Entrypoint": null,
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Labels": null,
+            "OnBuild": null,
+            "User": "",
+            "Volumes": null,
+            "WorkingDir": ""
+        }
+    }
+]

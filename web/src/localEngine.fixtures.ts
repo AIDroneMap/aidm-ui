@@ -40,8 +40,9 @@ export function engineInstall(overrides: Partial<InstallProgressView> = {}): Ins
     size,
     layersDone: null,
     layersTotal: null,
-    attempt: 1,
-    maxAttempts: 5,
+    speed: null,
+    retries: 0,
+    lastRetry: null,
     ...overrides,
   };
 }

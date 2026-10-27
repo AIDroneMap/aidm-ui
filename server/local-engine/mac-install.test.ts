@@ -225,7 +225,7 @@ for (const [name, inputs, localMachine, code] of [
   });
 }
 
-// Criterion: the wizard shows the kernel and init steps with sizes before the engine pull.
+// Criterion: the wizard shows the kernel and init steps with sizes before the engine download.
 
 test("before any click the view already holds the plan of a Mac without the tool, and nothing for a Mac that has it", async () => {
   const missing = mac("missing");
@@ -266,7 +266,7 @@ test("the step list is complete, with the kernel's size and no size for the star
   await eventually(async () => (await localView(h)).state === "ready");
   const installViews = views.filter((view) => view.install !== null).map((view) => view.install);
   for (const install of installViews) expect(ids(install?.steps ?? [])).toEqual(["installer", "approve", "kernel", "init", "engine"]);
-  // The steps came in order, and the engine's pull came last.
+  // The steps came in order, and the engine's download came last.
   const seen = installViews.map((install) => install?.step).filter((step, index, all) => step !== all[index - 1]);
   expect(seen).toEqual(["installer", "approve", "kernel", "init", "engine"]);
   const firstEngine = installViews.findIndex((install) => install?.step === "engine");
@@ -351,21 +351,26 @@ test("a start that reports success while the tool still does not answer is a fai
 });
 
 test("without enough disk the install refuses before downloading anything, counting the installer and the kernel", async () => {
-  const needed = Math.ceil((pin.size + KERNEL_SIZE + ENGINE_SIZE) * 1.2);
+  // The installer is claimed to be big, so its share is what the check cannot cover. Nothing is downloaded, so the claim is never tested.
+  const bigInstaller = { ...pin, size: 3 * GiB };
+  // One disk holds it all: the engine's download, the installer and the kernel in the data folder, and the
+  // runtime's copy and the unpacked layers next to them (the fake runtime makes one copy).
+  const extra = Math.ceil((bigInstaller.size + KERNEL_SIZE) * 1.2);
+  const needed = Math.ceil(ENGINE_SIZE + 0.2 * ENGINE_SIZE + extra + Math.ceil((1 + 2.8) * ENGINE_SIZE + 0.2 * ENGINE_SIZE));
+  // Room for the engine alone, and for no more.
+  const free = 4 * GiB;
   const small = openHarness({
     enginePollMs: 50,
     localMachine: MAC,
     runtimes: { "apple-container": appleFake("missing") },
     machine: recordedMachine(macInputs("26")),
-    freeBytes: () => ENGINE_SIZE * 1.3,
-    macSetup: { runner: new ScriptedRunner([]), installer: pin },
+    freeBytes: () => free,
+    macSetup: { runner: new ScriptedRunner([]), installer: bigInstaller },
   });
   open.push(small);
   const response = await send(small, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
-  const error = await errorOf(response);
-  expect(error.code).toBe("install.not_enough_space");
-  expect(error.data.needed).toBe(needed);
+  expect(await errorOf(response)).toEqual({ code: "install.not_enough_space", data: { needed, free } });
   expect(files.requests).toEqual([]);
 });
 
@@ -410,7 +415,7 @@ test("Stop waiting when nothing waits for an approval changes nothing", async ()
 
 // The look at the tool after the system service started.
 
-test("the engine is pulled after a look at the tool that began after the service started, not one that began before it", async () => {
+test("the engine is downloaded after a look at the tool that began after the service started, not one that began before it", async () => {
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -445,7 +450,7 @@ test("the engine is pulled after a look at the tool that began after the service
   });
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "ready");
-  expect(apple.pulls).toHaveLength(1);
+  expect(apple.loads).toHaveLength(1);
   await late;
 });
 
@@ -460,7 +465,7 @@ test("a look at the tool that fails after the start is a failed start with a lin
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "failed");
   expect((await localView(h)).problem?.code).toBe("mac.start_failed");
-  expect(apple.pulls).toEqual([]);
+  expect(apple.loads).toEqual([]);
   expect(h.logs.some((line) => line.startsWith("Looking for container runtimes failed: the tool did not answer"))).toBe(true);
   expect(h.logs.some((line) => line.includes("could not be looked at again after it started"))).toBe(true);
 });

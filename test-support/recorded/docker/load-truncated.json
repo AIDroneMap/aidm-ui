@@ -1,0 +1,4 @@
+{
+  "exitCode": 1,
+  "stderr": "failed to ingest \"blobs/sha256/68fe9bff2ad4ad46da3e58db03faa64eb73c0ff16d546b0c42539eaa9854cb7f\": short read: expected 2211514 bytes but got 93344: unexpected EOF\n"
+}

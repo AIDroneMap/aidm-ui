@@ -1,11 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
+import { FakeImages } from "../../test-support/fake-images.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
-import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
+import { imageFolder, localName } from "../images/image-download.ts";
+import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR } from "../machine/thresholds.ts";
+import { fail, ok, type RuntimeResult } from "../runtimes/runtime.ts";
+import type { InstalledContainerPackage } from "../settings/settings.ts";
 import {
   CONTAINER_NAME,
   ContainerPackage,
@@ -22,7 +27,21 @@ const VARIANT: ContainerVariant = {
   size: 682_533_845,
   gpu: false,
 };
+const PINNED = { repository: VARIANT.image, digest: VARIANT.digest };
 const IMAGE = `${VARIANT.image}@${VARIANT.digest}`;
+/** The bytes a download of the fake image source reports. */
+const FAKE_DOWNLOAD_SIZE = 3 * 1024 * 1024;
+const STALLED: ApiError = { code: "download.stalled", data: { seconds: 300 } };
+
+/** A runtime that names a loaded image by an ID of its own, as Podman and Docker do, or that cannot vouch for it. */
+class VerifyingRuntime extends FakeRuntime {
+  /** What verifyImage answers; null: what the fake runtime answers. */
+  verification: RuntimeResult<string> | null = null;
+
+  override async verifyImage(...args: Parameters<FakeRuntime["verifyImage"]>): ReturnType<FakeRuntime["verifyImage"]> {
+    return this.verification ?? super.verifyImage(...args);
+  }
+}
 
 const runtimes: FakeRuntime[] = [];
 const folders: string[] = [];
@@ -31,12 +50,12 @@ afterEach(async () => {
   for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
 
-function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: string | null } = {}) {
+function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: string | null; imageRef?: string } = {}) {
   const runtime = options.runtime ?? new FakeRuntime();
   runtimes.push(runtime);
   const dataFolder = mkdtempSync(join(tmpdir(), "aidm-container-package-"));
   folders.push(dataFolder);
-  const sleeps: number[] = [];
+  const images = new FakeImages();
   const asked: string[] = [];
   const pkg = new ContainerPackage({
     runtime,
@@ -48,11 +67,10 @@ function setup(options: { free?: number; runtime?: FakeRuntime; storagePath?: st
     },
     storagePath: options.storagePath ?? null,
     dataFolder,
-    sleep: async (ms) => {
-      sleeps.push(ms);
-    },
+    images,
+    ...(options.imageRef === undefined ? {} : { imageRef: options.imageRef }),
   });
-  return { runtime, pkg, sleeps, asked, dataFolder };
+  return { runtime, pkg, images, asked, dataFolder, folder: imageFolder(dataFolder, PINNED) };
 }
 
 const startOptions = {
@@ -64,14 +82,56 @@ const startOptions = {
   gpu: false,
 };
 
-test("it pulls the image by digest, never by tag", async () => {
-  const { runtime, pkg } = setup();
+/** The room an install needs when the runtime's storage and the data folder are on one disk. */
+function neededFor(runtime: FakeRuntime, bytesAlreadyOnDisk = 0): number {
+  const forDownload = VARIANT.size - bytesAlreadyOnDisk + DOWNLOAD_FREE_DISK_MARGIN * VARIANT.size;
+  const forRuntime = Math.ceil((runtime.loadCopies + IMAGE_UNPACKED_FACTOR) * VARIANT.size + DOWNLOAD_FREE_DISK_MARGIN * VARIANT.size);
+  return Math.ceil(forDownload + forRuntime);
+}
+
+/** Leaves bytes of an unfinished download of the image, as a download that was cut short does. */
+function leavePartOfDownload(folder: string, bytes: number): void {
+  const blobs = join(folder, "blobs", "sha256");
+  mkdirSync(blobs, { recursive: true });
+  writeFileSync(join(blobs, `${"b".repeat(64)}.part`), new Uint8Array(bytes));
+}
+
+test("install downloads the image by digest, hands it to the runtime, and the runtime holds it", async () => {
+  const { runtime, pkg, images, folder } = setup();
   expect(await pkg.install({})).toEqual({ ok: true, value: undefined });
-  expect(runtime.pulls).toEqual([IMAGE]);
-  expect(runtime.pulls[0]).not.toMatch(/:\d+(\.\d+)*$/);
+  expect(images.downloads).toEqual([PINNED]);
+  expect(existsSync(join(folder, "index.json"))).toBe(true);
+  expect(runtime.loads).toEqual([IMAGE]);
+  expect(runtime.loads[0]).not.toMatch(/:\d+(\.\d+)*$/);
+  expect(runtime.images.has(IMAGE)).toBe(true);
 });
 
-test("the progress carries the manifest's size, the layers, and the attempt", async () => {
+test("start runs the image by the reference the runtime gave when it verified the image", async () => {
+  const { runtime, pkg } = setup();
+  await pkg.install({});
+  expect((await pkg.start(startOptions)).ok).toBe(true);
+  expect(runtime.starts[0]?.spec.image).toBe(IMAGE);
+
+  const imageId = "f".repeat(64);
+  const runtimeWithIds = new VerifyingRuntime();
+  runtimeWithIds.verification = ok(imageId);
+  runtimeWithIds.holdImage(imageId);
+  const other = setup({ runtime: runtimeWithIds });
+  await other.pkg.install({});
+  expect((await other.pkg.start(startOptions)).ok).toBe(true);
+  expect(runtimeWithIds.starts[0]?.spec.image).toBe(imageId);
+});
+
+test("a package made with the reference of an earlier install runs the image by it", async () => {
+  const imageId = "e".repeat(64);
+  const runtime = new FakeRuntime();
+  runtime.holdImage(imageId);
+  const { pkg } = setup({ runtime, imageRef: imageId });
+  expect((await pkg.start(startOptions)).ok).toBe(true);
+  expect(runtime.starts[0]?.spec.image).toBe(imageId);
+});
+
+test("the progress goes from the download to the load, with the manifest's size and the parts of the image", async () => {
   const { pkg } = setup();
   const seen: InstallProgressView[] = [];
   await pkg.install({ onProgress: (progress) => seen.push(progress) });
@@ -80,32 +140,133 @@ test("the progress carries the manifest's size, the layers, and the attempt", as
     variant: "linux-amd64-cpu",
     steps: [{ id: "engine", size: 682_533_845 }],
     step: "engine",
-    stepReceived: null,
+    stepReceived: 0,
     size: 682_533_845,
     layersDone: null,
     layersTotal: null,
-    attempt: 1,
-    maxAttempts: 5,
+    speed: null,
+    retries: 0,
+    lastRetry: null,
   });
-  expect(seen.every((progress) => progress.size === 682_533_845 && progress.phase === "pulling")).toBe(true);
-  expect(seen.some((progress) => progress.layersTotal !== null && progress.layersTotal > 0)).toBe(true);
+  expect(seen.every((progress) => progress.size === 682_533_845)).toBe(true);
+  const phases = seen.map((progress) => progress.phase);
+  expect([...new Set(phases)]).toEqual(["pulling", "loading"]);
+  expect(phases.lastIndexOf("pulling")).toBeLessThan(phases.indexOf("loading"));
+
+  const pulling = seen.filter((progress) => progress.phase === "pulling");
+  const received = pulling.map((progress) => progress.stepReceived ?? 0);
+  expect(received).toEqual([...received].sort((a, b) => a - b));
+  expect(received.at(-1)).toBe(FAKE_DOWNLOAD_SIZE);
+  expect(pulling.some((progress) => progress.layersTotal === 2)).toBe(true);
+  expect(seen.at(-1)).toMatchObject({ phase: "loading", stepReceived: FAKE_DOWNLOAD_SIZE, layersDone: 2, layersTotal: 2, speed: null });
 });
 
-test("with too little free disk nothing is pulled, and both sizes are given", async () => {
+test("a download that fails is install.pull_failed with its cause, and nothing is loaded", async () => {
+  const { runtime, pkg, images } = setup();
+  images.failNext(STALLED);
+  const seen: InstallProgressView[] = [];
+  const result = await pkg.install({ onProgress: (progress) => seen.push(progress) });
+  expect(result).toEqual({ ok: false, error: { code: "install.pull_failed", data: { cause: STALLED } } });
+  expect(runtime.loads).toEqual([]);
+  expect(runtime.images.size).toBe(0);
+  expect(seen.every((progress) => progress.phase === "pulling")).toBe(true);
+  expect(pkg.installedAs(installedRecord())).toEqual(installedRecord());
+});
+
+test("a load that fails is install.load_failed with the runtime's error, and the download stays for the next try", async () => {
+  const { runtime, pkg, folder } = setup();
+  runtime.failNextLoads(1);
+  const result = await pkg.install({});
+  expect(result).toEqual({
+    ok: false,
+    error: { code: "install.load_failed", data: { cause: { code: "runtime.load_failed", data: { exitCode: 1 } } } },
+  });
+  expect(runtime.images.has(IMAGE)).toBe(false);
+  expect(existsSync(join(folder, "index.json"))).toBe(true);
+  expect(pkg.installedAs(installedRecord())).toEqual(installedRecord());
+
+  expect((await pkg.install({})).ok).toBe(true);
+  expect(runtime.loads).toEqual([IMAGE, IMAGE]);
+  expect(runtime.images.has(IMAGE)).toBe(true);
+});
+
+test("an image the runtime cannot vouch for after the load is install.load_failed with the runtime's error", async () => {
+  const runtime = new VerifyingRuntime();
+  const cause: ApiError = { code: "runtime.image_not_verified", data: { name: localName(PINNED) } };
+  runtime.verification = fail("runtime.image_not_verified", cause.data);
+  const { pkg } = setup({ runtime });
+  expect(await pkg.install({})).toEqual({ ok: false, error: { code: "install.load_failed", data: { cause } } });
+  expect(pkg.installedAs(installedRecord())).toEqual(installedRecord());
+});
+
+test("a download that is stopped by the signal ends the install as a failed download and loads nothing", async () => {
+  const { runtime, pkg } = setup();
+  const abort = new AbortController();
+  abort.abort();
+  const result = await pkg.install({ signal: abort.signal });
+  expect(result).toEqual({ ok: false, error: { code: "install.pull_failed", data: { cause: { code: "download.cancelled", data: {} } } } });
+  expect(runtime.loads).toEqual([]);
+});
+
+function installedRecord(): InstalledContainerPackage {
+  return { packageVersion: "2.5.0", variant: "linux-amd64-cpu", runtime: "podman", container: VARIANT };
+}
+
+test("installedAs adds the reference of the loaded image after an install, and gives the record back as it is before", async () => {
+  const { pkg } = setup();
+  const before = installedRecord();
+  expect(pkg.installedAs(before)).toBe(before);
+  await pkg.install({});
+  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: IMAGE });
+});
+
+test("installedAs carries the image ID that the runtime gave", async () => {
+  const imageId = "d".repeat(64);
+  const runtime = new VerifyingRuntime();
+  runtime.verification = ok(imageId);
+  const { pkg } = setup({ runtime });
+  await pkg.install({});
+  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: imageId });
+});
+
+test("discardDownload deletes the download folder and leaves the image in the runtime", async () => {
+  const { runtime, pkg, folder } = setup();
+  await pkg.install({});
+  expect(existsSync(folder)).toBe(true);
+  pkg.discardDownload();
+  expect(existsSync(folder)).toBe(false);
+  expect(runtime.images.has(IMAGE)).toBe(true);
+  expect(runtime.removedImages).toEqual([]);
+  // Nothing there is fine too.
+  pkg.discardDownload();
+});
+
+test("removeImage deletes the download folder and removes the image from the runtime", async () => {
+  const { runtime, pkg, folder } = setup();
+  await pkg.install({});
+  expect((await pkg.removeImage()).ok).toBe(true);
+  expect(existsSync(folder)).toBe(false);
+  expect(runtime.removedImages).toEqual([IMAGE]);
+  expect(runtime.images.has(IMAGE)).toBe(false);
+});
+
+test("removeImage removes a loaded image by the name aidm-ui gave it, which leaves alone any other name of the same image", async () => {
+  const runtime = new VerifyingRuntime();
+  runtime.verification = ok("c".repeat(64));
+  const { pkg } = setup({ runtime });
+  await pkg.install({});
+  expect((await pkg.removeImage()).ok).toBe(true);
+  expect(runtime.removedImages).toEqual([localName(PINNED)]);
+});
+
+test("with too little free disk nothing is downloaded, and both sizes are given", async () => {
   const free = 700_000_000;
-  const { runtime, pkg } = setup({ free });
-  const needed = Math.ceil(VARIANT.size * (1 + DOWNLOAD_FREE_DISK_MARGIN));
-  const expected = { ok: false as const, error: { code: "install.not_enough_space" as const, data: { needed, free } } };
+  const { runtime, pkg, images } = setup({ free });
+  const expected = { ok: false as const, error: { code: "install.not_enough_space" as const, data: { needed: neededFor(runtime), free } } };
   expect(await pkg.preflight()).toEqual(expected);
   expect(await pkg.install({})).toEqual(expected);
-  expect(runtime.pulls).toEqual([]);
-});
-
-test("the free space is measured where the runtime keeps its images", async () => {
-  const { pkg, asked } = setup({ storagePath: "/var/lib/containers/storage" });
-  expect((await pkg.preflight()).ok).toBe(true);
-  expect((await pkg.install({})).ok).toBe(true);
-  expect(asked).toEqual(["/var/lib/containers/storage", "/var/lib/containers/storage"]);
+  expect(images.downloads).toEqual([]);
+  expect(runtime.loads).toEqual([]);
 });
 
 test("the free space is measured in the data folder when the runtime does not say where it keeps its images", async () => {
@@ -114,37 +275,37 @@ test("the free space is measured in the data folder when the runtime does not sa
   expect(asked).toEqual([dataFolder]);
 });
 
-test("exactly the package size plus 20 percent is enough", async () => {
-  const { pkg } = setup({ free: Math.ceil(VARIANT.size * 1.2) });
+test("when the runtime keeps its images on the disk of the data folder, that disk is measured once and has to hold both", async () => {
+  const { runtime, pkg, asked, dataFolder } = setup({ storagePath: tmpdir(), free: 1 });
+  const result = await pkg.preflight();
+  expect(asked).toEqual([dataFolder]);
+  expect(result).toEqual({ ok: false, error: { code: "install.not_enough_space", data: { needed: neededFor(runtime), free: 1 } } });
+});
+
+test("exactly the room for the download, the runtime's copies and the unpacked layers is enough, and a byte less is not", async () => {
+  const runtime = new FakeRuntime();
+  expect((await setup({ runtime, free: neededFor(runtime) }).pkg.preflight()).ok).toBe(true);
+  const short = await setup({ runtime: new FakeRuntime(), free: neededFor(runtime) - 1 }).pkg.preflight();
+  expect(short).toMatchObject({ ok: false, error: { code: "install.not_enough_space" } });
+});
+
+test("bytes of the download that are already on disk are not counted again", async () => {
+  const onDisk = 5_000_000;
+  const free = 1;
+  const { runtime, pkg, folder } = setup({ free });
+  const before = await pkg.preflight();
+  leavePartOfDownload(folder, onDisk);
+  const after = await pkg.preflight();
+  expect(before).toEqual({ ok: false, error: { code: "install.not_enough_space", data: { needed: neededFor(runtime), free } } });
+  expect(after).toEqual({ ok: false, error: { code: "install.not_enough_space", data: { needed: neededFor(runtime, onDisk), free } } });
+});
+
+test("with part of the download on disk, exactly the room for the rest is enough", async () => {
+  const onDisk = 7_000_000;
+  const runtime = new FakeRuntime();
+  const { pkg, folder } = setup({ runtime, free: neededFor(runtime, onDisk) });
+  leavePartOfDownload(folder, onDisk);
   expect((await pkg.preflight()).ok).toBe(true);
-});
-
-test("an interrupted pull is tried again after 2, 4, 8 and 16 seconds, and then reported", async () => {
-  const { runtime, pkg, sleeps } = setup();
-  runtime.failNextPulls(5);
-  const seen: InstallProgressView[] = [];
-  const result = await pkg.install({ onProgress: (progress) => seen.push(progress) });
-  expect(result).toMatchObject({ ok: false, error: { code: "install.pull_failed", data: { attempts: 5 } } });
-  expect(runtime.pulls).toHaveLength(5);
-  expect(sleeps).toEqual([2000, 4000, 8000, 16000]);
-  expect(new Set(seen.map((progress) => progress.attempt))).toEqual(new Set([1, 2, 3, 4, 5]));
-});
-
-test("a pull that works on the third try completes", async () => {
-  const { runtime, pkg, sleeps } = setup();
-  runtime.failNextPulls(2);
-  expect((await pkg.install({})).ok).toBe(true);
-  expect(runtime.pulls).toHaveLength(3);
-  expect(sleeps).toEqual([2000, 4000]);
-});
-
-test("a pull that is aborted is not tried again", async () => {
-  const { runtime, pkg } = setup();
-  const abort = new AbortController();
-  abort.abort();
-  const result = await pkg.install({ signal: abort.signal });
-  expect(result).toMatchObject({ ok: false, error: { code: "install.pull_failed", data: { attempts: 1 } } });
-  expect(runtime.pulls).toHaveLength(1);
 });
 
 test("start publishes on the loopback address, mounts the data folder and the config folder, and names the config file after the image", async () => {

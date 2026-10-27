@@ -12,28 +12,31 @@ const GIB = 1024 ** 3;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: engineInstall({ size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2 }),
+  install: engineInstall({ size: 683 * MIB, stepReceived: 200 * MIB, speed: 3 * MIB, layersDone: 3, layersTotal: 9, retries: 2, lastRetry: { code: "download.connection_interrupted", data: {} } }),
 };
 
 const render = (view: LocalEngineView | null) => renderToStaticMarkup(<LocalInstallStatus view={view} />);
 
-test("during the download the size, the parts and the try are shown with a labelled progress bar", () => {
+test("during the download the size, the bytes, the speed, the parts and why it went on are shown with a labelled progress bar", () => {
   const html = render(pulling);
   expect(html).toContain("Downloading the engine: 683 MiB");
+  expect(html).toContain("200 MiB of 683 MiB, 3 MiB per second");
   expect(html).toContain("3 of 9 parts");
-  expect(html).toContain("Try 2 of 5");
-  expect(html).toMatch(/<progress id="install-progress" max="9" value="3">/);
+  expect(html).toContain("The connection was interrupted. The download continues from where it stopped. Interruptions so far: 2.");
+  expect(html).toContain(`<progress id="install-progress" max="${683 * MIB}" value="${200 * MIB}">`);
   expect(html).toContain('<label for="install-progress">Downloading the engine: 683 MiB</label>');
   expect(untranslatedText(html)).toEqual([]);
 });
 
-test("the first try is not announced as a try", () => {
-  const html = render({ ...pulling, install: { ...pulling.install!, attempt: 1 } });
-  expect(html).not.toContain("Try 1");
+test("a download that never broke says nothing about interruptions, and no speed is claimed before there is one", () => {
+  const html = render({ ...pulling, install: { ...pulling.install!, retries: 0, lastRetry: null, speed: null } });
+  expect(html).not.toContain("Interruptions");
+  expect(html).not.toContain("per second");
+  expect(html).toContain("200 MiB of 683 MiB");
 });
 
 test("with unknown parts the progress bar has no value and no parts are claimed", () => {
-  const html = render({ ...pulling, install: { ...pulling.install!, layersDone: null, layersTotal: null } });
+  const html = render({ ...pulling, install: { ...pulling.install!, stepReceived: null, layersDone: null, layersTotal: null } });
   expect(html).toContain('<progress id="install-progress"></progress>');
   expect(html).not.toContain("parts");
   expect(html).toContain("Downloading the engine: 683 MiB");

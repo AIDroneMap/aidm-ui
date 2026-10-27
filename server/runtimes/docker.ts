@@ -1,5 +1,7 @@
-import { EXIT_NOT_FOUND, type CommandRunner } from "../process/command-runner.ts";
-import { cliRuntime, sharedRunArgs, type PullLineParser } from "./cli-runtime.ts";
+import { imageArchive } from "../images/image-archive.ts";
+import type { DownloadedImage } from "../images/image-download.ts";
+import { EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import { cliRuntime, sharedRunArgs, type LoadContext } from "./cli-runtime.ts";
 import {
   asRecord,
   DETECT_TIMEOUT_MS,
@@ -29,37 +31,15 @@ export function runArgv(spec: ContainerSpec, detection: RuntimeDetection): strin
 const inspectArgv = (name: string): string[] => ["docker", "inspect", "--type", "container", name];
 
 /**
- * Docker's plain pull output names each layer as "<id>: Pulling fs layer" and
- * later "<id>: Pull complete" (or "Already exists"). Once every layer says
- * "Download complete", what is left is unpacking them.
+ * `docker load` reads an archive on its standard input and the client
+ * streams it to the daemon, so the archive is made from the blobs as it goes
+ * and never lands on disk. The archive is both an OCI image layout and a
+ * `docker save` archive: Docker's classic image store reads only the
+ * `manifest.json` of the second, and its containerd store reads the first
+ * and keeps the manifest digest. Both name the image from it.
  */
-export function dockerPullParser(): PullLineParser {
-  const layers = new Set<string>();
-  const downloaded = new Set<string>();
-  const done = new Set<string>();
-  let last = "";
-  return (line) => {
-    const match = /^([0-9a-f]{12,64}): (.+)$/.exec(line);
-    if (match === null) return null;
-    const [, id = "", status = ""] = match;
-    if (status === "Pulling fs layer") layers.add(id);
-    if (status === "Download complete" && layers.has(id)) downloaded.add(id);
-    if (status === "Pull complete" || status === "Already exists") {
-      layers.add(id);
-      downloaded.add(id);
-      done.add(id);
-    }
-    if (layers.size === 0) return null;
-    const progress = {
-      layersDone: done.size,
-      layersTotal: layers.size,
-      phase: downloaded.size >= layers.size ? ("writing" as const) : ("downloading" as const),
-    };
-    const key = JSON.stringify(progress);
-    if (key === last) return null;
-    last = key;
-    return progress;
-  };
+export function dockerLoad(image: DownloadedImage, context: LoadContext): Promise<CommandResult> {
+  return context.stream(["docker", "load"], imageArchive(image, "oci+docker"));
 }
 
 export function dockerRuntime(runner: CommandRunner, log?: (line: string) => void): ContainerRuntime {
@@ -93,5 +73,6 @@ export function dockerRuntime(runner: CommandRunner, log?: (line: string) => voi
     };
   }
 
-  return cliRuntime({ id: "docker", detect, inspectArgv, pullParser: dockerPullParser, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
+  // The classic store unpacks the archive into a temporary folder first; the containerd store keeps the blobs in its content store.
+  return cliRuntime({ id: "docker", detect, inspectArgv, loadCopies: 1, load: dockerLoad, gpuFlags: GPU_FLAGS }, runner, runArgv, log);
 }

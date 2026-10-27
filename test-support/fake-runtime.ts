@@ -3,7 +3,8 @@ import { join } from "node:path";
 import type { CommandResult } from "../server/process/command-runner.ts";
 import { runArgv as appleRunArgv } from "../server/runtimes/apple-container.ts";
 import { oneOffArgv } from "../server/runtimes/cli-runtime.ts";
-import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv, dockerPullParser } from "../server/runtimes/docker.ts";
+import type { DownloadedImage } from "../server/images/image-download.ts";
+import { GPU_FLAGS as DOCKER_GPU_FLAGS, runArgv as dockerRunArgv } from "../server/runtimes/docker.ts";
 import { GPU_FLAGS as PODMAN_GPU_FLAGS, runArgv as podmanRunArgv } from "../server/runtimes/podman.ts";
 import {
   fail,
@@ -12,7 +13,6 @@ import {
   type ContainerSpec,
   type ContainerStatus,
   type OneOffSpec,
-  type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
   type RuntimeResult,
@@ -33,17 +33,6 @@ interface FakeContainer {
 }
 
 const VERSIONS: Record<RuntimeId, string> = { podman: "5.8.9", docker: "29.9.2", "apple-container": "1.6.1" };
-
-/** The progress the Docker parser gives for the recorded pull. */
-function recordedPullProgress(): PullProgress[] {
-  const parse = dockerPullParser();
-  const progress: PullProgress[] = [];
-  for (const line of recordedText("docker", "pull-no-tty").split("\n")) {
-    const step = parse(line);
-    if (step !== null) progress.push(step);
-  }
-  return progress;
-}
 
 /**
  * The token in the config file the arguments point to, as the task API reads
@@ -75,8 +64,11 @@ function readConfigToken(spec: ContainerSpec): string | null | undefined {
 export class FakeRuntime implements ContainerRuntime {
   readonly id: RuntimeId;
   detection: RuntimeDetection;
+  /** The images it holds, by the pinned reference "<image>@<digest>". */
   readonly images = new Set<string>();
-  readonly pulls: string[] = [];
+  /** Every image it was given to load, by its pinned reference. */
+  readonly loads: string[] = [];
+  readonly loadCopies = 1;
   readonly starts: Array<{ spec: ContainerSpec; argv: string[] }> = [];
   /** Every one-off run, with the command line the real adapter would use. */
   readonly oneOffs: Array<{ spec: OneOffSpec; argv: string[]; signal: AbortSignal | undefined }> = [];
@@ -88,8 +80,9 @@ export class FakeRuntime implements ContainerRuntime {
   /** True for an image whose engine starts but never answers. */
   silent: (image: string) => boolean;
 
-  private readonly pullOutput: PullProgress[];
-  private failingPulls = 0;
+  private failingLoads = 0;
+  /** The names of the images it loaded. */
+  private readonly loadedNames = new Set<string>();
   private imageRemovalRefused = false;
   /** While set, a one-off run waits for this to resolve or for its signal to fire. */
   private oneOffHold: Promise<void> | undefined;
@@ -105,7 +98,6 @@ export class FakeRuntime implements ContainerRuntime {
     options: {
       id?: RuntimeId;
       detection?: Partial<RuntimeDetection>;
-      pullOutput?: PullProgress[];
       versionOf?: (image: string) => string;
       silent?: (image: string) => boolean;
     } = {},
@@ -123,36 +115,40 @@ export class FakeRuntime implements ContainerRuntime {
       problem: null,
       ...options.detection,
     };
-    this.pullOutput = options.pullOutput ?? recordedPullProgress();
   }
 
   async detect(): Promise<RuntimeDetection> {
     return { ...this.detection };
   }
 
-  /** The next `count` pulls send some progress and then fail, as an interrupted pull does. */
-  failNextPulls(count: number): void {
-    this.failingPulls = count;
+  /** The next `count` loads fail, as a tool that cannot read the archive does. */
+  failNextLoads(count: number): void {
+    this.failingLoads = count;
   }
 
-  async pull(
-    image: string,
-    options: { platform?: string | null; onProgress?: (progress: PullProgress) => void; signal?: AbortSignal } = {},
-  ): Promise<RuntimeResult<void>> {
-    this.pulls.push(image);
-    const interrupted = this.failingPulls > 0;
-    if (interrupted) this.failingPulls--;
-    const sent = interrupted ? Math.ceil(this.pullOutput.length / 2) : this.pullOutput.length;
-    for (const progress of this.pullOutput.slice(0, sent)) {
-      if (options.signal?.aborted) return fail("runtime.pull_failed", { exitCode: 130 });
-      options.onProgress?.(progress);
-      await Promise.resolve();
+  /** Puts an image in place as if it had been pulled or loaded before. */
+  holdImage(pinned: string): void {
+    this.images.add(pinned);
+  }
+
+  async load(image: DownloadedImage, options: { signal?: AbortSignal } = {}): Promise<RuntimeResult<void>> {
+    const pinned = `${image.pinned.repository}@${image.pinned.digest}`;
+    this.loads.push(pinned);
+    if (options.signal?.aborted) return fail("download.cancelled");
+    if (this.failingLoads > 0) {
+      this.failingLoads--;
+      return fail("runtime.load_failed", { exitCode: 1 });
     }
-    if (interrupted || options.signal?.aborted) {
-      return fail("runtime.pull_failed", { exitCode: interrupted ? 1 : 130 });
-    }
-    this.images.add(image);
+    this.loadedNames.add(image.name);
+    this.images.add(pinned);
     return ok(undefined);
+  }
+
+  /** Like Podman and Docker's containerd store, it finds a loaded image again by its pinned reference. */
+  async verifyImage(image: DownloadedImage): Promise<RuntimeResult<string>> {
+    const pinned = `${image.pinned.repository}@${image.pinned.digest}`;
+    if (!this.loadedNames.has(image.name) || !this.images.has(pinned)) return fail("runtime.image_not_verified", { name: image.name });
+    return ok(pinned);
   }
 
   /** What the next one-off runs answer, until it is set again. Default: the recorded `nvidia-smi -L`, exit 0. */

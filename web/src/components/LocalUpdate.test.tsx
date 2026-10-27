@@ -58,13 +58,13 @@ test("while an update downloads, the progress shows like an install and the butt
     ...withUpdate,
     update: {
       ...withUpdate.update,
-      applying: engineInstall({ phase: "pulling", size: 682_533_845, layersDone: 2, layersTotal: 5, attempt: 2 }),
+      applying: engineInstall({ phase: "pulling", size: 682_533_845, layersDone: 2, layersTotal: 5, retries: 1, lastRetry: { code: "download.connection_interrupted", data: {} } }),
     },
   });
   expect(html).toContain("Downloading the engine:");
   expect(html).toContain('<progress id="update-progress" max="5" value="2">');
   expect(html).toContain("2 of 5 parts");
-  expect(html).toContain("Try 2 of 5");
+  expect(html).toContain("Interruptions so far: 1.");
   expect(html).toMatch(/aria-disabled="true"[^>]*>Working\.\.\.<\/button>/);
   expect(untranslatedText(html)).toEqual([]);
 });

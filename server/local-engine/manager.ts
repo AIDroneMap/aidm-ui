@@ -21,7 +21,7 @@ import type { FreeBytes } from "../machine/disk.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
-import { ContainerPackage, PULL_ATTEMPTS, type ContainerVariant } from "../packages/container-package.ts";
+import { ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
 import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
@@ -149,8 +149,9 @@ function firstProgress(phase: "pulling" | "starting", size: number, installed: I
     size,
     layersDone: null,
     layersTotal: null,
-    attempt: 1,
-    maxAttempts: kindOf(installed).kind === "native" ? 1 : PULL_ATTEMPTS,
+    speed: null,
+    retries: 0,
+    lastRetry: null,
   };
 }
 
@@ -198,8 +199,12 @@ export interface LocalEngineDeps {
   /** The token for a new install. 32 random bytes in hex by default. */
   random?: () => string;
   freePort?: () => Promise<number>;
-  /** Waits between pull attempts and before each restart; a test passes one that does not wait. */
+  /** Waits before each restart; a test passes one that does not wait. */
   sleep?: (ms: number) => Promise<void>;
+  /** Where container images come from. Default: the image downloader, against the registry each variant names (ADR 0005). */
+  images?: ImageSource;
+  /** The times and the fetch of the image downloader; tests make them short or point them at a fake registry. */
+  imageDownload?: ContainerPackageDeps["download"];
   /** The clock for the time of the next restart and for how long the engine has answered. */
   now?: () => number;
   logOptions?: Pick<EngineLogDeps, "rotateBytes" | "retryBackoffMs">;
@@ -635,15 +640,10 @@ export class LocalEngineManager {
       }
       const steps: InstallStepView[] = [...(mac?.setup.steps(mac.need) ?? []), { id: "engine", size: variant.size }];
       // Refused here, before anything is downloaded, so the operator hears it in the answer to the click.
-      const space = await plan.pkg.preflight();
+      // On a Mac the installer and the kernel come on top of the engine, in the data folder.
+      const before = steps.filter((step) => step.id !== "engine").reduce((sum, step) => sum + (step.size ?? 0), 0);
+      const space = await plan.pkg.preflight({ dataFolderExtra: Math.ceil(before * (1 + DOWNLOAD_FREE_DISK_MARGIN)) });
       if (!space.ok) return { ok: false, status: 409, error: space.error };
-      if (mac !== null) {
-        // The installer and the kernel come on top of the engine, and the engine's own check above counted only itself.
-        const downloads = steps.reduce((sum, step) => sum + (step.size ?? 0), 0);
-        const needed = Math.ceil(downloads * (1 + DOWNLOAD_FREE_DISK_MARGIN));
-        const free = this.deps.freeBytes(this.deps.dataFolder);
-        if (free < needed) return refusal(409, "install.not_enough_space", { needed, free });
-      }
 
       const existing = this.store.local();
       if (existing !== null) this.monitor.setLocalState(existing.id, "installing");
@@ -661,8 +661,9 @@ export class LocalEngineManager {
         size: variant.size,
         layersDone: null,
         layersTotal: null,
-        attempt: 1,
-        maxAttempts: variant.kind === "native" ? 1 : PULL_ATTEMPTS,
+        speed: null,
+        retries: 0,
+        lastRetry: null,
       };
       this.background = this.runInstall(plan, fallback, mac, steps)
         .catch((error: unknown) => {
@@ -891,6 +892,7 @@ export class LocalEngineManager {
         },
       });
       if (!pulled.ok) return this.endSwitch(pulled.error);
+      to = newPkg.installedAs?.(to) ?? to;
       // The pull takes minutes. A run may have started in the meantime.
       if (this.runOnLocalEngine(true)) {
         await this.dropVersion(to, from);
@@ -923,6 +925,7 @@ export class LocalEngineManager {
     if (started && (await this.waitForVersion(engineId, to, newPkg))) {
       const droppable = this.settings.get("local.previous");
       this.commitSwitch(engineId, pending);
+      newPkg.discardDownload?.();
       // Exactly one previous version is kept. The one before it goes, unless it is one of the two that stay.
       if (droppable !== null) await this.dropVersion(droppable);
       this.updateProgress = null;
@@ -1201,7 +1204,8 @@ export class LocalEngineManager {
         if (!again.ok) return this.failInstall(again.error);
       }
     }
-    const { installed } = plan;
+    // A loaded image is run by the reference the runtime gave for it, which the settings keep.
+    const installed = plan.pkg.installedAs?.(plan.installed) ?? plan.installed;
 
     // Every install gets a token of its own, so an old one learned anywhere is worth nothing.
     const token = (this.deps.random ?? randomToken)();
@@ -1220,7 +1224,9 @@ export class LocalEngineManager {
     this.settings.set("local.package", installed);
     this.settings.set("local.previous", null);
     this.installing = false;
-    await this.startEngine();
+    const started = await this.startEngine();
+    // The runtime holds the image and the engine runs from it, so the download has done its work.
+    if (started.ok) plan.pkg.discardDownload?.();
     await this.refreshUpdateOffer();
   }
 
@@ -1247,8 +1253,9 @@ export class LocalEngineManager {
       size: plan.variant.size,
       layersDone: null,
       layersTotal: null,
-      attempt: 1,
-      maxAttempts: PULL_ATTEMPTS,
+      speed: null,
+      retries: 0,
+      lastRetry: null,
     };
     this.publish();
   }
@@ -1298,7 +1305,8 @@ export class LocalEngineManager {
       freeBytes: this.deps.freeBytes,
       storagePath: input.runtime?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
-      sleep: this.deps.sleep,
+      images: this.deps.images,
+      download: this.deps.imageDownload,
     });
     const installed: InstalledPackage = {
       packageVersion: input.offer.packageVersion,
@@ -1730,7 +1738,9 @@ export class LocalEngineManager {
       freeBytes: this.deps.freeBytes,
       storagePath: this.detections.find((candidate) => candidate.id === installed.runtime)?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
-      sleep: this.deps.sleep,
+      ...(installed.imageRef === undefined ? {} : { imageRef: installed.imageRef }),
+      images: this.deps.images,
+      download: this.deps.imageDownload,
     });
   }
 

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { downloadImage, localName, type DownloadedImage } from "../images/image-download.ts";
 import { systemRunner } from "../process/command-runner.ts";
 import { dockerRuntime } from "./docker.ts";
 import { podmanRuntime } from "./podman.ts";
@@ -15,7 +16,15 @@ const requested = (process.env.AIDM_REAL_RUNTIMES ?? "")
   .map((name) => name.trim())
   .filter((name) => name !== "");
 
-const IMAGE = "docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e";
+// The linux/amd64 manifest of the busybox index at
+// docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e.
+// aidm-ui downloads a manifest and not an index, so the manifest is pinned.
+const PINNED = {
+  repository: "docker.io/library/busybox",
+  digest: "sha256:66a6306db78bf2dbf3487f293aa8d6990d8e506fdffab9cc43fe422becf886e4",
+};
+/** The name the runtime keeps the loaded image under. */
+const IMAGE_NAME = localName(PINNED);
 const SLOW = 180_000;
 
 async function freePort(): Promise<number> {
@@ -47,14 +56,19 @@ for (const id of ["podman", "docker"]) {
     chmodSync(folder, 0o755);
     const settingsFolder = mkdtempSync(join(tmpdir(), "aidm-ui-ci-settings-"));
     chmodSync(settingsFolder, 0o755);
+    const downloadFolder = mkdtempSync(join(tmpdir(), "aidm-ui-ci-image-"));
+    let image: DownloadedImage | undefined;
+    /** What the runtime says to run the loaded image by. */
+    let reference = "";
     let port = 0;
     let spec: ContainerSpec;
 
     afterAll(async () => {
       await runtime.remove(name);
-      await runtime.removeImage(IMAGE);
+      await runtime.removeImage(image?.name ?? IMAGE_NAME);
       rmSync(folder, { recursive: true, force: true });
       rmSync(settingsFolder, { recursive: true, force: true });
+      rmSync(downloadFolder, { recursive: true, force: true });
     }, SLOW);
 
     test("it is available", async () => {
@@ -72,19 +86,27 @@ for (const id of ["podman", "docker"]) {
       expect(detection.available).toBe(true);
     }, SLOW);
 
-    test("it pulls the image by digest and reports progress", async () => {
-      const steps: unknown[] = [];
-      const pull = () => runtime.pull(IMAGE, { onProgress: (progress) => steps.push(progress) });
-      let result = await pull();
-      if (!result.ok) {
+    test("it downloads the image by digest, loads it, and verifies that the runtime holds it", async () => {
+      // This reaches the real Docker Hub, which hands out a token for the repository first.
+      const progress: unknown[] = [];
+      const download = () => downloadImage(PINNED, downloadFolder, { onProgress: (step) => progress.push(step) });
+      let downloaded = await download();
+      if (!downloaded.ok) {
         // A registry may refuse a shared runner for a while, so one more try after a short wait.
         await Bun.sleep(10_000);
-        steps.length = 0;
-        result = await pull();
+        downloaded = await download();
       }
-      expect(result).toEqual({ ok: true, value: undefined });
-      // Docker's plain output names every layer. Podman's may name none for an image this small.
-      if (id === "docker") expect(steps.length).toBeGreaterThan(0);
+      expect(downloaded.ok).toBe(true);
+      if (!downloaded.ok) return;
+      image = downloaded.image;
+      expect(image.name).toBe(IMAGE_NAME);
+      expect(progress.length).toBeGreaterThan(0);
+
+      expect(await runtime.load(image)).toEqual({ ok: true, value: undefined });
+      const verified = await runtime.verifyImage(image);
+      expect(verified.ok).toBe(true);
+      if (verified.ok) reference = verified.value;
+      expect(reference).not.toBe("");
     }, SLOW);
 
     test("it starts a detached container that serves the mounted folder on the published loopback port", async () => {
@@ -95,7 +117,7 @@ for (const id of ["podman", "docker"]) {
       mkdirSync(join(folder, "settings"));
       spec = {
         name,
-        image: IMAGE,
+        image: reference,
         platform: null,
         publish: { hostAddress: "127.0.0.1", hostPort: port, containerPort: 3000 },
         mounts: [
@@ -168,8 +190,9 @@ for (const id of ["podman", "docker"]) {
     }, SLOW);
 
     test("it removes the image, and removing it again is fine", async () => {
-      expect(await runtime.removeImage(IMAGE)).toEqual({ ok: true, value: undefined });
-      expect(await runtime.removeImage(IMAGE)).toEqual({ ok: true, value: undefined });
+      const loadedName = image?.name ?? IMAGE_NAME;
+      expect(await runtime.removeImage(loadedName)).toEqual({ ok: true, value: undefined });
+      expect(await runtime.removeImage(loadedName)).toEqual({ ok: true, value: undefined });
     }, SLOW);
   });
 }

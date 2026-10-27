@@ -303,6 +303,7 @@ function InstallButton(props: Pick<InstallScreenProps, "local" | "setup" | "inst
   const underWay =
     status === "preparing" ||
     status === "downloading" ||
+    status === "loading" ||
     status === "checking_gpu" ||
     status === "removing_gpu_package" ||
     status === "starting" ||

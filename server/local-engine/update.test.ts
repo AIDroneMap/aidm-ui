@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
@@ -7,6 +7,7 @@ import type { LocalEngineView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
+import { imageFolder } from "../images/image-download.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import type { Manifest } from "../manifest/schema.ts";
 import type { InstalledContainerPackage } from "../settings/settings.ts";
@@ -21,6 +22,10 @@ const IMAGES = {
   "2.6.0": `${REPOSITORY}@sha256:${"6".repeat(64)}`,
   "2.7.0": `${REPOSITORY}@sha256:${"7".repeat(64)}`,
 };
+/** An image as the manifest pins it. */
+function pinnedOf(version: keyof typeof IMAGES): { repository: string; digest: string } {
+  return { repository: REPOSITORY, digest: IMAGES[version].slice(IMAGES[version].indexOf("@") + 1) };
+}
 const VERSION_OF_IMAGE = new Map(Object.entries(IMAGES).map(([version, image]) => [image, version]));
 const SIZES = { "2.6.0": 6_000, "2.7.0": 7_000 };
 const LATEST = "/releases/latest/download/manifest.json";
@@ -48,15 +53,16 @@ function runtimeOf(options: ConstructorParameters<typeof FakeRuntime>[0] = {}): 
   return new FakeRuntime({ versionOf: (image) => VERSION_OF_IMAGE.get(image) ?? "2.5.0", ...options });
 }
 
-/** A runtime a test can hold at the pull, and tell about every start. */
+/** A runtime a test can hold at the load, and tell about every start. */
 class HookedRuntime extends FakeRuntime {
-  /** While set, a pull of this image waits for it. */
-  pullHeld: { image: string; until: Promise<void> } | null = null;
+  /** While set, the load of this image waits for it. */
+  loadHeld: { image: string; until: Promise<void> } | null = null;
   afterStart: ((image: string) => void) | null = null;
 
-  override async pull(...args: Parameters<FakeRuntime["pull"]>): ReturnType<FakeRuntime["pull"]> {
-    if (this.pullHeld?.image === args[0]) await this.pullHeld.until;
-    return super.pull(...args);
+  override async load(...args: Parameters<FakeRuntime["load"]>): ReturnType<FakeRuntime["load"]> {
+    const { pinned } = args[0];
+    if (this.loadHeld?.image === `${pinned.repository}@${pinned.digest}`) await this.loadHeld.until;
+    return super.load(...args);
   }
 
   override async start(spec: ContainerSpec): ReturnType<FakeRuntime["start"]> {
@@ -262,7 +268,7 @@ test("with a run processing on the local engine, Update is refused and the view 
   const refused = await send(h, "POST", "/api/local-engine/update");
   expect(refused.status).toBe(409);
   expect(await errorOf(refused)).toEqual(blockedBy);
-  expect(runtime.pulls).toEqual([IMAGES["2.5.0"]]);
+  expect(runtime.loads).toEqual([IMAGES["2.5.0"]]);
   expect(runtime.stops).toEqual([]);
 
   // The way back is refused for the same reason.
@@ -310,8 +316,9 @@ test("a successful update marks the new version current and keeps the old one as
   expect(h.settings.get("local.previous")?.packageVersion).toBe("2.5.0");
   expect(h.engineStore.local()?.installedVersion).toBe("2.6.0");
 
-  // The new image was pulled by digest, the old one stays, and the engine runs the new one on the same data folder and token.
-  expect(runtime.pulls).toEqual([IMAGES["2.5.0"], IMAGES["2.6.0"]]);
+  // The new image was downloaded and loaded by digest, the old one stays, and the engine runs the new one on the same data folder and token.
+  expect(runtime.loads).toEqual([IMAGES["2.5.0"], IMAGES["2.6.0"]]);
+  expect(h.images.downloads).toEqual([pinnedOf("2.5.0"), pinnedOf("2.6.0")]);
   expect(runtime.removedImages).toEqual([]);
   expect(runtime.images.has(IMAGES["2.5.0"])).toBe(true);
   expect(runtime.starts).toHaveLength(2);
@@ -319,6 +326,9 @@ test("a successful update marks the new version current and keeps the old one as
   expect(runtime.starts[1]?.spec.mounts).toEqual(mountsBefore);
   expect(h.engineStore.local()?.token).toBe(token);
   expect(runtime.stops).toEqual([CONTAINER_NAME]);
+  // The runtime holds both images, so neither download is needed any more.
+  expect(existsSync(imageFolder(h.dataFolder, pinnedOf("2.5.0")))).toBe(false);
+  expect(existsSync(imageFolder(h.dataFolder, pinnedOf("2.6.0")))).toBe(false);
 });
 
 test("while the update runs, the view shows its progress like an install, and the engine is not restarted behind its back", async () => {
@@ -332,27 +342,53 @@ test("while the update runs, the view shows its progress like an install, and th
   await updateTo(h, "2.6.0");
   const phases = seen.map((view) => view.update.applying?.phase).filter((phase) => phase !== undefined);
   expect(phases[0]).toBe("pulling");
+  expect(phases).toContain("loading");
+  expect(phases.indexOf("loading")).toBeGreaterThan(phases.indexOf("pulling"));
   expect(phases).toContain("starting");
+  expect(phases.indexOf("starting")).toBeGreaterThan(phases.indexOf("loading"));
   expect(seen.find((view) => view.update.applying?.phase === "pulling")?.update.applying?.size).toBe(SIZES["2.6.0"]);
   // A restart after the stop would be a second start of the old image.
   expect(runtime.starts.map((started) => started.spec.image)).toEqual([IMAGES["2.5.0"], IMAGES["2.6.0"]]);
   expect(h.logs.filter((line) => line.includes("Starting it again"))).toEqual([]);
 });
 
-test("an update that cannot be downloaded changes nothing and says why", async () => {
+test("an update that cannot be downloaded changes nothing and says why, and the old version keeps running", async () => {
   const runtime = runtimeOf();
   const h = start({ runtime });
   await installAndWaitReady(h);
   await offer(h, release("2.6.0", 2));
-  runtime.failNextPulls(5);
+  const stalled: ApiError = { code: "download.stalled", data: { seconds: 300 } };
+  h.images.failNext(stalled);
 
   expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
   await eventually(async () => (await localView(h)).problem?.code === "install.pull_failed");
   const view = await localView(h);
+  expect(view.problem).toEqual({ code: "install.pull_failed", data: { cause: stalled } });
   expect(view.update.applying).toBeNull();
   expect(view.installed?.packageVersion).toBe("2.5.0");
   expect(runtime.stops).toEqual([]);
+  expect(runtime.loads).toEqual([IMAGES["2.5.0"]]);
+  expect(runtime.starts).toHaveLength(1);
   expect(view.state).toBe("ready");
+  expect(await runningVersion(h)).toBe("2.5.0");
+});
+
+test("an update whose image the runtime cannot load changes nothing and says why, and the old version keeps running", async () => {
+  const runtime = runtimeOf();
+  const h = start({ runtime });
+  await installAndWaitReady(h);
+  await offer(h, release("2.6.0", 2));
+  runtime.failNextLoads(1);
+
+  expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
+  await eventually(async () => (await localView(h)).problem?.code === "install.load_failed");
+  const view = await localView(h);
+  expect(view.problem).toMatchObject({ data: { cause: { code: "runtime.load_failed" } } });
+  expect(view.update.applying).toBeNull();
+  expect(view.installed?.packageVersion).toBe("2.5.0");
+  expect(runtime.stops).toEqual([]);
+  expect(runtime.starts).toHaveLength(1);
+  expect(await runningVersion(h)).toBe("2.5.0");
 });
 
 // Criterion: a new version that never becomes ready is rolled back automatically and the failure is reported.
@@ -633,17 +669,17 @@ test("aidm-ui stopping while the new engine never answers puts the previous vers
   expect(runtime.removedImages).toEqual([IMAGES["2.6.0"]]);
 });
 
-test("while an update downloads, the local engine takes no new run", async () => {
+test("while an update is loaded into the runtime, the local engine takes no new run", async () => {
   const runtime = hookedRuntime();
   const h = start({ runtime });
   await installAndWaitReady(h);
   await offer(h, release("2.6.0", 2));
   const engineId = h.engineStore.local()?.id as number;
   let letGo: () => void = () => {};
-  runtime.pullHeld = { image: IMAGES["2.6.0"], until: new Promise<void>((resolve) => (letGo = resolve)) };
+  runtime.loadHeld = { image: IMAGES["2.6.0"], until: new Promise<void>((resolve) => (letGo = resolve)) };
 
   expect((await send(h, "POST", "/api/local-engine/update")).status).toBe(202);
-  await eventually(async () => (await localView(h)).update.applying?.phase === "pulling");
+  await eventually(async () => (await localView(h)).update.applying?.phase === "loading");
   expect(h.engines.isUsable(engineId)).toBe(false);
   const refused = await fetch(`${h.base}/api/sample/start`, { method: "POST", body: JSON.stringify({ engineId }) });
   expect(refused.status).toBe(409);

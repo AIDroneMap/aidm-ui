@@ -469,7 +469,7 @@ const MIB = 1024 ** 2;
 const pulling: LocalEngineView = {
   ...fresh,
   state: "installing",
-  install: engineInstall({ size: 683 * MIB, layersDone: 3, layersTotal: 9, attempt: 2 }),
+  install: engineInstall({ size: 683 * MIB, layersDone: 3, layersTotal: 9 }),
 };
 
 test("the install screen offers to install on this computer, below the package offer", () => {
@@ -491,11 +491,10 @@ test("while the request to install is on its way the button is busy but keeps fo
   expect(html).toContain(">Installing...</button>");
 });
 
-test("during the download the screen shows the size, the parts and the try, and Next stays", () => {
+test("during the download the screen shows the size and the parts, and Next stays", () => {
   const html = renderInstall(builtIn, { local: pulling });
   expect(html).toContain("Downloading the engine: 683 MiB");
   expect(html).toContain("3 of 9 parts");
-  expect(html).toContain("Try 2 of 5");
   expect(html).toContain(">Installing...</button>");
   expect(html).toContain('aria-disabled="true"');
   expect(html).toContain(">Next</button>");
@@ -814,6 +813,22 @@ test("a failed Mac step shows its message and a button to add a remote engine", 
     },
   });
   expect(html).toContain("Apple&#x27;s container tool was not installed.");
+  expect(html).toContain("You can use an engine on another computer instead.");
+  expect(html).toContain(">Add a remote engine</button>");
+  expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);
+});
+
+test("a download that stalled ends the install with why, keeps what arrived, and offers a remote engine", () => {
+  const html = renderInstall(builtIn, {
+    local: {
+      ...fresh,
+      state: "failed",
+      install: engineInstall({ phase: "failed", size: 683 * MIB, stepReceived: 300 * MIB }),
+      problem: { code: "install.pull_failed", data: { cause: { code: "download.stalled", data: { seconds: 300 } } } },
+    },
+  });
+  expect(html).toContain("The engine could not be downloaded.");
+  expect(html).toContain("Nothing arrived for 300 seconds, so the download stopped. What arrived so far is kept: try again when the connection works.");
   expect(html).toContain("You can use an engine on another computer instead.");
   expect(html).toContain(">Add a remote engine</button>");
   expect(untranslatedText(html, ["2.5.0", "651 MiB"])).toEqual([]);

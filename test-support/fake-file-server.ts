@@ -2,6 +2,8 @@
 // ticket), for tests. It supports byte ranges, redirects, and cutting a
 // response in the middle of the body.
 
+import type { FakeRegistry } from "./fake-registry.ts";
+
 export interface FakeFileRequest {
   method: string;
   path: string;
@@ -12,6 +14,8 @@ export class FakeFileServer {
   files: Map<string, Uint8Array>;
   redirects = new Map<string, string>();
   readonly requests: FakeFileRequest[] = [];
+  /** When set, the registry answers the paths it handles. */
+  registry: FakeRegistry | undefined;
 
   private server: Bun.Server<undefined> | undefined;
   private port = 0;
@@ -59,10 +63,11 @@ export class FakeFileServer {
     this.stallAfter = bytes;
   }
 
-  private answer(request: Request): Response {
+  private answer(request: Request): Response | Promise<Response> {
     const path = new URL(request.url).pathname;
     const range = request.headers.get("range");
     this.requests.push({ method: request.method, path, range });
+    if (this.registry?.handles(path)) return this.registry.answer(request, (p) => this.url(p));
 
     const target = this.redirects.get(path);
     if (target !== undefined) {

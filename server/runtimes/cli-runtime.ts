@@ -1,4 +1,5 @@
-import { describeCommand, EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
+import type { DownloadedImage } from "../images/image-download.ts";
+import { describeCommand, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
 import {
   asRecord,
   fail,
@@ -8,22 +9,27 @@ import {
   type ContainerSpec,
   type ContainerStatus,
   type OneOffSpec,
-  type PullProgress,
   type RuntimeDetection,
   type RuntimeId,
   type RuntimeResult,
 } from "./runtime.ts";
 
-/** Turns one line of a pull's output into progress, or null when the line says nothing new. */
-export type PullLineParser = (line: string) => PullProgress | null;
+/** What a tool's load needs from the adapter: a streamed command with optional input, and a plain one. */
+export interface LoadContext {
+  signal?: AbortSignal;
+  stream(argv: string[], stdin?: ReadableStream<Uint8Array>): Promise<CommandResult>;
+  run(argv: string[]): Promise<CommandResult>;
+}
 
 export interface CliRuntimeTool {
   id: Extract<RuntimeId, "podman" | "docker">;
   detect(): Promise<RuntimeDetection>;
   /** The command that reads one container's state. */
   inspectArgv(name: string): string[];
-  /** A new parser for each pull, because it keeps count. */
-  pullParser(): PullLineParser;
+  /** See ContainerRuntime.loadCopies. */
+  loadCopies: number;
+  /** Runs the tool's load of a downloaded image, and whatever must follow it for the image to carry its name. */
+  load(image: DownloadedImage, context: LoadContext): Promise<CommandResult>;
   /** The flags that hand the NVIDIA graphics card to a container. */
   gpuFlags: readonly string[];
 }
@@ -33,15 +39,13 @@ export const DEFAULT_STOP_TIMEOUT_SECONDS = 30;
 /** Creating a container can take a while on a busy disk. */
 const START_TIMEOUT_MS = 60_000;
 const REMOVE_TIMEOUT_MS = 60_000;
-/** A pull can print thousands of lines. Only the last ones are kept, because the failure is told at the end. */
-const PULL_OUTPUT_LINES = 1000;
+/** A load can print many lines. Only the last ones are kept, because the failure is told at the end. */
+const LOAD_OUTPUT_LINES = 200;
 
 const NO_SUCH_CONTAINER = /no such container|no container with name or ID|no such object/i;
 const NO_SUCH_IMAGE = /image not known|no such image/i;
 const NOT_AT_REGISTRY =
   /manifest unknown|repository does not exist|name unknown|pull access denied|requested access to the resource is denied/i;
-/** "not found" alone also says a program is missing inside a container, so only a pull may rely on it. */
-const PULL_NOT_FOUND = /not found/i;
 const PORT_IN_USE = /address already in use|port is already allocated/i;
 const NAME_IN_USE = /container name .* is already in use/i;
 
@@ -71,26 +75,46 @@ export function cliRuntime(
     id: tool.id,
     detect: () => tool.detect(),
 
-    async pull(image, options = {}) {
-      const argv = [binary, "pull", ...(options.platform ? ["--platform", options.platform] : []), image];
-      log(describeCommand(argv));
-      const parse = tool.pullParser();
-      const text: string[] = [];
-      const result = await runner.stream(argv, {
+    loadCopies: tool.loadCopies,
+
+    async load(image, options = {}) {
+      const kept: string[] = [];
+      const result = await tool.load(image, {
         signal: options.signal,
-        onLine: (line) => {
-          text.push(line);
-          if (text.length > PULL_OUTPUT_LINES) text.shift();
-          const progress = parse(line);
-          if (progress !== null) options.onProgress?.(progress);
+        stream: (argv, stdin) => {
+          log(describeCommand(argv));
+          return runner.stream(argv, {
+            signal: options.signal,
+            ...(stdin === undefined ? {} : { stdin }),
+            onLine: (line) => {
+              kept.push(line);
+              if (kept.length > LOAD_OUTPUT_LINES) kept.shift();
+            },
+          });
         },
+        run: (argv) => run(argv, REMOVE_TIMEOUT_MS),
       });
       if (result.exitCode === 0) return ok(undefined);
-      const output = text.join("\n");
-      if (result.exitCode !== EXIT_NOT_FOUND && (NOT_AT_REGISTRY.test(output) || PULL_NOT_FOUND.test(output))) {
-        return fail("runtime.image_not_found");
+      if (options.signal?.aborted) return fail("download.cancelled");
+      log(`The load ended with exit code ${result.exitCode}: ${kept.slice(-5).join(" / ")}`);
+      return fail("runtime.load_failed", { exitCode: result.exitCode });
+    },
+
+    async verifyImage(image) {
+      const result = await run([binary, "image", "inspect", image.name]);
+      const parsed = parseJson(result.stdout);
+      const entry = asRecord(Array.isArray(parsed) ? parsed[0] : undefined);
+      if (result.exitCode !== 0 || entry === undefined || typeof entry.Id !== "string") {
+        return fail("runtime.image_not_verified", { name: image.name });
       }
-      return fail("runtime.pull_failed", { exitCode: result.exitCode });
+      // Podman gives the ID without its algorithm; it reads the full form too.
+      const id = entry.Id.startsWith("sha256:") ? entry.Id : `sha256:${entry.Id}`;
+      // The ID is the config digest in Podman and in Docker's classic store,
+      // and the manifest digest in Docker's containerd store. Podman also
+      // keeps the manifest digest it was given.
+      const matches = id === image.config.digest || id === image.manifest.digest || entry.Digest === image.manifest.digest;
+      if (!matches) return fail("runtime.image_not_verified", { name: image.name });
+      return ok(id);
     },
 
     async start(spec) {
@@ -218,7 +242,7 @@ export function sharedRunArgs(
     binary,
     "run",
     "-d",
-    // Starting never pulls. The pull is its own step with its own progress and retries.
+    // Starting never pulls. The image comes from aidm-ui's own download and the tool's load (ADR 0005).
     "--pull=never",
     "--name",
     spec.name,
