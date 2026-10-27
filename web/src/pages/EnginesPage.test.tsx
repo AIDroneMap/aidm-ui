@@ -337,3 +337,13 @@ test("the switch of the local engine is shown in the local entry only", () => {
   expect(html.split('<li class="engine">')[2]).toContain("the switch");
   expect(html.split('<li class="engine">')[1]).not.toContain("the switch");
 });
+
+test("while the checks on a Mac explain why the local engine cannot be reached, the general note is left out", () => {
+  const local: EngineView = { ...engine, kind: "local", name: "This computer", state: "unreachable", problem: { code: "engine.unreachable", data: {} } };
+  expect(renderList([local])).toContain("No engine answered at this address.");
+  const html = renderList([local], { localDiagnosed: true, localConnection: <p>the diagnosis</p> });
+  expect(html).not.toContain("No engine answered at this address.");
+  expect(html).toContain("the diagnosis");
+  // A remote engine keeps its note.
+  expect(renderList([{ ...engine, state: "unreachable", problem: { code: "engine.unreachable", data: {} } }], { localDiagnosed: true })).toContain("No engine answered");
+});

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   chooseSubnet,
+  classifyRoute,
   formatCidr,
   interfaceWithAddress,
   parseCidr,
@@ -36,13 +37,22 @@ test("netstat destinations follow BSD's short forms", () => {
   expect(shown("link#20")).toBeNull();
 });
 
-test("the routing table of a Mac whose VPN took the tool's network", () => {
-  const routes = parseNetstatRoutes(fixture("netstat-vpn-captured.txt"));
-  const tool = routes.filter((route) => formatCidr(route.destination).startsWith("192.0.2."));
-  expect(tool.map((route) => [formatCidr(route.destination), route.interface])).toEqual([
-    ["192.0.2.0/24", "utun4"],
-    ["192.0.2.0/24", "bridge100"],
-    ["192.0.2.1/32", "bridge100"],
+test("the routing tables of a VPN client with an exit node: the subnet into its tunnel, or towards the home router", () => {
+  const tool = (name: string) =>
+    parseNetstatRoutes(fixture(name))
+      .filter((route) => formatCidr(route.destination) === "192.168.64.0/24")
+      .map((route) => [route.gateway, route.flags, route.interface]);
+  expect(tool("netstat-vpn-lan-off.txt")).toEqual([
+    ["link#26", "UCS", "utun4"],
+    ["link#25", "UCI", "bridge100"],
+  ]);
+  expect(tool("netstat-vpn-lan-on.txt")).toEqual([
+    ["192.168.178.1", "UGSc", "en0"],
+    ["link#25", "UCI", "bridge100"],
+  ]);
+  expect(tool("netstat-route-loop.txt")).toEqual([
+    ["192.168.64.1", "UGSc", "bridge100"],
+    ["link#25", "UCI", "bridge100"],
   ]);
 });
 
@@ -68,27 +78,45 @@ test("netstat with the older Refs and Use columns is read by the header", () => 
 test("ifconfig gives each interface's IPv4 networks, and finds the tool's bridge by its gateway", () => {
   const interfaces = parseIfconfig(fixture("ifconfig.txt"));
   const named = (name: string) => interfaces.find((entry) => entry.name === name)?.addresses.map((entry) => formatCidr(entry.network));
-  expect(named("en0")).toEqual(["192.168.1.0/24"]);
-  expect(named("bridge100")).toEqual(["192.0.2.0/24"]);
+  expect(named("en0")).toEqual(["192.168.178.0/24"]);
+  expect(named("bridge100")).toEqual(["192.168.64.0/24"]);
   expect(named("utun4")).toEqual(["100.101.102.103/32"]);
-  expect(interfaceWithAddress(interfaces, parseIpv4("192.0.2.1") as number)).toBe("bridge100");
+  expect(interfaceWithAddress(interfaces, parseIpv4("192.168.64.1") as number)).toBe("bridge100");
   expect(interfaceWithAddress(interfaces, parseIpv4("10.1.1.1") as number)).toBeNull();
 });
 
-test("route -n get names the interface, so a route into a VPN's tunnel shows", () => {
-  expect(parseRouteGet(fixture("route-get-bridge.txt"))).toEqual({ destination: "192.0.2.2", interface: "bridge100", gateway: null });
-  expect(parseRouteGet(fixture("route-get-vpn.txt"))).toEqual({ destination: "192.0.2.0", interface: "utun4", gateway: "100.101.102.103" });
+test("route -n get names the interface, the gateway and the flags", () => {
+  expect(parseRouteGet(fixture("route-get-bridge.txt"))).toEqual({
+    destination: "192.168.64.2",
+    interface: "bridge100",
+    gateway: null,
+    flags: ["UP", "HOST", "DONE", "LLINFO", "WASCLONED", "IFSCOPE", "IFREF"],
+  });
+  expect(parseRouteGet(fixture("route-get-vpn-lan-on.txt"))).toEqual({
+    destination: "192.168.64.0",
+    interface: "en0",
+    gateway: "192.168.178.1",
+    flags: ["UP", "GATEWAY", "DONE", "STATIC", "PRCLONING"],
+  });
   expect(parseRouteGet("route: writing to routing socket: not in table\n")).toBeNull();
 });
 
-test("the tool's network is in use when a route of another interface wins over its bridge", () => {
-  const table = { routes: parseNetstatRoutes(fixture("netstat-vpn-captured.txt")), interfaces: parseIfconfig(fixture("ifconfig.txt")) };
-  expect(usesOf(cidr("192.0.2.0/24"), table, { ignore: ["bridge100"], winning: true })).toEqual([
-    { kind: "route", network: "192.0.2.0/24", interface: "utun4" },
-  ]);
-  // The same Mac before the VPN reconnected: the bridge alone has the network.
-  const healthy = { routes: parseNetstatRoutes(fixture("netstat-healthy.txt")), interfaces: table.interfaces };
-  expect(usesOf(cidr("192.0.2.0/24"), healthy, { ignore: ["bridge100"], winning: true })).toEqual([]);
+test("the route to the container is on the bridge, a loop on it, or away through a tunnel or the router", () => {
+  const kind = (name: string) => classifyRoute(parseRouteGet(fixture(name)), "bridge100");
+  expect(kind("route-get-bridge.txt")).toEqual({ kind: "bridge" });
+  expect(kind("route-get-loop.txt")).toEqual({ kind: "loop", gateway: "192.168.64.1" });
+  expect(kind("route-get-vpn-lan-off.txt")).toEqual({ kind: "away", interface: "utun4", via: "tunnel", gateway: null });
+  expect(kind("route-get-vpn-lan-on.txt")).toEqual({ kind: "away", interface: "en0", via: "router", gateway: "192.168.178.1" });
+  expect(classifyRoute(parseRouteGet(fixture("route-get-bridge.txt")), null)).toEqual({ kind: "unknown" });
+  expect(classifyRoute(null, "bridge100")).toEqual({ kind: "unknown" });
+});
+
+test("a route of another interface into the tool's network wins over its bridge, and is a use of it", () => {
+  const interfaces = parseIfconfig(fixture("ifconfig.txt"));
+  const uses = (name: string) => usesOf(cidr("192.168.64.0/24"), { routes: parseNetstatRoutes(fixture(name)), interfaces }, { ignore: ["bridge100"], winning: true });
+  expect(uses("netstat-vpn-lan-off.txt")).toEqual([{ kind: "route", network: "192.168.64.0/24", interface: "utun4" }]);
+  expect(uses("netstat-vpn-lan-on.txt")).toEqual([{ kind: "route", network: "192.168.64.0/24", interface: "en0" }]);
+  expect(uses("netstat-healthy.txt")).toEqual([]);
 });
 
 test("a default route, a VPN's 0/1 and 128.0/1 and multicast never rule out a network", () => {

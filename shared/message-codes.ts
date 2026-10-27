@@ -126,6 +126,8 @@ export const MESSAGE_CODES = [
   "mac.vpn_route",
   "mac.local_network_denied",
   "mac.engine_unreachable",
+  "mac.route_loop",
+  "mac.engine_not_answering",
   "mac.subnet_conflict",
   "mac.network_unreadable",
   "mac.no_free_subnet",

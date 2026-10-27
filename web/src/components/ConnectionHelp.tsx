@@ -29,6 +29,9 @@ export function ConnectionHelp(props: { view: LocalEngineView; onView: (view: Lo
   if (connection === null || (connection.problem === null && connection.conflict === null)) return null;
   const { problem, conflict } = connection;
   const inside = problem?.code === "mac.engine_unreachable" ? String(problem.data.inside ?? "unknown") : null;
+  const via = problem?.code === "mac.vpn_route" ? String(problem.data.via ?? "tunnel") : null;
+  // The engine's log helps where the checks found no cause outside the engine.
+  const withLog = inside !== null || problem?.code === "mac.engine_not_answering";
 
   const move = async () => {
     setBusy(true);
@@ -51,6 +54,7 @@ export function ConnectionHelp(props: { view: LocalEngineView; onView: (view: Lo
         <div className="error" role="alert">
           <p>{t(problem.code, messageParams(problem))}</p>
           {inside !== null && <p>{t(`local.connection.inside.${inside}`)}</p>}
+          {via !== null && <p>{t(`local.connection.vpn.${via}`, messageParams(problem as NonNullable<typeof problem>))}</p>}
         </div>
       )}
       {conflict !== null && (
@@ -58,7 +62,7 @@ export function ConnectionHelp(props: { view: LocalEngineView; onView: (view: Lo
           <p>{t(conflict.code, messageParams(conflict))}</p>
         </div>
       )}
-      {inside !== null && <LogBelow />}
+      {withLog && <LogBelow />}
       {connection.canMove &&
         (asking ? (
           <div className="ask" role="group" aria-label={t("local.connection.move")}>

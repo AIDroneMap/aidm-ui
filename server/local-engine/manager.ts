@@ -1791,7 +1791,8 @@ export class LocalEngineManager {
     if (via === null) return null;
     // Through the socket the Mac's network is not in the way, so nothing about it is shown.
     const found = via === "port" && this.macConnection !== null ? this.macConnection.view() : { problem: null, conflict: null };
-    return { via, ...found, canMove: found.problem?.code === "mac.vpn_route" || found.conflict !== null };
+    // A VPN client takes whatever network sits on the tool's bridge, so the move is offered for a real collision only.
+    return { via, ...found, canMove: found.conflict !== null };
   }
 
   /**

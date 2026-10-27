@@ -112,6 +112,8 @@ export interface EngineListProps {
   localSwitch?: ReactNode;
   /** Why the local engine runs and cannot be reached, when the checks on a Mac found it. */
   localConnection?: ReactNode;
+  /** True while that diagnosis is shown: the general "no engine answered" note would only contradict it. */
+  localDiagnosed?: boolean;
   /** How the local engine is installed, when the page has it. */
   localKind?: "container" | "native" | null;
 }
@@ -140,7 +142,7 @@ export function EngineList(props: EngineListProps) {
             {!engine.enabled && engine.kind === "remote" && <span className="badge">{t("engines.disabled")}</span>}
           </p>
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
-          {engine.problem && <EngineNote error={engine.problem} kind="problem" />}
+          {engine.problem && !(engine.kind === "local" && props.localDiagnosed === true) && <EngineNote error={engine.problem} kind="problem" />}
           {engine.warning && <EngineNote error={engine.warning} kind="warning" />}
           {engine.kind === "local" && props.localKind === "native" && <p>{t("local.package.native")}</p>}
           {engine.kind === "local" ? (
@@ -499,6 +501,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
           localConnection={
             local.view ? <ConnectionHelp view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} /> : undefined
           }
+          localDiagnosed={local.view?.connection?.problem != null}
         />
       )}
       {local.view && (local.view.installed !== null || local.view.runtime.available.length > 0) && (

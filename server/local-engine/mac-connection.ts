@@ -103,7 +103,11 @@ export class MacConnection {
       // The engine may have answered, stopped or been closed while the checks ran.
       if (this.closed || this.timer === undefined) return;
       if (JSON.stringify(found) === JSON.stringify(this.problem)) return;
-      this.deps.log(`Connection: the engine runs and does not answer from this Mac: ${found.code} ${JSON.stringify(found.data)}.`);
+      if (found === null) {
+        this.deps.log("Connection: the published port answers again.");
+      } else {
+        this.deps.log(`Connection: the engine runs and does not answer from this Mac: ${found.code} ${JSON.stringify(found.data)}.`);
+      }
       this.problem = found;
       this.deps.onChange();
     } catch (error) {
