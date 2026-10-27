@@ -39,6 +39,7 @@ import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
 import { MAX_RAISED_BODY_BYTES } from "../http/limits.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
+import { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { entryScriptOf, type AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
 import { loggingRunner } from "../process/logging-runner.ts";
@@ -132,7 +133,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const sessions = new Sessions();
     const engineStore = new EngineStore(db, log);
     tokens = () => engineStore.list().map((engine) => engine.token);
-    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log });
+    // One record of each engine's failures for every caller, so a long outage reads as one summary a minute.
+    const unreachable = new UnreachableLines(log);
+    const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log, unreachable });
     const runStore = new RunStore(db);
     const tracker = new RunTracker({
       runs: runStore,
@@ -140,6 +143,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       dataFolder,
       intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
       log: log,
+      unreachable,
     });
     const manifests = new ManifestService({
       settings,
@@ -196,6 +200,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       engineStore,
       architecture: process.arch,
       log: log,
+      unreachable,
       localMemoryCap: () => localEngine.memoryCap(),
     });
     const runtimeSetup = new RuntimeSetup({

@@ -19,6 +19,7 @@ import { SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { isFinished } from "../runs/run-state.ts";
 import type { RunStore } from "../runs/run-store.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
+import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure } from "../task-api/task-client.ts";
 import type { SampleDatasetEntry } from "./sample-dataset.ts";
 import { readStoredZip, type ZipEntry } from "./stored-zip.ts";
@@ -44,6 +45,8 @@ export interface SampleJobDeps {
   fetch?: typeof fetch;
   freeBytes?: FreeBytes;
   clientFor?: (endpoint: EngineEndpoint) => TaskClient;
+  /** The "Could not reach" lines, shared with the other clients of each engine. */
+  unreachable?: UnreachableLines;
   /** The memory the local engine has, or null for no cap. Without it the local engine counts like a remote one. */
   localMemoryCap?: () => number | null;
 }
@@ -105,7 +108,7 @@ export class SampleJob {
   private readonly freeBytes: FreeBytes;
 
   constructor(private readonly deps: SampleJobDeps) {
-    this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log }));
+    this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log, unreachable: deps.unreachable }));
     this.freeBytes = deps.freeBytes ?? defaultFreeBytes;
   }
 
