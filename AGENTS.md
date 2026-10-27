@@ -20,7 +20,7 @@ The project has two goals, and every change should serve at least one of them:
 
 ## Current stage
 
-Pre-alpha, not for use. The first specification, #2 (local server and engine manager), is built: the executable and its server, settings, remote engines, the machine check and the wizard, the sample job, and the local engine with its container and native packages. Projects, uploads, the job queue, the viewers and exports have no specification yet.
+Pre-alpha, not for use. The first milestone, from one executable to a finished run on a real Mac, is reached: `docs/milestones/0001-first-mac-run.md` has what it delivers, the measured numbers and the known limits with their owners. It built the first specification, #2 (local server and engine manager), and its follow-ups. Projects, uploads, the job queue, the viewers and exports have no specification yet.
 
 Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Build only what an approved specification covers. For anything else, limit work to specifications, mock-ups described in text, and documentation.
 

@@ -4,7 +4,7 @@
 
 AIDM UI will give a single operator a complete drone mapping tool in the browser: create a project, upload images, check them, start processing, follow progress, and view and export the results. It installs the AIDM engine on the operator's own computer without Docker or a terminal, and works with any AIDM task API on the network or in the cloud.
 
-> **Status: pre-alpha, not for use.** The first specification ([#2](https://github.com/AIDroneMap/aidm-ui/issues/2), local server and engine manager) is built: the executable, the wizard that checks the machine and installs the engine, the sample job, and remote engines. Projects, uploads, the viewers and exports are not written yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
+> **Status: pre-alpha, not for use.** The first milestone is reached: one executable takes an operator from a bare computer to a finished photogrammetry run, on Linux and on a Mac. [docs/milestones/0001-first-mac-run.md](docs/milestones/0001-first-mac-run.md) says what it delivers, what was measured and what is still missing. Projects, uploads, the viewers and exports are not written yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
 
 ## What it will do
 
