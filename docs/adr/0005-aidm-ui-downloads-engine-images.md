@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-10-26
+amended: 2026-10-27, for the layers a runtime already holds
 ---
 
 # aidm-ui downloads engine images itself and hands them to the runtime
@@ -41,6 +42,21 @@ Found in each tool's source and checked against Podman 5.8.9, Docker 29.9.2 (con
 Every loaded image is named `<repository>:sha256-<manifest digest>`, in the `io.containerd.image.name` annotation that all three read first, so it can be found and removed by that name. Removing it removes only that name.
 
 No runtime needs the fallback, a read-only registry for the checked blobs that aidm-ui would serve on the loopback address: each tool loads a local archive or folder. Apple's tool could pull from a loopback registry (`--scheme http`), which would save it the two temporary copies, but the load is what the tool documents for local images and uses no network code at all.
+
+### Layers the runtime already holds
+
+Added after the third Mac test. aidm-api 2.6.1's arm64 image is 487 MiB in 13 layers. Apple's tool, which held 2.5.0, pulled only its 8 new layers, 56 MiB, because the lower layers are byte for byte the same. Downloading every blob, as this ADR first said, would have cost 15 minutes on that link instead of 2.
+
+Before the layers are downloaded, aidm-ui asks the runtime which of them it holds, and leaves those out. The manifest and the config always come. Each load reads a held layer from the runtime's own store, not from the archive or the folder. This was checked in the sources and tried on the build server with two small images that share one layer:
+
+| Runtime | Why a held layer can be left out | Which layers count as held | A load that lacks a layer the runtime does not hold |
+| --- | --- | --- | --- |
+| Apple's tool 1.6.1 | The import looks in the content store by digest before it reads the archive (`ImageStore+Import.swift`, `fetch`) | A blob of that digest and size in `<app root>/content/blobs/sha256/` | Fails (`missingContent`) |
+| Podman 5.8 | The copy asks the storage to reuse a blob before it opens it (`copy/single.go`, `TryReusingBlobWithOptions`; `storage_dest.go` finds it by compressed digest) | The layers an earlier install shares with the new image from the bottom, while Podman still holds that image | Exit 125 |
+| Docker 29, containerd store | The OCI index import takes blobs the content store has | The same, from the bottom | **Exit 0**, with "Error unpacking image" and a broken image, so that line counts as a failed load |
+| Docker 29, classic store | A layer whose chain ID is held is not read (`tarexport/load.go`) | The same, from the bottom | Exit 1 |
+
+"An earlier install" is the installed and the previous engine package on the same runtime. Each record keeps its layers; one from before this change gets them from its manifest at the registry. A load that fails without the layers left out is tried once more with them downloaded, and only they are fetched then. No runtime needs a cache of blobs in the data folder, so the download is still deleted once the engine has started. The progress shows the bytes the download really fetches, and how much of the image was already on the computer.
 
 ### The disk check
 
