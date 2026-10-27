@@ -403,6 +403,12 @@ export class NativePackage implements EnginePackage {
     const { deps } = this;
     try {
       mkdirSync(join(deps.dataFolder, "logs"), { recursive: true, mode: 0o700 });
+      // The task API reads its data folder and its upload folder, relative to where it runs, at
+      // start and stops when they are not there (aidm-api 2.6.1: TaskManager, Directories). In test
+      // mode its data folder is tests/data.
+      for (const folder of ["data", "tmp", ...((deps.extraArgs ?? []).includes("--test") ? [join("tests", "data")] : [])]) {
+        mkdirSync(join(options.engineDataFolder, folder), { recursive: true });
+      }
       this.writeConfig(options.hostPort, options.token);
     } catch {
       return fail("runtime.start_failed", { reason: "files" });
