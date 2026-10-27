@@ -36,7 +36,9 @@ AIDM UI talks to every engine only through the task API, so it works the same wi
 - Planned: MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
 - The engine runs as a native package where one exists, and through a container runtime (Podman, Docker or Apple's container tool) until then. The wizard installs the runtime when the computer has none.
 
-## Logs for a bug report
+## Troubleshooting
+
+### Logs for a bug report
 
 AIDM UI writes a readable log of what it does to the terminal and to `logs/aidm-ui.log` in its data folder: each install step with its time and result, each command it runs (with tokens hidden), each download with every resume and its average speed, and each check that failed with what it expected and what it found. When the file reaches 5 MiB it becomes `aidm-ui.log.1`, and three older files are kept. The engine's own lines go to `logs/engine.log` next to it. The terminal and the file hold the same lines. An engine that stops answering gets three "Could not reach" lines, then one "Still unreachable" summary a minute until it answers again. If the file cannot be written, the terminal says so, and the file says how many lines it lacks once it can be written again.
 
@@ -49,6 +51,17 @@ The data folder is, unless `--data-dir` or the `AIDM_UI_DATA_DIR` environment va
 | Windows | `%LOCALAPPDATA%\aidm-ui` |
 
 Attach `logs/aidm-ui.log` (and `logs/engine.log` when the engine misbehaves) to a bug report. The log holds no engine token, but it holds the paths of your data folder, so look it over before you share it. For the complete output of every runtime command, start AIDM UI with `--record-runtime-commands`: that file is `diagnostics/runtime-commands.jsonl`.
+
+At the end of every run, the log has one line that sums it up: its state, the engine's time, each stage's time, the warnings, the failed processes, and where the engine keeps the task's own log.
+
+### On a Mac
+
+AIDM UI runs the engine in Apple's container tool, which gives it a small network inside the Mac. When the engine runs but does not answer, the engines page says why. The causes found so far:
+
+- **The Local Network permission.** macOS asks whether "container" may find devices on your local network, when the engine first starts. If the answer was no, turn it on in System Settings, Privacy & Security, Local Network: switch on "container". No restart is needed.
+- **A VPN client that changes the route.** A VPN client that sends all traffic through an exit node can send the engine's traffic into its tunnel, or to your router, instead of to the engine. It may do it again each time it reconnects. Turn the exit node off while you use the engine on this Mac, or use an engine on another computer. Do not change the routes by hand: the client puts its own back at its next reconnect.
+
+For a bug report from a Mac, send `logs/aidm-ui.log` and `logs/engine.log`, which hold every check and its result. With `--record-runtime-commands`, add `diagnostics/runtime-commands.jsonl`. Say which VPN setting was on, if any: whether all traffic went through an exit node, and whether the local network was allowed.
 
 ## Contributing
 
