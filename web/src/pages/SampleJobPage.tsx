@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiFailure, asApiFailure } from "../api.ts";
+import { DownloadBlock, interruptionText } from "../components/DownloadBlock.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { formatCount, formatMemory } from "../engines.ts";
 import { formatBytes, formatDuration } from "../format.ts";
@@ -53,10 +54,12 @@ export interface SampleIntroProps {
   starting: boolean;
   failure: ApiFailure | null;
   onStart: () => void;
+  /** False inside the wizard, which has its own way out. */
+  showSkip?: boolean;
 }
 
 /** Everything the operator sees before a run: the photos, the measured figures and the choice of engine. */
-export function SampleIntro({ sample, engineId, onEngineChange, starting, failure, onStart }: SampleIntroProps) {
+export function SampleIntro({ sample, engineId, onEngineChange, starting, failure, onStart, showSkip = true }: SampleIntroProps) {
   const { dataset, reference } = sample;
   const offered = sample.engines.filter((engine) => engine.offered);
   const refused = sample.engines.filter((engine) => !engine.offered);
@@ -141,7 +144,7 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
             {starting ? t("sample.starting") : t("sample.start")}
           </button>
         )}
-        <a href="#/">{t("sample.skip")}</a>
+        {showSkip && <a href="#/">{t("sample.skip")}</a>}
       </div>
     </>
   );
@@ -206,7 +209,7 @@ export function RunProgress({
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
     <>
-      {run.engineName !== null && <p>{t("run.engine", { name: run.engineLocal ? t("engines.local_name") : run.engineName })}</p>}
+      {run.engineName !== null && <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName })}</p>}
       <p role="status" className="run-state">
         {t(known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>
@@ -214,16 +217,14 @@ export function RunProgress({
       {run.restarted && <p className="warning">{t("run.restarted")}</p>}
 
       {run.step === "download" && run.download && (
-        <div className="field">
-          <label htmlFor="run-download">
-            {t("run.download", { received: formatBytes(run.download.received), total: formatBytes(run.download.total) })}
-          </label>
-          <progress
-            id="run-download"
-            max={run.download.total > 0 ? run.download.total : undefined}
-            value={run.download.total > 0 ? run.download.received : undefined}
-          />
-        </div>
+        <DownloadBlock
+          title={t("run.download")}
+          received={run.download.received}
+          size={run.download.total > 0 ? run.download.total : null}
+          speed={run.download.speed}
+          interruption={interruptionText(run.download.retries, run.download.lastRetry)}
+          progressId="run-download"
+        />
       )}
       {run.step === "upload" && run.upload && (
         <div className="field">
@@ -453,6 +454,7 @@ export function SampleJobPage({
           starting={starting}
           failure={failure}
           onStart={() => void start()}
+          showSkip={!embedded}
         />
       )}
     </>

@@ -37,8 +37,9 @@ import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts
 import { SampleJob } from "../sample/sample-job.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { ALL_INTERFACES, listen, LOOPBACK, type Listener } from "../http/listener.ts";
+import { MAX_RAISED_BODY_BYTES } from "../http/limits.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
-import type { AssetMap } from "../http/static-assets.ts";
+import { entryScriptOf, type AssetMap } from "../http/static-assets.ts";
 import { Settings } from "../settings/settings.ts";
 import { loggingRunner } from "../process/logging-runner.ts";
 import { openDiagnosisLog } from "./diagnosis-log.ts";
@@ -98,10 +99,12 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
   // gives the same instance and the second copy attaches.
   const dataFolder = realpathSync.native(requestedFolder);
 
+  const entry = entryScriptOf(options.assets);
   const identity: InstanceIdentity = {
     app: "aidm-ui",
     version: options.version,
     instance: instanceId(dataFolder),
+    ...(entry === null ? {} : { entry }),
   };
 
   const isOurs = async (port: number) => (await probe(port))?.instance === identity.instance;
@@ -237,7 +240,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 
     for (let port = first; port <= last; port++) {
       try {
-        listener = listen({ hostname, port, routes, fetch });
+        listener = listen({ hostname, port, routes, fetch, maxRequestBodySize: MAX_RAISED_BODY_BYTES });
       } catch (error) {
         if (!isAddressInUse(error)) throw error;
         if (await isOurs(port)) return await attach(port);

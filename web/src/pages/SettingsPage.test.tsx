@@ -38,6 +38,14 @@ function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsDa
     refreshing: false,
     refreshResult: null,
     onRefresh: () => {},
+    dataset: { present: false, size: null, fileName: "aidm-vineyard-small-v1.zip" },
+    datasetAsking: false,
+    datasetWorking: null,
+    datasetDone: null,
+    onDatasetAskDelete: () => {},
+    onDatasetKeep: () => {},
+    onDatasetDelete: () => {},
+    onDatasetImport: () => {},
     ...overrides,
   };
   return renderToStaticMarkup(<SettingsForm {...props} />);
@@ -105,15 +113,15 @@ test("a failed load shows the error", () => {
 
 test("each section has a status area that is in the page even when empty, and a save fills it", () => {
   const empty = render();
-  expect(empty.match(/<p role="status"><\/p>/g)?.length).toBe(3);
+  expect(empty.match(/<p role="status"><\/p>/g)?.length).toBe(4);
 
   const portSaved = render({ saved: "port" });
   expect(portSaved).toContain('<p role="status">Port saved.');
-  expect(portSaved.match(/role="status"/g)?.length).toBe(3);
+  expect(portSaved.match(/role="status"/g)?.length).toBe(4);
 
   const lanSaved = render({ saved: "lan-off" });
   expect(lanSaved).toContain('<p role="status">AIDM UI is now closed to your local network.</p>');
-  expect(lanSaved.match(/role="status"/g)?.length).toBe(3);
+  expect(lanSaved.match(/role="status"/g)?.length).toBe(4);
 });
 
 test("a bad port marks the field invalid and points it at the hint and the error", () => {
@@ -219,4 +227,55 @@ test("the settings point to the advanced options of the engine on this computer"
   expect(html).toContain("<h2 id=\"settings-local-title\">Engine on this computer</h2>");
   expect(html).toContain('<a href="#/engines">Open the advanced options for the engine on this computer</a>');
   expect(untranslatedText(html)).toEqual([]);
+});
+
+// The sample photos the data folder keeps.
+
+const kept = { present: true, size: 888_735_308, fileName: "aidm-vineyard-small-v1.zip" };
+
+test("the kept sample photos are shown with their size, and a delete button that does not delete yet", () => {
+  const html = render({ dataset: kept });
+  expect(html).toContain("Kept on this computer: aidm-vineyard-small-v1.zip, 848 MiB.");
+  expect(html).toContain(">Delete the sample photos</button>");
+  expect(html).not.toContain("Yes, delete");
+  expect(untranslatedText(html, ["8823", "aidm-vineyard-small-v1.zip"])).toEqual([]);
+});
+
+test("deleting asks first, with Delete and Keep, and says that the photos download again", () => {
+  const html = render({ dataset: kept, datasetAsking: true });
+  expect(html).toContain("Delete the sample photos? The next sample job downloads them again.");
+  expect(html).toContain(">Yes, delete</button>");
+  expect(html).toContain(">Keep</button>");
+  expect(html).not.toContain(">Delete the sample photos</button>");
+});
+
+test("without a kept zip there is no delete button, and the import is labelled", () => {
+  const html = render();
+  expect(html).toContain("The sample photos are not on this computer yet.");
+  expect(html).not.toContain("Delete the sample photos</button>");
+  expect(html).toContain('<label for="settings-dataset-import">Import the sample photos from a file</label>');
+  expect(html).toMatch(/<input id="settings-dataset-import" type="file" accept="[^"]*"[^>]*aria-describedby="settings-dataset-import-hint"/);
+  expect(unlabelledInputs(html)).toEqual([]);
+});
+
+test("while the photos load, nothing is claimed about them", () => {
+  const html = render({ dataset: null });
+  expect(html).toContain("Looking for the sample photos...");
+  expect(html).not.toContain("not on this computer yet");
+});
+
+test("an import in progress, a deletion and a refused file are said in the sample photos section", () => {
+  const importing = render({ datasetWorking: "import" });
+  expect(importing).toContain('<p role="status">Importing...</p>');
+  expect(importing).toMatch(/<input id="settings-dataset-import"[^>]*disabled=""/);
+  expect(render({ dataset: kept, datasetWorking: "delete" })).toContain("Deleting...</button>");
+  expect(render({ datasetDone: "deleted" })).toContain('<p role="status">The sample photos are deleted.</p>');
+  expect(render({ datasetDone: "imported" })).toContain('<p role="status">The sample photos are imported.</p>');
+
+  const refused = render({ failure: { section: "dataset", error: new ApiFailure(400, "sample.import_mismatch") } });
+  expect(refused).toContain('role="alert"');
+  expect(refused).toContain("its checksum does not match");
+  const wrongSize = render({ failure: { section: "dataset", error: new ApiFailure(400, "sample.import_wrong_size", { size: 888_735_308 }) } });
+  expect(wrongSize).toContain("which are a zip file of exactly 848 MiB.");
+  expect(untranslatedText(refused, ["8823"])).toEqual([]);
 });

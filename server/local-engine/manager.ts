@@ -1379,7 +1379,11 @@ export class LocalEngineManager {
         onStep: (step) => {
           this.publishedReceived = 0;
           meter = speedMeter(this.now.bind(this));
-          show({ step, stepReceived: null, speed: null });
+          show({ step, stepReceived: null, speed: null, retries: 0, lastRetry: null });
+        },
+        onRetry: (retries, reason) => {
+          if (this.progress?.retries === retries) return;
+          show({ retries, lastRetry: reason });
         },
         onReceived: (received, bytesPerSecond) => {
           // Every download of the Mac steps shows its speed like the engine's: the step's own, or one measured here.

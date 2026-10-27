@@ -1,7 +1,17 @@
-import { join, basename } from "node:path";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { open } from "node:fs/promises";
+import { join, basename, dirname } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { EngineView, ReferenceTimeView, RunView, SampleEngineOffer, SampleView } from "../../shared/api-types.ts";
-import { downloadVerified } from "../downloads/downloader.ts";
+import type {
+  EngineView,
+  ReferenceTimeView,
+  RunView,
+  SampleDatasetFileView,
+  SampleEngineOffer,
+  SampleView,
+} from "../../shared/api-types.ts";
+import { downloadVerified, sizeOf } from "../downloads/downloader.ts";
+import { speedMeter } from "../downloads/speed.ts";
 import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineStore } from "../engines/engine-store.ts";
 import { freeBytes as defaultFreeBytes, type FreeBytes } from "../machine/disk.ts";
@@ -15,6 +25,10 @@ import { readStoredZip, type ZipEntry } from "./stored-zip.ts";
 
 export type SampleOutcome =
   | { ok: true; run: RunView }
+  | { ok: false; status: number; error: ApiError };
+
+export type DatasetOutcome =
+  | { ok: true; dataset: SampleDatasetFileView }
   | { ok: false; status: number; error: ApiError };
 
 export interface SampleJobDeps {
@@ -85,6 +99,8 @@ function cancelFailureError(failure: TaskApiFailure): ApiError {
 /** The sample job: download the pinned dataset, send its images to an engine, and hand the run to the tracker. */
 export class SampleJob {
   private readonly preparing = new Map<number, Preparing>();
+  /** True while an imported zip is being written and checked. */
+  private importing = false;
   private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
   private readonly freeBytes: FreeBytes;
 
@@ -125,12 +141,13 @@ export class SampleJob {
     if (latest !== null && !isFinished(latest.state)) {
       return { ok: false, status: 409, error: { code: "sample.already_running", data: {} } };
     }
+    if (this.importing) return { ok: false, status: 409, error: { code: "sample.dataset_in_use", data: {} } };
 
     const run = this.deps.runs.create({ projectId, engineId, options: this.deps.dataset.options });
     const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.deps.tracker.update(run.id, {
       step: "download",
-      download: { received: 0, total: this.deps.dataset.size },
+      download: { received: 0, total: this.deps.dataset.size, speed: null, retries: 0, lastRetry: null },
     });
     preparing.done = this.prepare(run.id, engineId, preparing).catch((error: unknown) => {
       this.deps.log(`Run ${run.id} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -178,6 +195,102 @@ export class SampleJob {
     const all = [...this.preparing.values()];
     for (const preparing of all) preparing.abort.abort();
     await Promise.all(all.map((preparing) => preparing.done));
+  }
+
+  /** The zip of the sample photos that the data folder keeps. */
+  datasetFile(): SampleDatasetFileView {
+    const path = this.zipPath();
+    const present = existsSync(path);
+    return { present, size: present ? sizeOf(path) : null, fileName: this.deps.dataset.fileName };
+  }
+
+  /**
+   * Deletes the kept zip, only because the operator asked. Nothing else
+   * ever does (see zipPath). Refused while a run is downloading or sending
+   * it, or while an import is writing it.
+   */
+  deleteDatasetFile(): DatasetOutcome {
+    if (this.datasetBusy()) return { ok: false, status: 409, error: { code: "sample.dataset_in_use", data: {} } };
+    rmSync(this.zipPath(), { force: true });
+    return { ok: true, dataset: this.datasetFile() };
+  }
+
+  /**
+   * Takes the zip from the operator instead of the download, for a copy made
+   * on another computer. The body is written to a temporary file next to the
+   * kept zip while its SHA-256 is computed, so it is never held in memory. A
+   * body that is not exactly the pinned size, or whose SHA-256 is not the
+   * pinned one, is deleted and refused. Only a checked zip gets the name.
+   */
+  async importDatasetFile(body: ReadableStream<Uint8Array> | null, declaredLength: number | null): Promise<DatasetOutcome> {
+    const { dataset } = this.deps;
+    const wrongSize = (found?: number): DatasetOutcome => ({
+      ok: false,
+      status: 400,
+      error: { code: "sample.import_wrong_size", data: found === undefined ? { size: dataset.size } : { size: dataset.size, found } },
+    });
+    if (this.datasetBusy()) return { ok: false, status: 409, error: { code: "sample.dataset_in_use", data: {} } };
+    if (body === null) return wrongSize(0);
+    if (declaredLength !== null && declaredLength !== dataset.size) return wrongSize(declaredLength);
+
+    const path = this.zipPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const free = this.freeBytes(dirname(path));
+    if (free < dataset.size) {
+      return { ok: false, status: 507, error: { code: "download.not_enough_space", data: { needed: dataset.size, free } } };
+    }
+
+    this.importing = true;
+    const temporary = `${path}.import`;
+    rmSync(temporary, { force: true });
+    try {
+      const hasher = new Bun.CryptoHasher("sha256");
+      const file = await open(temporary, "w");
+      let received = 0;
+      try {
+        for await (const chunk of body) {
+          received += chunk.byteLength;
+          // More than the pinned size can only be the wrong file. Stop before it fills the disk.
+          if (received > dataset.size) return wrongSize(received);
+          hasher.update(chunk);
+          await file.write(chunk);
+        }
+      } finally {
+        await file.close();
+      }
+      if (received !== dataset.size) return wrongSize(received);
+      if (hasher.digest("hex") !== dataset.sha256) {
+        this.deps.log(`Import of ${dataset.fileName}: check failed, the SHA-256 is not the pinned one. The file was discarded.`);
+        return { ok: false, status: 400, error: { code: "sample.import_mismatch", data: {} } };
+      }
+      renameSync(temporary, path);
+      this.deps.log(`Import of ${dataset.fileName}: checked and kept, ${received} bytes`);
+      return { ok: true, dataset: this.datasetFile() };
+    } finally {
+      rmSync(temporary, { force: true });
+      this.importing = false;
+    }
+  }
+
+  /**
+   * Where the sample photos are kept, and the rule that keeps them.
+   *
+   * The zip is stored once at <data>/downloads/<fileName> and reused whenever
+   * its SHA-256 is the pinned one. It is not downloaded again for a new run, a
+   * run on another engine, a run after a cancel or a failure, a restart of
+   * aidm-ui or an update of the engine. Nothing in aidm-ui removes it except
+   * the operator's delete in the settings, and a file whose SHA-256 is not the
+   * pinned one, which is not the dataset and is replaced by a new download.
+   * A download is written to "<name>.part" and an import to "<name>.import",
+   * and each gets the final name only after its SHA-256 has been checked.
+   */
+  private zipPath(): string {
+    return join(this.deps.dataFolder, "downloads", this.deps.dataset.fileName);
+  }
+
+  /** True while a run is downloading or sending the zip, or an import is writing it. */
+  private datasetBusy(): boolean {
+    return this.importing || this.preparing.size > 0;
   }
 
   private projectId(): number | null {
@@ -229,9 +342,16 @@ export class SampleJob {
   private async prepare(runId: number, engineId: number, preparing: Preparing): Promise<void> {
     const { dataset, tracker } = this.deps;
     const { signal } = preparing.abort;
-    const zipPath = join(this.deps.dataFolder, "downloads", dataset.fileName);
+    // The zip is kept and reused; see zipPath for the rule.
+    const zipPath = this.zipPath();
 
     let lastShown = 0;
+    let lastReceived = 0;
+    let retries = 0;
+    let lastRetry: ApiError | null = null;
+    const speed = speedMeter();
+    const showDownload = (received: number, total: number) =>
+      tracker.update(runId, { download: { received, total, speed: speed(received), retries, lastRetry } });
     const downloaded = await downloadVerified(
       { url: dataset.url, size: dataset.size, sha256: dataset.sha256, path: zipPath },
       {
@@ -241,10 +361,16 @@ export class SampleJob {
         signal,
         freeBytes: this.freeBytes,
         onProgress: (received, total) => {
+          lastReceived = received;
           const now = Date.now();
           if (received < total && now - lastShown < PROGRESS_INTERVAL_MS) return;
           lastShown = now;
-          tracker.update(runId, { download: { received, total } });
+          showDownload(received, total);
+        },
+        onRetry: (reason) => {
+          retries++;
+          lastRetry = reason;
+          showDownload(lastReceived, dataset.size);
         },
       },
     );

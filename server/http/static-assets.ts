@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { errorResponse } from "../../shared/api-error.ts";
@@ -26,6 +27,17 @@ export async function assetsFromFolder(folder: string): Promise<AssetMap> {
     assets.set("/" + relative.join("/"), file);
   }
   return assets;
+}
+
+/** The entry script that the built index.html loads, or null when there is none (tests, the development server). */
+export function entryScriptOf(assets: AssetMap): string | null {
+  const index = assets.get(INDEX);
+  if (index === undefined) return null;
+  try {
+    return /<script[^>]*type="module"[^>]*src="(\/assets\/[^"]+)"/.exec(readFileSync(index, "utf8"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function serveAsset(assets: AssetMap, urlPath: string): Response | null {

@@ -76,3 +76,22 @@ export async function api<T>(
     throw new ApiFailure(response.status, "server.internal_error");
   }
 }
+
+/**
+ * Sends a file as the raw body of a POST, so the browser streams it from disk
+ * instead of holding it in memory. The answer is JSON like any other.
+ */
+export async function upload<T>(path: string, file: Blob): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, { method: "POST", credentials: "same-origin", body: file });
+  } catch {
+    throw new ApiFailure(0, "network.unreachable");
+  }
+  if (!response.ok) throw await failureFrom(response);
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiFailure(response.status, "server.internal_error");
+  }
+}

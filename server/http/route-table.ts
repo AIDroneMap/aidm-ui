@@ -1,4 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
+import { MAX_REQUEST_BODY_BYTES } from "./limits.ts";
 import type { AuthHook, ClientInfo } from "../auth/hook.ts";
 import type { Sessions } from "../auth/sessions.ts";
 import type { InstanceIdentity } from "../app/instance.ts";
@@ -59,12 +60,45 @@ export interface RouteContext {
   log: (line: string) => void;
 }
 
+const bodyLimits = new WeakMap<RouteHandler, number>();
+
+/**
+ * A handler that may be sent a body larger than the small JSON every other
+ * route reads. The guard refuses a request to any other handler whose body is
+ * over MAX_REQUEST_BODY_BYTES. The limit must not be above MAX_RAISED_BODY_BYTES,
+ * the ceiling the listener gives Bun.
+ */
+export function withBodyLimit(limit: number, handler: RouteHandler): RouteHandler {
+  bodyLimits.set(handler, limit);
+  return handler;
+}
+
+/** The most bytes a request to this handler may carry. */
+export function bodyLimitOf(handler: RouteHandler): number {
+  return bodyLimits.get(handler) ?? MAX_REQUEST_BODY_BYTES;
+}
+
 export type JsonBody = { ok: true; body: Record<string, unknown> } | { ok: false; response: Response };
 
-/** Reads a request body that must be a JSON object. Anything else is a coded 400. */
+/** The body as text, or null when it is over the limit. A body without a declared length is cut off at the limit as it is read. */
+async function readCapped(req: Request, limit: number): Promise<string | null> {
+  if (req.body === null) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of req.body) {
+    total += chunk.byteLength;
+    if (total > limit) return null;
+    chunks.push(chunk);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** Reads a request body that must be a JSON object. Anything else is a coded 400, and a body over 1 MiB a coded 413. */
 export async function readJson(req: Request): Promise<JsonBody> {
   try {
-    const body: unknown = await req.json();
+    const text = await readCapped(req, MAX_REQUEST_BODY_BYTES);
+    if (text === null) return { ok: false, response: errorResponse(413, "api.body_too_large") };
+    const body: unknown = JSON.parse(text);
     if (typeof body === "object" && body !== null && !Array.isArray(body)) {
       return { ok: true, body: body as Record<string, unknown> };
     }

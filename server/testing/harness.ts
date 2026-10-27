@@ -26,6 +26,7 @@ import { RunTracker } from "../runs/run-tracker.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
 import { SampleJob, type SampleJobDeps } from "../sample/sample-job.ts";
 import { listen, LOOPBACK, type Listener } from "../http/listener.ts";
+import { MAX_RAISED_BODY_BYTES } from "../http/limits.ts";
 import { createRoutes, fallbackFetch } from "../http/routes.ts";
 import type { RouteContext } from "../http/route-table.ts";
 import type { AssetMap } from "../http/static-assets.ts";
@@ -296,6 +297,7 @@ export function openHarness(
     port: 0,
     routes: createRoutes(ctx),
     fetch: fallbackFetch(),
+    maxRequestBodySize: MAX_RAISED_BODY_BYTES,
   });
   engines.start();
   tracker.start();

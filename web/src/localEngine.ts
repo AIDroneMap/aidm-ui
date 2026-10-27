@@ -79,7 +79,16 @@ export function appendLogLines(existing: string[], incoming: string[], max: numb
 export type InstallStatus =
   | { kind: "none" }
   /** A Mac setting up Apple's container tool: the step, its size when it has one, and the bytes received so far. */
-  | { kind: "preparing"; step: InstallStepId; size: number | null; received: number | null; speed: number | null }
+  | {
+      kind: "preparing";
+      step: InstallStepId;
+      size: number | null;
+      received: number | null;
+      speed: number | null;
+      /** How often the step's download lost its connection, and why the last time. */
+      retries: number;
+      lastRetry: ApiError | null;
+    }
   | {
       kind: "downloading";
       /** True for the graphics card package. */
@@ -146,7 +155,7 @@ export function installSteps(view: LocalEngineView | null): Array<InstallStepVie
 export function progressStatus(progress: InstallProgressView | null): InstallStatus {
   if (progress?.phase === "preparing") {
     const size = progress.steps.find((candidate) => candidate.id === progress.step)?.size ?? null;
-    return { kind: "preparing", step: progress.step, size, received: progress.stepReceived, speed: progress.speed };
+    return { kind: "preparing", step: progress.step, size, received: progress.stepReceived, speed: progress.speed, retries: progress.retries, lastRetry: progress.lastRetry };
   }
   if (progress?.phase === "pulling") {
     return {

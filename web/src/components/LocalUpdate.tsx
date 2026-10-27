@@ -64,12 +64,9 @@ export function UpdateView({ view, requesting, failure, announcement = null, onU
           {t(update.blockedBy.code, messageParams(update.blockedBy))}
         </p>
       )}
+      {/* A download is the shared block, whose first line is its status line. */}
       <div role="status">
-        {status.kind === "downloading" ? (
-          <p>
-            <label htmlFor={progressId}>{t("local.install.downloading", { size: formatBytes(status.size) })}</label>
-          </p>
-        ) : status.kind === "loading" ? (
+        {status.kind === "loading" ? (
           <p>{t("local.install.loading")}</p>
         ) : status.kind === "starting" ? (
           <p>{t("local.update.starting")}</p>

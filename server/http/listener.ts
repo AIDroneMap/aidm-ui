@@ -1,9 +1,8 @@
+import { MAX_REQUEST_BODY_BYTES } from "./limits.ts";
 import type { Method } from "./route-table.ts";
 
 export const ALL_INTERFACES = "0.0.0.0";
 export const LOOPBACK = "127.0.0.1";
-/** Every request this server reads is small JSON. Uploads get their own limit when they exist. */
-export const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 /** What Bun.serve takes as routes: every handler already wrapped by the guard. */
 export type ServeRoutes = Record<string, GuardedHandler | Partial<Record<Method, GuardedHandler>>>;
@@ -22,11 +21,14 @@ export interface ListenOptions {
   port: number;
   routes: ServeRoutes;
   fetch: (req: Request) => Response;
+  /** The largest request body Bun accepts; 1 MiB unless the routes bring a larger one. */
+  maxRequestBodySize?: number;
 }
 
 /** Throws Bun's EADDRINUSE error when the port is taken. */
 export function listen(options: ListenOptions): Listener {
   const { routes, fetch } = options;
+  const maxRequestBodySize = options.maxRequestBodySize ?? MAX_REQUEST_BODY_BYTES;
   const serve = (hostname: string, port: number) =>
     // Outside development mode Bun shares a port between listeners (SO_REUSEPORT)
     // unless told otherwise, which would hide a second copy behind the first.
@@ -37,7 +39,7 @@ export function listen(options: ListenOptions): Listener {
       development: false,
       reusePort: false,
       idleTimeout: 30,
-      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+      maxRequestBodySize,
       routes,
       fetch,
     });

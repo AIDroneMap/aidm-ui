@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetsFromFolder, serveAsset } from "./static-assets.ts";
+import { assetsFromFolder, entryScriptOf, serveAsset } from "./static-assets.ts";
 
 let folder: string;
 
@@ -69,4 +69,11 @@ test("without an index.html nothing is served for pages", async () => {
   const assets = await assetsFromFolder(folder);
   expect(serveAsset(assets, "/")).toBeNull();
   expect(serveAsset(assets, "/favicon.svg")).not.toBeNull();
+});
+
+test("the entry script of the built page is read from its index.html, and a page without one has none", async () => {
+  expect(entryScriptOf(await assetsFromFolder(folder))).toBeNull();
+  await writeFile(join(folder, "index.html"), '<script type="module" crossorigin src="/assets/index-D3x9a.js"></script>');
+  expect(entryScriptOf(await assetsFromFolder(folder))).toBe("/assets/index-D3x9a.js");
+  expect(entryScriptOf(new Map())).toBeNull();
 });

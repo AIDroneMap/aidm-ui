@@ -75,6 +75,13 @@ function gpuLine(facts: MachineFacts): CheckLine | null {
   return line("gpu", "pass", "machine.gpu_none");
 }
 
+/** The sentence that names the tool and its version, one code per tool. */
+const RUNTIME_FOUND_CODES = {
+  podman: "machine.runtime_found_podman",
+  docker: "machine.runtime_found_docker",
+  "apple-container": "machine.runtime_found_apple_container",
+} as const satisfies Record<RuntimeId, MessageCode>;
+
 function runtimeLine(facts: MachineFacts, chosen: RuntimeId | null): CheckLine | null {
   if (facts.platform !== "linux" && facts.platform !== "darwin") return null;
   const preferred = preferredRuntime(facts.runtimes, chosen);
@@ -90,7 +97,9 @@ function runtimeLine(facts: MachineFacts, chosen: RuntimeId | null): CheckLine |
   if (preferred.memoryCapEnforced === false) {
     return line("runtime", "warn", "machine.runtime_no_memory_cap", { runtime: preferred.id });
   }
-  return line("runtime", "pass", "machine.runtime_found", { runtime: preferred.id, version: preferred.version });
+  // A version that could not be read leaves the plain sentence.
+  if (preferred.version === null) return line("runtime", "pass", "machine.runtime_found", { runtime: preferred.id });
+  return line("runtime", "pass", RUNTIME_FOUND_CODES[preferred.id], { runtime: preferred.id, version: preferred.version });
 }
 
 export interface CheckOptions {

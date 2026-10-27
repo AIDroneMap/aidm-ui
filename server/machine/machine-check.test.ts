@@ -207,7 +207,16 @@ test("the runtime line names the preferred runtime and its version", async () =>
   expect(lineOf(view, "runtime")).toEqual({
     id: "runtime",
     result: "pass",
-    message: { code: "machine.runtime_found", data: { runtime: "podman", version: "5.8.9" } },
+    message: { code: "machine.runtime_found_podman", data: { runtime: "podman", version: "5.8.9" } },
+  });
+});
+
+test("on a Mac with Apple's container tool running, the runtime line names the tool and its version", async () => {
+  const mac = open(macInputs("26", { rules: [...macInputs("26").rules, ...appleRules(true)] }));
+  expect(lineOf(await check(mac.h), "runtime")).toEqual({
+    id: "runtime",
+    result: "pass",
+    message: { code: "machine.runtime_found_apple_container", data: { runtime: "apple-container", version: "1.6.1" } },
   });
 });
 
@@ -216,7 +225,7 @@ test("the runtime the operator chose in settings wins over Podman", async () => 
   h.settings.set("runtime.preferred", "docker");
   const view = await check(h);
   expect(lineOf(view, "runtime").message).toEqual({
-    code: "machine.runtime_found",
+    code: "machine.runtime_found_docker",
     data: { runtime: "docker", version: "29.9.2" },
   });
 });

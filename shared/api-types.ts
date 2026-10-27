@@ -133,6 +133,17 @@ export type RunState = (typeof RUN_STATES)[number];
 /** The states after which a run never changes again. The server and the interface both read this list. */
 export const FINISHED_RUN_STATES: readonly RunState[] = ["completed", "failed", "cancelled"];
 
+/** The download of the sample photos, in the same figures as the download of the engine. */
+export interface RunDownloadView {
+  received: number;
+  total: number;
+  /** Bytes per second, measured over the last seconds. Null when there is nothing to measure yet. */
+  speed: number | null;
+  /** How often the connection broke and the download went on from the last byte, and why it last broke. */
+  retries: number;
+  lastRetry: ApiError | null;
+}
+
 export interface RunView {
   id: number;
   projectId: number;
@@ -143,7 +154,7 @@ export interface RunView {
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
   step: "download" | "upload" | null;
-  download: { received: number; total: number } | null;
+  download: RunDownloadView | null;
   upload: { done: number; total: number } | null;
   /** The engine's own progress, 0 to 100, while it processes. */
   progress: number | null;
@@ -199,6 +210,17 @@ export interface SampleView {
   engines: SampleEngineOffer[];
   /** The latest sample run, if any. */
   run: RunView | null;
+}
+
+/**
+ * GET and DELETE /api/sample/dataset: the zip of the sample photos that the
+ * data folder keeps, so a later run never downloads it again.
+ */
+export interface SampleDatasetFileView {
+  present: boolean;
+  /** Bytes on disk, or null when the zip is not there. */
+  size: number | null;
+  fileName: string;
 }
 
 /** POST /api/sample/start */

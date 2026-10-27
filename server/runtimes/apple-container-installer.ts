@@ -172,6 +172,8 @@ export interface MacSetupRun {
   onStep: (step: InstallStepId) => void;
   /** Bytes the step under way has received so far, and its speed in bytes per second when that is known. */
   onReceived: (received: number, bytesPerSecond?: number | null) => void;
+  /** A connection of the step's download broke and the download went on: how often so far, and why the last time. */
+  onRetry?: (retries: number, reason: ApiError) => void;
 }
 
 /**
@@ -269,7 +271,10 @@ export class MacSetup {
     return (this.deps.kernelPresent ?? (() => kernelPresent()))();
   }
 
-  private downloadOptions(run: MacSetupRun): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress" | "log"> {
+  private downloadOptions(
+    run: MacSetupRun,
+  ): Pick<DownloadOptions, "fetch" | "signal" | "freeBytes" | "backoffMs" | "stallMs" | "idleMs" | "onProgress" | "onRetry" | "log"> {
+    let retries = 0;
     return {
       fetch: this.deps.fetch,
       signal: run.signal,
@@ -278,6 +283,7 @@ export class MacSetup {
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
       onProgress: (received) => run.onReceived(received),
+      onRetry: (reason) => run.onRetry?.(++retries, reason),
       log: this.deps.log,
     };
   }
@@ -437,7 +443,10 @@ export class MacSetup {
       backoffMs: this.deps.backoffMs,
       stallMs: this.deps.stallMs,
       idleMs: this.deps.idleMs,
-      onProgress: (progress) => run.onReceived(progress.received, progress.bytesPerSecond),
+      onProgress: (progress) => {
+        run.onReceived(progress.received, progress.bytesPerSecond);
+        if (progress.retries > 0 && progress.lastRetry !== null) run.onRetry?.(progress.retries, progress.lastRetry);
+      },
       log: this.deps.log,
     };
     const downloaded = await downloadImage(pinned, folder, options);

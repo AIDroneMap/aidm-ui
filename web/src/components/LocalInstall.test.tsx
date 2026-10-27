@@ -44,10 +44,12 @@ test("with unknown parts the progress bar has no value and no parts are claimed"
 
 test("only the step line sits in the status region, so the counts do not interrupt a screen reader", () => {
   const html = render(pulling);
-  const status = /<div role="status">(.*?)<\/div>/.exec(html)?.[1] ?? "";
+  // A download has one status line, the first of its block; the counts below it are silent.
+  expect(html.match(/role="status"/g)).toHaveLength(1);
+  const status = /<p role="status">(.*?)<\/p>/.exec(html)?.[1] ?? "";
   expect(status).toContain("Downloading the engine");
   expect(status).not.toContain("of 9 parts");
-  expect(status).not.toContain("Try 2");
+  expect(status).not.toContain("Interruptions");
 });
 
 test("then the engine starts, then it is ready", () => {
@@ -210,7 +212,7 @@ test("when the tool was there already, the kernel step says its size is not know
 
 test("the startup files step says the size aidm-ui downloads", () => {
   const html = render(mac("init"));
-  const status = /<div role="status">(.*?)<\/div>/.exec(html)?.[1] ?? "";
+  const status = /<p role="status">(.*?)<\/p>/.exec(html)?.[1] ?? "";
   expect(status).toContain("Downloading the startup files: 66 MiB");
   expect(html).toContain("<span>Startup files, 66 MiB</span>");
   expect(html).not.toContain("Getting the startup files");
