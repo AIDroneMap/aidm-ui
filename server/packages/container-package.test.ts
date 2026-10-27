@@ -4,13 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
+import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeImages } from "../../test-support/fake-images.ts";
+import { FakeRegistry } from "../../test-support/fake-registry.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
 import { WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
 import { imageFolder, localName } from "../images/image-download.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR } from "../machine/thresholds.ts";
 import { fail, ok, type RuntimeResult } from "../runtimes/runtime.ts";
-import type { InstalledContainerPackage } from "../settings/settings.ts";
+import { isNativePackage, type InstalledContainerPackage, type InstalledPackage } from "../settings/settings.ts";
 import {
   CONTAINER_NAME,
   ContainerPackage,
@@ -31,6 +33,8 @@ const PINNED = { repository: VARIANT.image, digest: VARIANT.digest };
 const IMAGE = `${VARIANT.image}@${VARIANT.digest}`;
 /** The bytes a download of the fake image source reports. */
 const FAKE_DOWNLOAD_SIZE = 3 * 1024 * 1024;
+/** The one layer the fake image source says every image has. */
+const FAKE_LAYERS = [{ digest: VARIANT.digest, size: FAKE_DOWNLOAD_SIZE - 2 }];
 const STALLED: ApiError = { code: "download.stalled", data: { seconds: 300 } };
 
 /** A runtime that names a loaded image by an ID of its own, as Podman and Docker do, or that cannot vouch for it. */
@@ -43,9 +47,21 @@ class VerifyingRuntime extends FakeRuntime {
   }
 }
 
+/** A runtime whose first check of a loaded image fails. */
+class UnverifiedOnce extends FakeRuntime {
+  private failures = 1;
+
+  override async verifyImage(...args: Parameters<FakeRuntime["verifyImage"]>): ReturnType<FakeRuntime["verifyImage"]> {
+    if (this.failures-- > 0) return fail("runtime.image_not_verified", { name: args[0].name });
+    return super.verifyImage(...args);
+  }
+}
+
 const runtimes: FakeRuntime[] = [];
 const folders: string[] = [];
+const servers: FakeFileServer[] = [];
 afterEach(async () => {
+  for (const server of servers.splice(0)) await server.stop();
   for (const runtime of runtimes.splice(0)) await runtime.remove(CONTAINER_NAME);
   for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
 });
@@ -131,7 +147,7 @@ test("a package made with the reference of an earlier install runs the image by 
   expect(runtime.starts[0]?.spec.image).toBe(imageId);
 });
 
-test("the progress goes from the download to the load, with the manifest's size and the parts of the image", async () => {
+test("the progress goes from the download to the load, with the variant's size until the download reports its own and then the bytes it fetches", async () => {
   const { pkg } = setup();
   const seen: InstallProgressView[] = [];
   await pkg.install({ onProgress: (progress) => seen.push(progress) });
@@ -142,13 +158,14 @@ test("the progress goes from the download to the load, with the manifest's size 
     step: "engine",
     stepReceived: 0,
     size: 682_533_845,
+    reusedBytes: 0,
     layersDone: null,
     layersTotal: null,
     speed: null,
     retries: 0,
     lastRetry: null,
   });
-  expect(seen.every((progress) => progress.size === 682_533_845)).toBe(true);
+  expect(seen.slice(1).every((progress) => progress.size === FAKE_DOWNLOAD_SIZE && progress.reusedBytes === 0)).toBe(true);
   const phases = seen.map((progress) => progress.phase);
   expect([...new Set(phases)]).toEqual(["pulling", "loading"]);
   expect(phases.lastIndexOf("pulling")).toBeLessThan(phases.indexOf("loading"));
@@ -217,7 +234,7 @@ test("installedAs adds the reference of the loaded image after an install, and g
   const before = installedRecord();
   expect(pkg.installedAs(before)).toBe(before);
   await pkg.install({});
-  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: IMAGE });
+  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: IMAGE, layers: FAKE_LAYERS });
 });
 
 test("installedAs carries the image ID that the runtime gave", async () => {
@@ -226,7 +243,7 @@ test("installedAs carries the image ID that the runtime gave", async () => {
   runtime.verification = ok(imageId);
   const { pkg } = setup({ runtime });
   await pkg.install({});
-  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: imageId });
+  expect(pkg.installedAs(installedRecord())).toEqual({ ...installedRecord(), imageRef: imageId, layers: FAKE_LAYERS });
 });
 
 test("discardDownload deletes the download folder and leaves the image in the runtime", async () => {
@@ -431,4 +448,174 @@ test("remove deletes the config folder with the token, and removing the containe
   expect(existsSync(folder)).toBe(true);
   expect((await pkg.remove()).ok).toBe(true);
   expect(existsSync(folder)).toBe(false);
+});
+
+/** Deterministic bytes that differ from one seed to the next. */
+function bytesOf(length: number, seed: number): Uint8Array {
+  return Uint8Array.from({ length }, (_, i) => (i * 31 + (i >> 8) * seed + seed) & 0xff);
+}
+
+/** A fake registry on a local port with an image of two layers (v1) and its successor with the same two and a third (v2). */
+async function registryWithTwoVersions() {
+  const server = new FakeFileServer();
+  const registry = new FakeRegistry();
+  server.registry = registry;
+  await server.start();
+  servers.push(server);
+  const path = "aidronemap/aidm-api";
+  const repository = `${new URL(server.url("")).host}/${path}`;
+  const lower = bytesOf(120_000, 2);
+  const middle = bytesOf(90_000, 3);
+  const top = bytesOf(40_000, 4);
+  const v1 = registry.addImage({ repository: path, config: bytesOf(500, 11), layers: [lower, middle] });
+  const v2 = registry.addImage({ repository: path, config: bytesOf(600, 12), layers: [lower, middle, top] });
+  const variant = (added: typeof v1): ContainerVariant => ({ kind: "container", image: repository, digest: added.digest, size: added.size, gpu: false });
+  /** The blobs asked of the registry itself (not its signed addresses), after the first `since` requests. A request without a token is the registry's challenge and is not counted. */
+  const blobsAsked = (since = 0) =>
+    registry.requests
+      .slice(since)
+      .filter((r) => r.authorization !== null && decodeURIComponent(r.path).includes("/blobs/"))
+      .map((r) => decodeURIComponent(r.path).split("/blobs/")[1] ?? "");
+  return { registry, repository, v1, v2, variant, sizes: { lower: lower.length, middle: middle.length, top: top.length }, blobsAsked };
+}
+
+function registryPackage(runtime: FakeRuntime, variant: ContainerVariant, known: InstalledContainerPackage[] = []) {
+  runtimes.push(runtime);
+  const dataFolder = mkdtempSync(join(tmpdir(), "aidm-container-package-"));
+  folders.push(dataFolder);
+  const logged: string[] = [];
+  const pkg = new ContainerPackage({
+    runtime,
+    variant,
+    variantId: "linux-amd64-cpu",
+    freeBytes: () => 100 * GiB,
+    storagePath: null,
+    dataFolder,
+    known: () => known,
+    download: { backoffMs: () => 10, idleMs: 1000, stallMs: 5000 },
+    log: (line) => logged.push(line),
+  });
+  return { pkg, logged };
+}
+
+/** The record of a container package, as installedAs gives it. */
+function containerRecord(record: InstalledPackage): InstalledContainerPackage {
+  if (isNativePackage(record)) throw new Error("Expected a container package.");
+  return record;
+}
+
+const recordOf = (variant: ContainerVariant): InstalledContainerPackage => ({ packageVersion: "2.5.0", variant: "linux-amd64-cpu", runtime: "podman", container: variant });
+
+test("an update whose lower layers the runtime holds downloads only the config and the new layer, and shows what it reuses", async () => {
+  const { registry, v1, v2, variant, sizes, blobsAsked } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+
+  // The first image goes in whole, and its record keeps its layers.
+  const first = registryPackage(runtime, variant(v1));
+  expect((await first.pkg.install({})).ok).toBe(true);
+  const installed = containerRecord(first.pkg.installedAs(recordOf(variant(v1))));
+  expect(installed.layers).toEqual(v1.layerDigests.map((digest, i) => ({ digest, size: i === 0 ? sizes.lower : sizes.middle })));
+  expect(blobsAsked()).toEqual([v1.configDigest, ...v1.layerDigests]);
+  const before = registry.requests.length;
+
+  const second = registryPackage(runtime, variant(v2), [installed]);
+  const seen: InstallProgressView[] = [];
+  const result = await second.pkg.install({ onProgress: (progress) => seen.push(progress) });
+  expect(result).toEqual({ ok: true, value: undefined });
+
+  // The registry saw blob requests for v2's config and its third layer, nothing else.
+  expect(blobsAsked(before)).toEqual([v2.configDigest, v2.layerDigests[2] ?? ""]);
+  expect(runtime.loads).toHaveLength(2);
+  expect(runtime.images.has(`${variant(v2).image}@${v2.digest}`)).toBe(true);
+
+  // The progress counts what the download fetches and says what it did not.
+  const fetched = 600 + sizes.top;
+  const reused = sizes.lower + sizes.middle;
+  const pulling = seen.filter((progress) => progress.phase === "pulling" && progress.layersTotal !== null);
+  expect(pulling.length).toBeGreaterThan(0);
+  expect(pulling.every((progress) => progress.size === fetched && progress.reusedBytes === reused && progress.layersTotal === 2)).toBe(true);
+  expect(pulling.at(-1)?.stepReceived).toBe(fetched);
+  expect(seen.at(-1)).toMatchObject({ phase: "loading", size: fetched, reusedBytes: reused });
+  expect(second.logged.some((line) => line.includes("2 of 3 layers already held by the runtime"))).toBe(true);
+
+  // The record of the new package lists all three layers.
+  expect(containerRecord(second.pkg.installedAs(recordOf(variant(v2)))).layers?.map((layer) => layer.digest)).toEqual(v2.layerDigests);
+});
+
+test("a load that fails without the layers it should hold is tried once more with them downloaded", async () => {
+  const { v2, variant, sizes, blobsAsked } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+  // The package is told that the runtime holds the two lower layers. It does not really.
+  runtime.heldAnswer = new Set(v2.layerDigests.slice(0, 2));
+  const { pkg, logged } = registryPackage(runtime, variant(v2));
+  const seen: InstallProgressView[] = [];
+
+  const result = await pkg.install({ onProgress: (progress) => seen.push(progress) });
+  expect(result).toEqual({ ok: true, value: undefined });
+  expect(runtime.loads).toHaveLength(2);
+  expect(runtime.images.has(`${variant(v2).image}@${v2.digest}`)).toBe(true);
+
+  // Each blob was fetched once: the first round left two out, the second fetched just those.
+  const [lowest = "", middle = "", top = ""] = v2.layerDigests;
+  expect(blobsAsked()).toEqual([v2.configDigest, top, lowest, middle]);
+  expect(logged.some((line) => line.includes("did not take the image without 2 layers"))).toBe(true);
+  expect(seen.some((progress) => progress.reusedBytes === sizes.lower + sizes.middle)).toBe(true);
+  expect(seen.at(-1)).toMatchObject({ phase: "loading", reusedBytes: 0 });
+  expect(containerRecord(pkg.installedAs(recordOf(variant(v2)))).layers).toHaveLength(3);
+});
+
+test("a second load that fails too is the load failure, with no third try", async () => {
+  const { v2, variant } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+  runtime.heldAnswer = new Set(v2.layerDigests.slice(0, 2));
+  runtime.failNextLoads(2);
+  const { pkg } = registryPackage(runtime, variant(v2));
+  expect(await pkg.install({})).toEqual({ ok: false, error: { code: "install.load_failed", data: { exitCode: 1 } } });
+  expect(runtime.loads).toHaveLength(2);
+});
+
+test("a load that fails when nothing was left out is not tried again", async () => {
+  const { v2, variant } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+  runtime.failNextLoads(1);
+  const { pkg } = registryPackage(runtime, variant(v2));
+  expect((await pkg.install({})).ok).toBe(false);
+  expect(runtime.loads).toHaveLength(1);
+});
+
+test("an image that fails its check after a load without layers is loaded and checked once more", async () => {
+  const { v2, variant } = await registryWithTwoVersions();
+  const runtime = new UnverifiedOnce();
+  // The runtime really holds the two lower layers, so the first load takes the image; only its check fails.
+  runtime.holdImage("an-older-image", v2.layerDigests.slice(0, 2).map((digest) => ({ digest, size: 1 })));
+  const { pkg } = registryPackage(runtime, variant(v2));
+  expect(await pkg.install({})).toEqual({ ok: true, value: undefined });
+  expect(runtime.loads).toHaveLength(2);
+});
+
+test("a record without layers gets them from its manifest at the registry", async () => {
+  const { registry, v1, v2, variant, blobsAsked } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+  const first = registryPackage(runtime, variant(v1));
+  expect((await first.pkg.install({})).ok).toBe(true);
+  // An install from before the layers were recorded.
+  const old = recordOf(variant(v1));
+  expect(old.layers).toBeUndefined();
+  const before = registry.requests.length;
+
+  const second = registryPackage(runtime, variant(v2), [old]);
+  expect((await second.pkg.install({})).ok).toBe(true);
+  const manifests = registry.requests.slice(before).filter((r) => decodeURIComponent(r.path).includes(`/manifests/${v1.digest}`));
+  expect(manifests.length).toBeGreaterThan(0);
+  // Only the config and the third layer of v2 came in the second install.
+  expect(blobsAsked(before)).toEqual([v2.configDigest, v2.layerDigests[2] ?? ""]);
+});
+
+test("a record whose layers cannot be had is left out, and the image is downloaded whole", async () => {
+  const { v1, v2, variant, blobsAsked } = await registryWithTwoVersions();
+  const runtime = new FakeRuntime();
+  const gone = { ...recordOf({ ...variant(v1), digest: `sha256:${"0".repeat(64)}` }) };
+  const { pkg } = registryPackage(runtime, variant(v2), [gone]);
+  expect((await pkg.install({})).ok).toBe(true);
+  expect(blobsAsked()).toEqual([v2.configDigest, ...v2.layerDigests]);
 });

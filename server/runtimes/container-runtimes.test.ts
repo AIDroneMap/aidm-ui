@@ -32,6 +32,7 @@ const busybox: DownloadedImage = {
   manifest: { digest: BUSYBOX_MANIFEST, size: 610, mediaType: OCI_MANIFEST },
   config: { digest: BUSYBOX_CONFIG, size: 0 },
   layers: [{ digest: BUSYBOX_LAYER, size: 2211514 }],
+  skipped: [],
 };
 
 const scratch = mkdtempSync(join(tmpdir(), "aidm-ui-runtimes-test-"));
@@ -70,7 +71,7 @@ function tinyImage(): DownloadedImage {
       manifests: [{ mediaType: OCI_MANIFEST, ...manifest, annotations: { "io.containerd.image.name": name } }],
     }),
   );
-  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer] };
+  return { pinned, folder, name, manifest: { ...manifest, mediaType: OCI_MANIFEST }, config, layers: [layer], skipped: [] };
 }
 
 /** The entries of a tar, by the 512-byte headers: name and bytes. */
@@ -592,6 +593,59 @@ for (const tool of tools) {
   });
 }
 
+describe("heldLayers on Podman and Docker", () => {
+  const layer = (character: string) => ({ digest: `sha256:${character.repeat(64)}`, size: 10 });
+  const [a, b, c, d] = ["a", "b", "c", "d"].map(layer) as [ReturnType<typeof layer>, ReturnType<typeof layer>, ReturnType<typeof layer>, ReturnType<typeof layer>];
+  const held = (digests: Array<{ digest: string }>) => new Set(digests.map((entry) => entry.digest));
+  const exists = { exitCode: 0, stdout: "[{}]", stderr: "" };
+  const gone = { exitCode: 125, stdout: "[]", stderr: "Error: no such image\n" };
+
+  for (const [id, make] of [["podman", podmanRuntime], ["docker", dockerRuntime]] as const) {
+    const inspect = (ref: string) => [id, "image", "inspect", ref];
+
+    test(`${id}: an image it still holds gives the layers shared from the bottom up`, async () => {
+      const logged: string[] = [];
+      const runner = new ScriptedRunner([{ argv: inspect("old"), result: exists }]);
+      const runtime = make(runner, (line) => logged.push(line));
+      // The new image is a, b, c; the old one a, b, d: the bottom two are shared.
+      expect(await runtime.heldLayers([a, b, c], [{ ref: "old", layers: [a, b, d] }])).toEqual(held([a, b]));
+      expect(runner.calls).toEqual([inspect("old")]);
+      expect(logged).toEqual([`Reuse: ${id} holds old, 2 of 3 layers in common from the bottom`]);
+    });
+
+    test(`${id}: a layer in common above one that differs is not held`, async () => {
+      const runner = new ScriptedRunner([{ argv: inspect("old"), result: exists }]);
+      expect(await make(runner).heldLayers([a, b, c], [{ ref: "old", layers: [d, b, c] }])).toEqual(new Set());
+    });
+
+    test(`${id}: an image it no longer holds gives nothing, and says so`, async () => {
+      const logged: string[] = [];
+      const runner = new ScriptedRunner([{ argv: inspect("old"), result: gone }]);
+      expect(await make(runner, (line) => logged.push(line)).heldLayers([a, b], [{ ref: "old", layers: [a, b] }])).toEqual(new Set());
+      expect(logged).toEqual([`Reuse: ${id} does not hold old any more`]);
+    });
+
+    test(`${id}: two known images give the union of what they share`, async () => {
+      const runner = new ScriptedRunner([
+        { argv: inspect("one"), result: exists },
+        { argv: inspect("two"), result: exists },
+      ]);
+      const known = [
+        { ref: "one", layers: [a, b, d] },
+        { ref: "two", layers: [a, b, c, d] },
+      ];
+      expect(await make(runner).heldLayers([a, b, c, d], known)).toEqual(held([a, b, c, d]));
+      expect(runner.calls).toEqual([inspect("one"), inspect("two")]);
+    });
+
+    test(`${id}: no known image asks the tool nothing`, async () => {
+      const runner = new ScriptedRunner([]);
+      expect(await make(runner).heldLayers([a], [])).toEqual(new Set());
+      expect(runner.calls).toEqual([]);
+    });
+  }
+});
+
 describe("Podman loads a downloaded image", () => {
   const load = ["podman", "load", "-i", busybox.folder];
   const tag = ["podman", "tag", BUSYBOX_CONFIG, busybox.name];
@@ -692,6 +746,30 @@ describe("Docker loads a downloaded image", () => {
       ok: false,
       error: { code: "runtime.load_failed", data: { exitCode: 1 } },
     });
+  });
+
+  // Seen on Docker 29.9.2 (containerd store): a load that leaves out a layer the store does not hold exits 0 and prints the failure.
+  test("an Error unpacking image line is runtime.load_failed even when the tool exits 0", async () => {
+    const logged: string[] = [];
+    const runner = new ScriptedRunner([{ argv: load, result: recorded("docker", "load-missing-layer") }]);
+    const result = await dockerRuntime(runner, (line) => logged.push(line)).load(tiny);
+    expect(result).toEqual({ ok: false, error: { code: "runtime.load_failed", data: { exitCode: 0 } } });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("Error unpacking image localhost/aidm-reuse:two");
+  });
+
+  test("the same line in lower case, or in the middle of the output, counts too", async () => {
+    const output = "Loaded image: x\nerror unpacking image x: boom\nmore output\n";
+    const runner = new ScriptedRunner([{ argv: load, result: { exitCode: 0, stdout: output, stderr: "" } }]);
+    expect((await dockerRuntime(runner).load(tiny)).ok).toBe(false);
+  });
+
+  test("Podman does not look for that line", async () => {
+    const runner = new ScriptedRunner([
+      { argv: ["podman", "load", "-i", tiny.folder], result: { exitCode: 0, stdout: "Error unpacking image\n", stderr: "" } },
+      { argv: ["podman", "tag", tiny.config.digest, tiny.name], result: { exitCode: 0, stdout: "", stderr: "" } },
+    ]);
+    expect((await podmanRuntime(runner).load(tiny)).ok).toBe(true);
   });
 
   test("a signal that fired before the load gives download.cancelled and runs nothing", async () => {

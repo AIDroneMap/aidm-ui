@@ -94,6 +94,8 @@ export type InstallStatus =
       /** True for the graphics card package. */
       graphics: boolean;
       size: number;
+      /** Bytes of the engine the container runtime already holds, which this download leaves out. Null when none. */
+      reused: number | null;
       /** Bytes on disk so far, when the download reports them. */
       received: number | null;
       /** Bytes per second over the last seconds, or null. */
@@ -162,6 +164,7 @@ export function progressStatus(progress: InstallProgressView | null): InstallSta
       kind: "downloading",
       graphics: progress.variant.endsWith("-gpu"),
       size: progress.size,
+      reused: progress.reusedBytes ?? null,
       received: progress.stepReceived,
       speed: progress.speed,
       done: progress.layersDone,

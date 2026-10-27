@@ -40,6 +40,7 @@ function downloaded(digest = DIGEST): DownloadedImage {
     manifest: { digest, size: 2, mediaType: "application/vnd.oci.image.manifest.v1+json" },
     config: { digest: "sha256:" + "c".repeat(64), size: 2 },
     layers: [{ digest: "sha256:" + "1".repeat(64), size: 10 }],
+    skipped: [],
   };
 }
 
@@ -124,6 +125,30 @@ test("a failed load leaves the image absent but is recorded, and the next one wo
   expect((await runtime.load(downloaded())).ok).toBe(true);
   expect(runtime.loads).toEqual([IMAGE, IMAGE, IMAGE]);
   expect(runtime.images.has(IMAGE)).toBe(true);
+});
+
+test("it holds the layers of the images it loaded or was given, and answers which of some layers they are", async () => {
+  const runtime = fake();
+  const layer = (character: string) => ({ digest: "sha256:" + character.repeat(64), size: 10 });
+  const [a, b, c] = [layer("1"), layer("2"), layer("3")] as [ReturnType<typeof layer>, ReturnType<typeof layer>, ReturnType<typeof layer>];
+  expect(await runtime.heldLayers([a, b, c], [])).toEqual(new Set());
+  await runtime.load({ ...downloaded(), layers: [a, b] });
+  expect(await runtime.heldLayers([a, b, c], [])).toEqual(new Set([a.digest, b.digest]));
+  runtime.holdImage("other", [c]);
+  expect(await runtime.heldLayers([c], [{ ref: "x", layers: [] }])).toEqual(new Set([c.digest]));
+  expect(runtime.heldAsks.map((ask) => ask.known)).toEqual([[], [], ["x"]]);
+  runtime.heldAnswer = new Set([a.digest]);
+  expect(await runtime.heldLayers([a, b, c], [])).toEqual(new Set([a.digest]));
+});
+
+test("a load that leaves out a layer it does not hold fails, as the real tools do", async () => {
+  const runtime = fake();
+  const layer = { digest: "sha256:" + "4".repeat(64), size: 10 };
+  const image = { ...downloaded(), layers: [layer], skipped: [layer] };
+  expect(await runtime.load(image)).toEqual({ ok: false, error: { code: "runtime.load_failed", data: { exitCode: 1 } } });
+  expect(runtime.images.size).toBe(0);
+  runtime.holdImage("older", [layer]);
+  expect(await runtime.load(image)).toEqual({ ok: true, value: undefined });
 });
 
 test("a load with a signal that has fired fails as cancelled and leaves the image absent", async () => {

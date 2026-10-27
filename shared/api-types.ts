@@ -366,8 +366,10 @@ export interface InstallProgressView {
   step: InstallStepId;
   /** Bytes the step under way has downloaded, when it reports them. */
   stepReceived: number | null;
-  /** Bytes of that package, from the manifest. */
+  /** Bytes of that package, from the manifest. For the engine's download, once it reports its total, the bytes it fetches. */
   size: number;
+  /** Bytes of the image the container runtime already holds, which the download leaves out. Absent or null: nothing is reused. */
+  reusedBytes?: number | null;
   /** Parts of the image finished and in all (its config and layers). The page calls them parts. */
   layersDone: number | null;
   layersTotal: number | null;

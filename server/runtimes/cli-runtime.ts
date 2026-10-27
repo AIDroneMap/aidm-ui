@@ -1,4 +1,4 @@
-import type { DownloadedImage } from "../images/image-download.ts";
+import type { BlobEntry, DownloadedImage } from "../images/image-download.ts";
 import { excerpt } from "../app/diagnosis-log.ts";
 import type { CommandResult, CommandRunner } from "../process/command-runner.ts";
 import {
@@ -9,6 +9,7 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
   type ContainerStatus,
+  type KnownImage,
   type OneOffSpec,
   type RuntimeDetection,
   type RuntimeId,
@@ -31,6 +32,8 @@ export interface CliRuntimeTool {
   loadCopies: number;
   /** Runs the tool's load of a downloaded image, and whatever must follow it for the image to carry its name. */
   load(image: DownloadedImage, context: LoadContext): Promise<CommandResult>;
+  /** A line of the load's output that means the load failed although the tool exited 0. */
+  loadFailureLine?: RegExp;
   /** The flags that hand the NVIDIA graphics card to a container. */
   gpuFlags: readonly string[];
 }
@@ -93,10 +96,31 @@ export function cliRuntime(
         },
         run: (argv) => run(argv, REMOVE_TIMEOUT_MS),
       });
-      if (result.exitCode === 0) return ok(undefined);
+      if (result.exitCode === 0) {
+        // Docker's containerd store exits 0 when a layer the archive left out is not one it holds, and prints the failure instead.
+        const line = tool.loadFailureLine === undefined ? undefined : kept.find((candidate) => tool.loadFailureLine?.test(candidate));
+        if (line === undefined) return ok(undefined);
+        log(`Load check failed for ${image.name}: expected exit 0 and no line like ${tool.loadFailureLine}, found exit 0 and: ${excerpt(line)}`);
+        return fail("runtime.load_failed", { exitCode: result.exitCode });
+      }
       if (options.signal?.aborted) return fail("download.cancelled");
       log(`Load check failed for ${image.name}: expected exit 0, found exit ${result.exitCode}: ${excerpt(kept.slice(-5).join(" / "))}`);
       return fail("runtime.load_failed", { exitCode: result.exitCode });
+    },
+
+    async heldLayers(layers, known) {
+      const held = new Set<string>();
+      for (const image of known) {
+        const result = await run([binary, "image", "inspect", image.ref]);
+        if (result.exitCode !== 0) {
+          log(`Reuse: ${binary} does not hold ${image.ref} any more`);
+          continue;
+        }
+        const common = commonPrefix(image.layers, layers);
+        log(`Reuse: ${binary} holds ${image.ref}, ${common.length} of ${layers.length} layers in common from the bottom`);
+        for (const layer of common) held.add(layer.digest);
+      }
+      return held;
     },
 
     async verifyImage(image) {
@@ -220,6 +244,14 @@ export function cliRuntime(
       return failed("removeImage", result.exitCode);
     },
   };
+}
+
+/** The layers two images share from the bottom up, compared by digest. The runtimes reuse a layer by its chain, so one that differs ends it. */
+function commonPrefix(held: BlobEntry[], wanted: BlobEntry[]): BlobEntry[] {
+  const length = Math.min(held.length, wanted.length);
+  let at = 0;
+  while (at < length && held[at]?.digest === wanted[at]?.digest) at++;
+  return wanted.slice(0, at);
 }
 
 function readState(state: Record<string, unknown>, exitCode: number): RuntimeResult<ContainerStatus> {

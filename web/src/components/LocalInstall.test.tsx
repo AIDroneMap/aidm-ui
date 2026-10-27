@@ -28,6 +28,19 @@ test("during the download the size, the bytes, the speed, the parts and why it w
   expect(untranslatedText(html)).toEqual([]);
 });
 
+test("when the runtime already holds part of the engine, the download says how much is not downloaded again", () => {
+  const html = render({ ...pulling, install: { ...pulling.install!, size: 56 * MIB, stepReceived: 10 * MIB, reusedBytes: 431 * MIB } });
+  expect(html).toContain("Downloading the engine: 56 MiB");
+  expect(html).toContain("10 MiB of 56 MiB");
+  expect(html).toContain("431 MiB of the engine is already on this computer and is not downloaded again.");
+  expect(untranslatedText(html)).toEqual([]);
+});
+
+test("nothing is said about reused bytes when none are reused", () => {
+  expect(render(pulling)).not.toContain("already on this computer");
+  expect(render({ ...pulling, install: { ...pulling.install!, reusedBytes: 0 } })).not.toContain("already on this computer");
+});
+
 test("a download that never broke says nothing about interruptions, and no speed is claimed before there is one", () => {
   const html = render({ ...pulling, install: { ...pulling.install!, retries: 0, lastRetry: null, speed: null } });
   expect(html).not.toContain("Interruptions");

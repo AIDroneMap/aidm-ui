@@ -35,6 +35,7 @@ import { preferredRuntime } from "../runtimes/registry.ts";
 import type { ContainerRuntime, RuntimeDetection } from "../runtimes/runtime.ts";
 import {
   isNativePackage,
+  type InstalledContainerPackage,
   type InstalledNativePackage,
   type InstalledPackage,
   type PendingSwitch,
@@ -1338,6 +1339,7 @@ export class LocalEngineManager {
       freeBytes: this.deps.freeBytes,
       storagePath: input.runtime?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
+      known: () => this.knownImages(input.runtime?.id ?? "apple-container", input.variant.digest),
       images: this.deps.images,
       download: this.deps.imageDownload,
       log: this.deps.log,
@@ -1851,10 +1853,24 @@ export class LocalEngineManager {
       storagePath: this.detections.find((candidate) => candidate.id === installed.runtime)?.storagePath ?? null,
       dataFolder: this.deps.dataFolder,
       ...(installed.imageRef === undefined ? {} : { imageRef: installed.imageRef }),
+      known: () => this.knownImages(installed.runtime, installed.container.digest),
       images: this.deps.images,
       download: this.deps.imageDownload,
       log: this.deps.log,
     });
+  }
+
+  /**
+   * The container packages on one runtime that an install there may share
+   * layers with: the installed one and the previous one, read when the
+   * install starts. The image with the digest being installed is not one.
+   */
+  private knownImages(runtime: RuntimeId, except: string): InstalledContainerPackage[] {
+    const records = [this.settings.get("local.package"), this.settings.get("local.previous")];
+    return records.filter(
+      (record): record is InstalledContainerPackage =>
+        record !== null && !isNativePackage(record) && record.runtime === runtime && record.container.digest !== except,
+    );
   }
 
   /** The runtimes this version can drive. */

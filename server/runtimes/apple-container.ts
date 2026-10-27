@@ -1,5 +1,7 @@
 import type { ApiError } from "../../shared/api-error.ts";
+import { statSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { EXIT_NOT_FOUND, type CommandResult, type CommandRunner } from "../process/command-runner.ts";
 import { excerpt } from "../app/diagnosis-log.ts";
 import { imageArchive } from "../images/image-archive.ts";
@@ -139,8 +141,21 @@ export async function loadIntoAppleTool(
   return { ok: false, error: { code: "runtime.load_failed", data: { exitCode: result.exitCode } } };
 }
 
+/**
+ * Where Apple's tool keeps its data: the folder in `CONTAINER_APP_ROOT` when
+ * that is set, else the default under the user's Library (1.6.1:
+ * ApplicationRoot.swift). Its content store, with every blob named by the hex
+ * of its digest, is the folder `content/blobs/sha256` inside (ContentStoreService.swift).
+ */
+export function appleAppRoot(): string {
+  const set = process.env.CONTAINER_APP_ROOT;
+  return set !== undefined && set !== "" ? set : join(os.homedir(), "Library", "Application Support", "com.apple.container");
+}
+
 export interface AppleContainerOptions {
   log?: (line: string) => void;
+  /** The tool's data folder. Default: appleAppRoot(), asked at each use. Tests name a temporary folder. */
+  appRoot?: string;
   /** The memory and CPUs to send when the spec names none. Default: what the engine manager gives on this computer. */
   defaults?: () => Caps;
 }
@@ -209,6 +224,21 @@ export function appleContainerRuntime(runner: CommandRunner, options: AppleConta
     async load(image, loadOptions = {}) {
       const loaded = await loadIntoAppleTool(runner, image, { signal: loadOptions.signal, log });
       return loaded.ok ? ok(undefined) : loaded;
+    },
+
+    // The import looks in the content store by digest before it reads the archive, so a layer whose blob is there, whole, may be left out (1.6.1: ImageStore+Import.swift).
+    async heldLayers(layers) {
+      const blobs = join(options.appRoot ?? appleAppRoot(), "content", "blobs", "sha256");
+      const held = new Set<string>();
+      for (const layer of layers) {
+        try {
+          if (statSync(join(blobs, layer.digest.slice("sha256:".length))).size === layer.size) held.add(layer.digest);
+        } catch {
+          // Not in the store.
+        }
+      }
+      log(`Reuse: Apple's tool holds ${held.size} of ${layers.length} layers in its content store`);
+      return held;
     },
 
     async verifyImage(image) {

@@ -347,6 +347,7 @@
   "local.install.downloading_gpu": "Downloading the graphics card package: {size}",
   "local.install.checking_gpu": "Testing that the engine can use the graphics card",
   "local.install.removing_gpu_package": "The test run failed. Deleting the graphics card package ({size}) and downloading the processor package instead.",
+  "local.install.reused": "{size} of the engine is already on this computer and is not downloaded again.",
   "local.install.parts": "{done} of {total} parts",
   "local.install.received": "{received} of {size}",
   "local.install.received_speed": "{received} of {size}, {speed} per second",
