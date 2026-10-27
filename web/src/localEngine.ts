@@ -128,6 +128,11 @@ export function installSteps(view: LocalEngineView | null): Array<InstallStepVie
   if (steps.length < 2) return [];
   const current = install === null ? -1 : steps.findIndex((candidate) => candidate.id === install.step);
   return steps.map((step, index) => {
+    // macOS asks for the Local Network permission when the engine first starts, whatever the step's place in the list.
+    if (step.id === "network") {
+      const state: StepState = install === null ? "pending" : install.phase === "done" ? "done" : install.phase === "starting" ? "current" : "pending";
+      return { ...step, state };
+    }
     let state: StepState = "pending";
     if (install !== null) {
       if (install.phase === "done" || index < current) state = "done";

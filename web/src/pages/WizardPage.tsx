@@ -3,6 +3,7 @@ import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { GuideLink } from "../components/GuideLink.tsx";
+import { ConnectionHelp } from "../components/ConnectionHelp.tsx";
 import { DownloadTotal, InstallSteps, LocalInstallStatus } from "../components/LocalInstall.tsx";
 import { RuntimeSetupPanel, runtimeSetupShown } from "../components/RuntimeSetup.tsx";
 import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
@@ -221,6 +222,9 @@ export interface InstallScreenProps {
   onUpdateCheckChange: (value: UpdateCheck) => void;
   /** The local engine as the server last said it, or null until it has. */
   local: LocalEngineView | null;
+  /** Takes the answer of a change made on this screen, such as the move of the network of Apple's tool. */
+  onLocalView: (view: LocalEngineView) => void;
+  onAuthRequired: () => void;
   /** True while the request to install is on its way. */
   installBusy: boolean;
   /** Why the server refused to install, when it did. */
@@ -359,6 +363,7 @@ export function InstallScreen(props: InstallScreenProps) {
         ))}
       {props.installFailure && <ErrorMessage failure={props.installFailure} />}
       <LocalInstallStatus view={props.local} withSteps={false} />
+      {props.local && <ConnectionHelp view={props.local} onView={props.onLocalView} onAuthRequired={props.onAuthRequired} />}
       {(failed || waiting) && (
         <div className="choice">
           <p>{t("local.install.remote_offer")}</p>
@@ -632,6 +637,8 @@ export function WizardPage({
           announcement={updateAnnouncement}
           onUpdateCheckChange={(value) => void saveUpdateCheck(value)}
           local={local.view}
+          onLocalView={local.setView}
+          onAuthRequired={onAuthRequired}
           installBusy={installBusy}
           installFailure={installFailure}
           onInstallLocal={() => void installLocal()}

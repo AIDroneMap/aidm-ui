@@ -111,6 +111,15 @@ the tool's other errors here.
 | `apple-container/image-load-init.txt` | `container image load` of the startup files | exit 0, the reference it loaded on stdout |
 | `apple-container/image-inspect-init-present.txt` | the same inspect after the load | exit 0, an empty JSON list (`[`, a blank line, `]`) |
 
+## Recorded on a Mac
+
+From the recording of every runtime command in the second Mac test (27 October 2026). The user name in the paths
+was replaced in the recording already.
+
+| File | Command | What changed |
+| --- | --- | --- |
+| `apple-container/inspect-running.txt` | `container inspect aidm-local-engine` while the engine ran and answered | The container's MAC address and IPv6 address were set to placeholders. |
+
 ## Reconstructed from source
 
 No Mac was available. These are rebuilt from the output formats in the Apple
@@ -133,7 +142,7 @@ the runtime research notes. They have not been checked against a real run.
   - `run.txt` (the ID is the name), `run-name-in-use.*` (`container already exists: <id>`, from the source),
     `run-service-down.*`. `run-port-in-use.*` and `run-image-not-found.*` are guesses: the research notes found no
     port conflict message and no image message for a run. The adapter matches whole phrases only, and a failed run is never followed by a delete.
-  - `inspect-running.txt`, `inspect-stopped.txt`, `inspect-stopping.txt`, `inspect-unknown.txt`: the shape of the
+  - `inspect-stopped.txt`, `inspect-stopping.txt`, `inspect-unknown.txt`: the shape of the
     documentation sample, with the state in `status.state`. No exit code is in any of them, because
     the research notes found none. `inspect-missing.*` is `container not found: <id>`, from the source.
   - `logs.txt`, `logs-missing.*`, `stop.txt`, `stop-not-running.*` (`container <id> is not running`, from the

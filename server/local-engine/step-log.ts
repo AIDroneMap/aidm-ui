@@ -9,6 +9,7 @@ function stepName(progress: InstallProgressView): string | null {
       return {
         installer: "download of Apple's installer",
         approve: "approval of the installer",
+        network: "Local Network permission",
         service: "start of Apple's tool",
         kernel: "Linux system for Apple's tool",
         init: "startup files of Apple's tool",

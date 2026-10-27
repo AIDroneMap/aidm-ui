@@ -248,6 +248,8 @@ function renderInstall(
       announcement=""
       onUpdateCheckChange={() => {}}
       local={null}
+      onLocalView={() => {}}
+      onAuthRequired={() => {}}
       installBusy={false}
       installFailure={null}
       onInstallLocal={() => {}}
