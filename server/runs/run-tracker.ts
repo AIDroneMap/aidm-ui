@@ -1,8 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
-import type { EngineStore } from "../engines/engine-store.ts";
+import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
+import { readLogJson, stageStarted, summaryFromOutput, summaryLine } from "./run-summary.ts";
 import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure, type TaskApiResult } from "../task-api/task-client.ts";
 import { isFinished, runStateFromTask } from "./run-state.ts";
 import type { RunPatch, RunRecord, RunStore } from "./run-store.ts";
@@ -35,6 +36,8 @@ export interface RunTrackerDeps {
   clientFor?: (endpoint: EngineEndpoint) => TaskClient;
   /** The "Could not reach" lines, shared with the other clients of each engine. */
   unreachable?: UnreachableLines;
+  /** Where a task of this engine keeps its files, when aidm-ui can read them there: the local engine's task folder. */
+  taskFolder?: (engine: EngineRecord, taskUuid: string) => string | null;
 }
 
 interface Live {
@@ -53,6 +56,10 @@ interface Following {
   wasProcessing: boolean;
   /** The task's processing time when it was last seen processing, to notice it going back. */
   processingTime: number | null;
+  /** The engine's own time for the task at the last answer, in milliseconds, for the summary. */
+  engineMs: number | null;
+  /** The stages the task output started, with when aidm-ui first saw each, for the summary of a remote engine's run. */
+  stageSeen: Array<{ name: string; at: number }>;
 }
 
 /** Follows the tasks of runs on their engines, saves what they report, and tells whoever listens. */
@@ -64,6 +71,7 @@ export class RunTracker {
   private readonly logLine: (line: string) => void;
   private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
   private readonly following = new Map<number, Following>();
+  private readonly taskFolder: (engine: EngineRecord, taskUuid: string) => string | null;
   private readonly live = new Map<number, Live>();
   /** Lines saved per run, counted once from the file. It is also the next line to ask the engine for. */
   private readonly lineCounts = new Map<number, number>();
@@ -79,6 +87,7 @@ export class RunTracker {
     this.intervalMs = deps.intervalMs;
     this.logLine = deps.log;
     this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log, unreachable: deps.unreachable }));
+    this.taskFolder = deps.taskFolder ?? (() => null);
   }
 
   /**
@@ -119,6 +128,8 @@ export class RunTracker {
       busy: false,
       wasProcessing: run.state === "processing",
       processingTime: null,
+      engineMs: null,
+      stageSeen: [],
     });
     if (this.started) void this.pollOnce(runId);
   }
@@ -170,6 +181,7 @@ export class RunTracker {
     const record = Object.keys(saved).length > 0 ? this.runs.update(runId, saved) : this.runs.get(runId);
     if (record === null) return;
     if (isFinished(record.state)) {
+      this.summarise(record, this.following.get(runId));
       this.following.delete(runId);
       live.step = null;
       live.download = null;
@@ -225,6 +237,35 @@ export class RunTracker {
       } catch (error) {
         this.logLine(`A run listener failed: ${describe(error)}`);
       }
+    }
+  }
+
+  /**
+   * One line in the diagnosis log for a run that just ended, with the engine's
+   * figures (run-summary.ts). It must never stop the run from ending, so a failure
+   * here is only a line of its own.
+   */
+  private summarise(run: RunRecord, following: Following | undefined): void {
+    try {
+      const engine = run.engineId === null ? null : this.engines.get(run.engineId);
+      const folder = engine === null || run.taskUuid === null ? null : this.taskFolder(engine, run.taskUuid);
+      let summary = readLogJson(folder);
+      if (summary === null) {
+        const path = this.logPath(run.id);
+        const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
+        summary = summaryFromOutput(lines, following?.stageSeen ?? [], Date.now(), following?.engineMs ?? null);
+      } else if (summary.engineSeconds === null && following?.engineMs != null) {
+        summary = { ...summary, engineSeconds: Math.round(following.engineMs / 100) / 10 };
+      }
+      const where =
+        folder !== null
+          ? `${join(folder, "task_output.txt")} and log.json next to it`
+          : run.taskUuid === null
+            ? "none, the task never reached the engine"
+            : `on the engine, in the folder of task ${run.taskUuid} (task_output.txt and log.json, also in its all.zip); AIDM UI's copy of the output is ${this.logPath(run.id)}`;
+      this.logLine(summaryLine({ id: run.id, state: run.state, engineName: engine?.kind === "local" ? "this computer" : (engine?.name ?? "?") }, summary, where));
+    } catch (error) {
+      this.logLine(`Run ${run.id}: the summary could not be made: ${describe(error)}`);
     }
   }
 
@@ -344,6 +385,7 @@ export class RunTracker {
     if (this.current(runId, following) === null) return;
     const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
     const processingTime = info.value.processingTime;
+    if (processingTime !== null && processingTime >= 0) following.engineMs = processingTime;
     // The engine started the task over, and its log starts again too. The run's own state cannot tell:
     // polls that got no answer may have turned it into engine_unreachable in between.
     // A processing time that went down is a restart. Queued again after processing is only a hint,
@@ -389,6 +431,11 @@ export class RunTracker {
     following.failedPolls = 0;
     following.notFoundPolls = 0;
     if (newLines.length > 0) {
+      const at = Date.now();
+      for (const line of newLines) {
+        const stage = stageStarted(line);
+        if (stage !== null && !following.stageSeen.some((seen) => seen.name === stage)) following.stageSeen.push({ name: stage, at });
+      }
       const from = this.lineCount(runId);
       this.saveLines(runId, newLines);
       this.emit(runId, { type: "log", lines: newLines, from });

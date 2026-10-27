@@ -144,6 +144,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       intervalMs: DEFAULT_RUN_POLL_INTERVAL_MS,
       log: log,
       unreachable,
+      // The local engine's task folders are on this computer, so the run summary reads the engine's own log.json there.
+      taskFolder: (engine, taskUuid) => (engine.kind === "local" ? localEngine.localTaskFolder(taskUuid) : null),
     });
     const manifests = new ManifestService({
       settings,

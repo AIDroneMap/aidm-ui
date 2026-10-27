@@ -1776,6 +1776,19 @@ export class LocalEngineManager {
     }
   }
 
+  /**
+   * The folder on this computer where the local engine keeps one task: its
+   * task_output.txt and log.json. A container has the engine data folder as
+   * the task API's data folder; a native package runs the API in the engine
+   * data folder, which keeps its data in data/ there.
+   */
+  localTaskFolder(taskUuid: string): string | null {
+    const installed = this.settings.get("local.package");
+    if (installed === null || !/^[0-9a-f-]{36}$/i.test(taskUuid)) return null;
+    const engineData = this.settings.get("engine.dataFolder") ?? join(this.deps.dataFolder, "engine-data");
+    return isNativePackage(installed) ? join(engineData, "data", taskUuid) : join(engineData, taskUuid);
+  }
+
   /** How the installed engine is reached, on Apple's tool; null for any other runtime and for a native package. */
   private appleConnection(): "socket" | "port" | null {
     const installed = this.settings.get("local.package");
