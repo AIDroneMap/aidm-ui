@@ -21,3 +21,25 @@ test("a streamed command gets a line when it starts and one when it ends", async
   await loggingRunner(inner, (line) => lines.push(line), clock()).stream(["docker", "load"], { onLine: () => {}, stdin: new Response("tar").body ?? undefined });
   expect(lines).toEqual(["Command started: docker load (with input)", "Command ended: docker load -> exit 0 after 1.5 s"]);
 });
+
+test("a streamed command that aidm-ui ends itself is said to be stopped, not to have exited with the kill's code", async () => {
+  const lines: string[] = [];
+  const abort = new AbortController();
+  const inner = new ScriptedRunner([
+    {
+      argv: ["container", "logs", "-f", "-n", "0", "aidm-local-engine"],
+      result: () => {
+        abort.abort();
+        return { exitCode: 137, stdout: "", stderr: "" };
+      },
+    },
+  ]);
+  await loggingRunner(inner, (line) => lines.push(line), clock()).stream(["container", "logs", "-f", "-n", "0", "aidm-local-engine"], {
+    onLine: () => {},
+    signal: abort.signal,
+  });
+  expect(lines).toEqual([
+    "Command started: container logs -f -n 0 aidm-local-engine",
+    "Command stopped by aidm-ui: container logs -f -n 0 aidm-local-engine after 1.5 s",
+  ]);
+});

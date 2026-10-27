@@ -21,7 +21,7 @@ afterEach(async () => {
   rmSync(folder, { recursive: true, force: true });
 });
 
-function make(options: { rotateBytes?: number; retryBackoffMs?: number } = {}): EngineLog {
+function make(options: { rotateBytes?: number; retryBackoffMs?: number; log?: (line: string) => void } = {}): EngineLog {
   const log = new EngineLog({ dataFolder: folder, token: () => token, log: () => {}, retryBackoffMs: 5, ...options });
   logs.push(log);
   return log;
@@ -162,14 +162,16 @@ test("a stream that ends when the container has stopped is not opened again", as
   expect(script.calls).toHaveLength(1);
 });
 
-test("stop ends the following and leaves the lines", async () => {
-  const log = make();
+test("stop ends the following, leaves the lines and says so in the log", async () => {
+  const said: string[] = [];
+  const log = make({ log: (line: string) => said.push(line) });
   const script: ScriptedStream = { streams: [["kept"]], calls: [], state: "running" };
   log.follow(scripted(script), { fresh: true });
   await eventually(async () => script.calls.length >= 2);
   await log.stop();
   expect(log.isFollowing()).toBe(false);
   expect(log.lines()).toEqual(["kept"]);
+  expect(said.at(-1)).toBe("Stopped following the engine log.");
 });
 
 test("a new log starts with the last lines of the file from before", () => {

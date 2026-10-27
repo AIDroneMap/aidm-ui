@@ -84,6 +84,7 @@ export class EngineLog {
     if (current === undefined) return;
     current.abort.abort();
     await current.done;
+    this.deps.log("Stopped following the engine log.");
   }
 
   private async loop(pkg: EnginePackage, signal: AbortSignal, fresh: boolean): Promise<void> {
