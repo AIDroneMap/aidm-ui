@@ -65,7 +65,7 @@ These apply to everything you write: code comments, docs, specs, commit messages
 
 ## Building and testing
 
-Build and run only in your own worktree. Never log into, sync files to, or run anything on any shared machine; the only shared machines you reach are GitHub's runners, through a push. CI runs the unit tests on every push to every branch. Read the check; link it in the pull request instead of describing a local run.
+Edit, run the unit tests and open pull requests from your own worktree. Do not run the full test on the machine you work on: it runs on a machine that has the engine runtime, as the Tests section says. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. CI runs the unit tests on every push to every branch. Read the check; link it in the pull request instead of describing a local run.
 
 ## Tests
 
