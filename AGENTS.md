@@ -65,13 +65,13 @@ These apply to everything you write: code comments, docs, specs, commit messages
 
 ## Building and testing
 
-Edit, run the unit tests and open pull requests from your own worktree. Do not run the full test on the machine you work on: it runs on a machine that has the engine runtime, as the Tests section says. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. CI runs the unit tests on every push to every branch. Read the check; link it in the pull request instead of describing a local run.
+Edit, run the unit tests and open pull requests from your own worktree. Do not run the full test on the machine you work on: it runs on a machine that has the engine runtime, as the Tests section says. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. Read the checks; link them in the pull request instead of describing a local run.
 
 ## Tests
 
-Unit tests: `bun test`.
-Full test: the end-to-end run described in `docs/milestones/0001-first-mac-run.md`: install an engine from a manifest, run the sample job, verify the outputs, on a machine that has the engine runtime. Record the machine, the engine version and the manifest sequence in the pull request.
-The full test is required when a change touches: `server/manifest/`, `server/engine/`, the install, signing or update path, the job runner, packaging, `.github/`. The reviewer follows `REVIEW.md`.
+Unit tests: `bun run typecheck` and `bun test`. CI runs them on every pull request and on every push to `main` (`.github/workflows/ci.yml`, job "Typecheck and test"), and in the same workflow builds the four executables, smoke tests the Linux x64 one, and runs the real runtime tests (Podman and Docker with a tiny image) and the real task API test in test mode. A push to a branch with no pull request runs nothing; open the pull request to get the checks.
+Full test: the end-to-end run described in `docs/milestones/0001-first-mac-run.md`: install an engine from a manifest, run the sample job, verify the outputs, on a machine that has the engine runtime. It is not run by CI. Record the machine, the engine version and the manifest sequence in the pull request.
+The full test is required when a change touches: `server/manifest/`, `server/engine/`, the install, signing or update path, the job runner, packaging, `.github/`. For such a change, ask the maintainer to run it and link the record in the pull request; the reviewer follows `REVIEW.md`.
 
 Every bug fix and feature needs a test that fails without it. Manifest parsing and signature verification have tests that must fail when the signature, the sequence rule or the schema version is wrong; keep them that way.
 
