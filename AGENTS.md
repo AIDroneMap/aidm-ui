@@ -38,7 +38,7 @@ Follow this order for any change larger than a small fix:
 3. **Issues.** Split the spec into issues small enough for one pull request each, linked to the spec issue.
 4. **Implement.** One issue per branch, one worktree per branch, one logical change per pull request.
 5. **Review.** Open the pull request. When it is open and its first CI run has started, run `/request-review <number>` and follow the loop in `REVIEW.md`. The loop ends on approval, or hands the pull request to a maintainer with the label `needs-maintainer`.
-6. **Hand over.** If the change targets the speed or memory of the local engine path, open a request in the benchmark repository from its template once the review loop has ended on approval. Then clean up your worktree and end. A maintainer merges; you never do.
+6. **Hand over.** If the change targets the speed or memory of the local engine path, open a request in AIDroneMap/aidm-bench from its benchmark issue template once the review loop has ended on approval. Then clean up your worktree and end. A maintainer merges; you never do.
 
 ## Branches, commits and pull requests
 
