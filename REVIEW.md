@@ -29,10 +29,10 @@ Outside these buckets there is nothing. No style, no naming, no "I would have do
 The reviewer chooses the depth and says which depth was chosen and why. The floor is:
 
 - The repository's unit tests always run, in the reviewer's own checkout of the branch.
-- `AGENTS.md` lists the parts of this repository whose change requires its full test, and names that test. When the change touches any of those parts, or claims any effect on speed or memory, the reviewer runs the full test and judges from what ran, not from the diff.
+- The pull request declares its test depth, as `AGENTS.md` defines the depths for this repository, with one line of reasoning. The reviewer checks that the declared depth matches the change and raises it when it does not; it never lowers it. A depth claimed too low is a Fix, with the reason. When the declared or raised depth requires a test beyond the unit tests, the reviewer judges from the results of the run linked in the pull request, not from the diff, and does not run that test itself when a run already covers the tree.
 - Documentation, strings, and one-line fixes may be judged by reading plus the unit tests.
 
-Existing green checks on the pull request are evidence. The reviewer does not rerun a check that already passed on the same tree. If the reviewer judges that the change deserves more than the full test before merge (a larger dataset, a run on real hardware), it says so; a maintainer decides.
+Existing green checks and linked runs on the pull request are evidence. The reviewer does not rerun one that already passed on the same tree. If the reviewer judges that the change deserves more than the highest depth before merge (a larger dataset, a run on real hardware), it says so; a maintainer decides.
 
 The reviewer never measures performance and never writes a number for speed or memory. Performance claims come from the benchmark process described in `AGENTS.md`, after the merge.
 
