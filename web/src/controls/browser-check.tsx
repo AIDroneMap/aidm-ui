@@ -1,3 +1,4 @@
+import { findBrowserPage } from "./browser-target.ts";
 import { startBrowser } from "./browser-start.ts";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,17 +39,13 @@ export async function browserCheck(): Promise<string[]> {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) { return new URL(req.url).pathname === "/" ? new Response(`<!doctype html><style>${styles.join("\n").replace(/@import[^;]+;/g, "")}</style>${markup}`, { headers: { "Content-Type": "text/html", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'" } }) : new Response("", { status: 404 }); } });
   let running: Awaited<ReturnType<typeof startBrowser>> | undefined;
   let ws: WebSocket | undefined;
+  let stage = "browser startup";
   try {
     running = await startBrowser(browser, dir, `http://127.0.0.1:${server.port}/`);
     const { port } = running;
-    let target: { type: string; webSocketDebuggerUrl: string } | undefined;
-    const targetDeadline = Date.now() + 5000;
-    while (!target && Date.now() < targetDeadline) {
-      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) })).json() as { type: string; webSocketDebuggerUrl: string }[];
-      target = targets.find((item) => item.type === "page");
-      if (!target) await Bun.sleep(50);
-    }
-    if (!target) throw new Error("Browser fixture page is missing");
+    stage = "DevTools target discovery";
+    const target = await findBrowserPage(Number(port));
+    stage = "DevTools connection";
     ws = new WebSocket(target.webSocketDebuggerUrl);
     const socket = ws;
     await new Promise<void>((resolve, reject) => {
@@ -71,6 +68,7 @@ export async function browserCheck(): Promise<string[]> {
     const evaluate = async (expression: string) => (await send("Runtime.evaluate", { expression, returnByValue: true })).result.result.value;
     const failures: string[] = [];
     const check = (ok: unknown, name: string) => { if (!ok) failures.push(name); };
+    stage = "fixture navigation";
     await send("Page.enable");
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
     let ready = false;
@@ -80,6 +78,7 @@ export async function browserCheck(): Promise<string[]> {
       if (!ready) await Bun.sleep(50);
     }
     if (!ready) throw new Error("Browser fixture did not load");
+    stage = "keyboard checks";
     for (const name of ["button", "text", "number", "select", "toggle", "summary"]) {
       await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
       await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
@@ -106,6 +105,7 @@ export async function browserCheck(): Promise<string[]> {
       }
     }
     check(await evaluate("document.querySelector('table caption').textContent === 'Table' && document.querySelector('[role=status]').textContent === 'Notice' && document.querySelector('label[for=progress]') !== null"), "non-interactive labels");
+    stage = "dialog checks";
     await evaluate("document.querySelector('dialog').showModal()");
     check(await evaluate("document.querySelector('dialog').open && document.activeElement.id === 'close'"), "dialog focus");
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -114,7 +114,6 @@ export async function browserCheck(): Promise<string[]> {
     socket.close();
     return failures;
   } catch (error) {
-    if (running) throw new Error(`${String(error)}\nBrowser stderr:\n${running.diagnostics()}`);
-    throw error;
+    throw new Error(`${stage}: ${String(error)}${running ? `\nBrowser stderr:\n${running.diagnostics()}` : ""}`);
   } finally { ws?.close(); await running?.stop(); server.stop(true); await rm(dir, { recursive: true, force: true }); }
 }
