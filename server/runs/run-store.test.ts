@@ -161,3 +161,16 @@ test("version 5 run IDs stay reserved when run metadata is added", () => {
   expect(new RunStore(old).get(run.id)).toEqual(run);
   old.close();
 });
+
+test("version 6 uploads survive the run metadata migration", () => {
+  const old = new Database(":memory:", { strict: true });
+  applyMigrations(old, migrations.slice(0, 6));
+  const projectId = new RunStore(old).builtinProjectId("sample")!;
+  old.query("INSERT INTO project_upload_files (project_id, sha256, size, storage_id) VALUES (?, 'hash', 12, 'stored')").run(projectId);
+  old.query("INSERT INTO project_upload_aliases (project_id, name, sha256, kind) VALUES (?, 'flight.jpg', 'hash', 'photo')").run(projectId);
+  old.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')").run(projectId);
+  applyMigrations(old, migrations);
+  expect(old.query("SELECT name, sha256, kind FROM project_upload_aliases WHERE project_id = ?").all(projectId)).toEqual([{ name: "flight.jpg", sha256: "hash", kind: "photo" }]);
+  expect(new RunStore(old).get(1)).toMatchObject({ name: null, preset: null, wayIn: null, sample: false });
+  old.close();
+});
