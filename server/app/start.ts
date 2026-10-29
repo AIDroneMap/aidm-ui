@@ -32,6 +32,8 @@ import { MachineChecks } from "../machine/machine-checks.ts";
 import { systemMachine } from "../machine/system.ts";
 import { ManifestService } from "../manifest/manifest-service.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
+import { ProjectStore } from "../projects/project-store.ts";
+import { ProjectDeletion } from "../projects/project-deletion.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts";
 import { SampleJob } from "../sample/sample-job.ts";
@@ -137,6 +139,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const unreachable = new UnreachableLines(log);
     const engines = new EngineMonitor({ store: engineStore, intervalMs: DEFAULT_POLL_INTERVAL_MS, log: log, unreachable });
     const runStore = new RunStore(db);
+    const projects = new ProjectStore(db, SAMPLE_DATASET.imageCount);
+    const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
     const tracker = new RunTracker({
       runs: runStore,
       engines: engineStore,
@@ -220,6 +224,8 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 
     const routes = createRoutes({
       identity,
+      projects,
+      projectDeletion,
       assets: options.assets,
       settings,
       sessions,
