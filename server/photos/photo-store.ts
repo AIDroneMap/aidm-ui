@@ -1,3 +1,4 @@
+import type { ImportStore } from "../projects/import-store.ts";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { ProjectPhotoFactsView } from "../../shared/api-types.ts";
@@ -17,9 +18,10 @@ interface PhotoRow {
 /** Caches bounded metadata reads. Images and pixel data never enter a response. */
 export class PhotoStore {
   private readonly preparing = new Map<number, Promise<void>>();
-  constructor(private readonly db: Database, private readonly folder: string) {}
+  constructor(private readonly db: Database, private readonly folder: string, private readonly imports?: ImportStore) {}
 
   private rows(projectId: number): PhotoRow[] {
+    if (this.imports?.has(projectId)) return this.imports.photoRows(projectId).map(row => ({ ...row, storageId: "" }));
     return this.db.query(`SELECT f.sha256, f.size, f.storage_id AS storageId,
       (SELECT a.name FROM project_upload_aliases a WHERE a.project_id = f.project_id AND a.sha256 = f.sha256 AND a.kind = 'photo'
        ORDER BY CASE WHEN lower(a.name) GLOB '*.raw' OR lower(a.name) GLOB '*.bmp' THEN 1 ELSE 0 END, a.name LIMIT 1) AS name,
@@ -35,6 +37,7 @@ export class PhotoStore {
   private kind(name: string): string { return /\.(raw|bmp)$/i.test(name) ? "unsupported" : "container"; }
 
   private async prepare(projectId: number): Promise<void> {
+    if (this.imports?.has(projectId)) { await this.imports.prepareMetadata(projectId); return; }
     const existing = this.preparing.get(projectId);
     if (existing !== undefined) return existing;
     const pending = this.rows(projectId).filter(row => row.facts === null || row.readerKind !== this.kind(row.name)).slice(0, 32);
@@ -58,11 +61,17 @@ export class PhotoStore {
   }
 
   async setFlightExcluded(projectId: number, flightId: string, excluded: boolean): Promise<"ok" | "not_found" | "busy"> {
+    if (this.imports?.isBusy(projectId)) return "busy";
     await this.prepare(projectId);
+    if (this.imports?.isBusy(projectId)) return "busy";
     const rows = this.rows(projectId);
     if (rows.some(row => row.facts === null || row.readerKind !== this.kind(row.name))) return "busy";
     const flight = this.flights(rows).flights.find(flight => flight.id === flightId);
     if (flight === undefined) return "not_found";
+    if (this.imports?.has(projectId)) {
+      this.imports.setExcluded(projectId, flight.checksums, excluded);
+      return "ok";
+    }
     this.db.transaction(() => {
       for (const sha256 of flight.checksums) {
         if (excluded) this.db.query("INSERT OR IGNORE INTO project_photo_exclusions (project_id, sha256) VALUES (?, ?)").run(projectId, sha256);
@@ -76,7 +85,7 @@ export class PhotoStore {
   async facts(projectId: number, offset: number, limit: number): Promise<ProjectPhotoFactsView> {
     await this.prepare(projectId);
     const rows = this.rows(projectId);
-    const counts = this.db.query("SELECT SUM(CASE WHEN kind = 'photo' THEN 1 ELSE 0 END) AS photoAliases, COUNT(DISTINCT CASE WHEN kind = 'video' THEN sha256 END) AS videoCount FROM project_upload_aliases WHERE project_id = ?").get(projectId) as { photoAliases: number | null; videoCount: number };
+    const counts = this.imports?.has(projectId) ? this.imports.counts(projectId) : this.db.query("SELECT SUM(CASE WHEN kind = 'photo' THEN 1 ELSE 0 END) AS photoAliases, COUNT(DISTINCT CASE WHEN kind = 'video' THEN sha256 END) AS videoCount FROM project_upload_aliases WHERE project_id = ?").get(projectId) as { photoAliases: number | null; videoCount: number };
     const metadata = rows.filter(row => row.facts !== null).map(row => JSON.parse(row.facts!) as PhotoMetadata);
     const cameras = new Map<string, ProjectPhotoFactsView["cameras"][number]>();
     const bands = new Map<string, number>();
