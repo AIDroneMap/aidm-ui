@@ -21,6 +21,8 @@ import { MachineChecks } from "../machine/machine-checks.ts";
 import { RuntimeSetup, type PrivilegedRunner } from "../runtimes/podman-setup.ts";
 import { OS_RELEASE_FILE, type SystemFiles } from "../runtimes/setup-command.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
+import { ProjectStore } from "../projects/project-store.ts";
+import { ProjectDeletion } from "../projects/project-deletion.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { RunTracker } from "../runs/run-tracker.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
@@ -177,6 +179,8 @@ export function openHarness(
     startingGraceMs: options.startingGraceMs,
   });
   const runs = new RunStore(db);
+  const projects = new ProjectStore(db, (options.sampleDataset ?? SAMPLE_DATASET).imageCount);
+  const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
   const tracker = new RunTracker({
     runs,
     engines: engineStore,
@@ -270,6 +274,8 @@ export function openHarness(
 
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
+    projects,
+    projectDeletion,
     assets: options.assets ?? new Map(),
     settings,
     sessions,

@@ -391,3 +391,16 @@ legend {
 .install-step-state {
   white-space: nowrap;
 }
+
+.project-table { overflow-x: auto; }
+textarea {
+  font: inherit;
+  padding: 0.6rem 0.75rem;
+  width: min(100%, 36rem);
+  min-height: 8rem;
+  border: 2px solid var(--color-border);
+  border-radius: 0.375rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+textarea:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }

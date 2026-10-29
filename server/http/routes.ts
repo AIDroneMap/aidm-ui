@@ -4,6 +4,7 @@ import { engineRoutes } from "../engines/routes.ts";
 import { localEngineRoutes } from "../local-engine/routes.ts";
 import { machineRoutes } from "../machine/routes.ts";
 import { manifestRoutes } from "../manifest/routes.ts";
+import { projectRoutes } from "../projects/routes.ts";
 import { runRoutes } from "../runs/routes.ts";
 import { sampleRoutes } from "../sample/routes.ts";
 import { settingsRoutes } from "../settings/routes.ts";
@@ -25,7 +26,7 @@ function healthRoutes(ctx: RouteContext): RouteTable {
   return { "/api/health": { GET: () => Response.json(ctx.identity) } };
 }
 
-/** Every API route. The routes of operator projects join this table in later tickets. */
+/** Every API route. */
 export function apiRoutes(ctx: RouteContext): RouteTable {
   return {
     ...healthRoutes(ctx),
@@ -37,6 +38,7 @@ export function apiRoutes(ctx: RouteContext): RouteTable {
     ...manifestRoutes(ctx),
     ...sampleRoutes(ctx),
     ...runRoutes(ctx),
+    ...projectRoutes(ctx),
   };
 }
 

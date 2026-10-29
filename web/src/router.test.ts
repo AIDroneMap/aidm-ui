@@ -28,3 +28,9 @@ test("anything else is home", () => {
     expect(routeFromHash(hash)).toBe("home");
   }
 });
+
+test("project addresses select the project page", () => {
+  expect(routeFromHash("#/projects/new")).toBe("project");
+  expect(routeFromHash("#/projects/42")).toBe("project");
+  expect(routeFromHash("#/projects/0")).toBe("home");
+});

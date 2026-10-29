@@ -12,6 +12,8 @@ export function sampleRoutes(ctx: RouteContext): RouteTable {
         if (!parsed.ok) return parsed.response;
         const { engineId } = parsed.body;
         if (typeof engineId !== "number" || !Number.isInteger(engineId)) return errorResponse(400, "api.invalid_body");
+        const sampleId = ctx.projects.sampleId();
+        if (sampleId !== null && ctx.projectDeletion.isDeleting(sampleId)) return errorResponse(409, "project.deletion_busy");
         const outcome = await ctx.sample.start(engineId);
         if (!outcome.ok) return errorResponse(outcome.status, outcome.error.code, outcome.error.data);
         return Response.json(outcome.run, { status: 202 });
