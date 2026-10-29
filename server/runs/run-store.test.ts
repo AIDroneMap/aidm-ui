@@ -4,7 +4,9 @@ import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { RunStore } from "./run-store.ts";
 import { ProjectStore } from "../projects/project-store.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { UploadStore } from "../projects/upload-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -162,15 +164,24 @@ test("version 5 run IDs stay reserved when run metadata is added", () => {
   old.close();
 });
 
-test("version 6 uploads survive the run metadata migration", () => {
+test("version 6 uploads survive the run metadata migration", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "run-migration-"));
   const old = new Database(":memory:", { strict: true });
-  applyMigrations(old, migrations.slice(0, 6));
-  const projectId = new RunStore(old).builtinProjectId("sample")!;
-  old.query("INSERT INTO project_upload_files (project_id, sha256, size, storage_id) VALUES (?, 'hash', 12, 'stored')").run(projectId);
-  old.query("INSERT INTO project_upload_aliases (project_id, name, sha256, kind) VALUES (?, 'flight.jpg', 'hash', 'photo')").run(projectId);
-  old.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')").run(projectId);
-  applyMigrations(old, migrations);
-  expect(old.query("SELECT name, sha256, kind FROM project_upload_aliases WHERE project_id = ?").all(projectId)).toEqual([{ name: "flight.jpg", sha256: "hash", kind: "photo" }]);
-  expect(new RunStore(old).get(1)).toMatchObject({ name: null, preset: null, wayIn: null, sample: false });
-  old.close();
+  try {
+    applyMigrations(old, migrations.slice(0, 6));
+    const projectId = new ProjectStore(old).create("Field", "Notes").id;
+    const uploads = new UploadStore(old, folder);
+    const bytes = "photo bytes";
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const session = uploads.create(projectId, { name: "flight.jpg", size: bytes.length, sha256 });
+    expect(await uploads.chunk(projectId, session.id, 0, sha256, new Response(bytes).body)).toBe("ok");
+    expect(await uploads.complete(projectId, session.id)).toBe("ok");
+    old.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')").run(projectId);
+    expect(applyMigrations(old, migrations)).toEqual([7]);
+    expect(uploads.list(projectId, 0, 100)).toEqual({ files: [{ name: "flight.jpg", size: bytes.length, sha256, kind: "photo" }], nextOffset: null });
+    const files = join(folder, "projects", String(projectId), "files");
+    expect(readFileSync(join(files, readdirSync(files)[0]!), "utf8")).toBe(bytes);
+    expect(new ProjectStore(old).get(projectId)).toMatchObject({ name: "Field", notes: "Notes", photoCount: 1 });
+    expect(new RunStore(old).get(1)).toMatchObject({ name: null, preset: null, wayIn: null, sample: false });
+  } finally { old.close(); rmSync(folder, { recursive: true, force: true }); }
 });

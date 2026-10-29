@@ -517,3 +517,7 @@ export interface ProjectView {
 }
 
 export interface ProjectWriteRequest { name: string; notes: string }
+export interface UploadRequest { name: string; size: number; sha256: string }
+export interface UploadSessionView { id: string; chunkSize: number; received: number[]; complete: boolean }
+export interface UploadedFileView { name: string; size: number; sha256: string; kind: "photo" | "mask" | "video" }
+export interface UploadedFilesView { files: UploadedFileView[]; nextOffset: number | null }
