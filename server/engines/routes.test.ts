@@ -396,3 +396,46 @@ test("the token never appears in anything sent to the browser or written to the 
   for (const line of harness.logs) expect(line).not.toContain(token);
   expect(harness.engineStore.get(added.id)?.token).toBe(token);
 });
+
+
+test("engine options reconcile facts, hide internal names and keep unknown options last", async () => {
+  fake.options = [
+    { name: "new-engine-option", type: "float", value: "2.5", domain: "positive float", help: "Engine explanation" },
+    { name: "end-with", type: "string", value: "report", domain: "string", help: "Hidden" },
+    { name: "dsm", type: "bool", value: "true", domain: "", help: "Surface" },
+    { name: "orthophoto-resolution", type: "int", value: "1", domain: "integer >= 1", help: "Resolution" },
+    { name: "rerun-from", type: "string", value: "dataset", domain: "string", help: "Hidden" },
+    { name: "gcp", type: "string", value: "", domain: "path", help: "Hidden" },
+    { name: "split", type: "int", value: "0", domain: "positive integer", help: "Hidden" },
+    { name: "tiles", type: "bool", value: "false", domain: "", help: "Hidden" },
+  ];
+  const engine = await addEngine();
+  const response = await send("GET", `/api/engines/${engine.id}/options`);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.options.map((option: { name: string }) => option.name)).toEqual(["dsm", "orthophoto-resolution", "new-engine-option"]);
+  expect(body.options[0]).toMatchObject({ name: "dsm", defaultValue: true, unexplained: false, changes: ["defaultValue"] });
+  expect(body.options[1]).toMatchObject({ type: "int", domain: "integer >= 1", defaultValue: 1, changes: ["type", "domain", "defaultValue"] });
+  expect(body.options[2]).toMatchObject({ group: "unexplained", defaultValue: 2.5, unexplained: true, help: "Engine explanation" });
+  fake.options = [{ name: "dtm", type: "bool", value: "false", domain: "", help: "Ground" }];
+  const refreshed = await (await send("GET", `/api/engines/${engine.id}/options`)).json();
+  expect(refreshed.options.map((option: { name: string }) => option.name)).toEqual(["dtm"]);
+});
+
+test("the 2.6.1 compatibility baseline detects new and missing options through the route", async () => {
+  const { assertCatalogueDrift } = await import("../../test-support/catalogue-drift.ts");
+  fake.info.version = "2.6.1";
+  const engine = await addEngine();
+  const options = async () => (await (await send("GET", `/api/engines/${engine.id}/options`)).json()).options;
+  expect(() => assertCatalogueDrift([], "2.6.1")).toThrow("Catalogue drift");
+  expect(() => assertCatalogueDrift([], "2.6.2")).toThrow("Catalogue drift");
+  const baseline = await options();
+  expect(() => assertCatalogueDrift(baseline, "2.6.1")).not.toThrow();
+  expect(() => assertCatalogueDrift(baseline, "2.6.2")).toThrow("Catalogue drift");
+  fake.options.push({ name: "brand-new-option", type: "bool", value: "false", domain: "", help: "New help" });
+  const added = await options();
+  expect(() => assertCatalogueDrift(added, "2.6.1")).toThrow("brand-new-option");
+  fake.options = fake.options.filter((option) => option.name !== "brand-new-option" && option.name !== "dsm");
+  const missing = await options();
+  expect(() => assertCatalogueDrift(missing, "2.6.1")).toThrow("dsm");
+});
