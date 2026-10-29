@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Classify upload files using the engine's file extensions and mask naming from commit `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. Evidence: `shared/upload-files.test.ts` and `web/src/i18n/coverage.test.ts`. Upload storage and routes are not yet implemented.
+- Add resumable project upload routes with checksum verification, stored-file deduplication and photo counts. File classification follows engine commit `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. Evidence: `server/projects/uploads.test.ts`, `shared/upload-files.test.ts` and `web/src/i18n/coverage.test.ts`. Browser upload is not yet implemented.
 
 - Keep deleted run IDs reserved so a later run retains all of its engine log. Evidence: the deletion regression in `server/projects/routes.test.ts` and legacy database reopening test in `server/runs/run-store.test.ts`.
 

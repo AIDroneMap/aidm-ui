@@ -1,3 +1,4 @@
+// aidm 68c643965349e7e0bb5e2a0595bcbeca645c70fe: modules/context.py and stages/dataset.py.
 const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".raw", ".dng", ".nef", ".jxl"]);
 const videoExtensions = new Set([".mp4", ".mov", ".lrv", ".ts"]);
 

@@ -4,6 +4,8 @@
   "project.name_required": "Enter a project name.",
   "project.sample_photos_forbidden": "You cannot add photos to the sample project.",
   "upload.ground_control_unsupported": "Ground control and geolocation files will be supported in a later version.",
+  "upload.checksum_mismatch": "The uploaded bytes did not match the checksum. Please try again.",
+  "upload.incomplete": "Some chunks have not arrived yet.",
   "project.deletion_incomplete": "The project could not be deleted. Its records are still here. Try again after checking its engines.",
   "project.deletion_engine_missing": "A run has a task but its engine is no longer recorded. The project was not deleted.",
   "project.deletion_busy": "The project is being deleted or its photos are still being prepared. Try again shortly.",

@@ -34,6 +34,7 @@ import { ManifestService } from "../manifest/manifest-service.ts";
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
 import { ProjectStore } from "../projects/project-store.ts";
 import { ProjectDeletion } from "../projects/project-deletion.ts";
+import { UploadStore } from "../projects/upload-store.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { DEFAULT_RUN_POLL_INTERVAL_MS, RunTracker } from "../runs/run-tracker.ts";
 import { SampleJob } from "../sample/sample-job.ts";
@@ -226,6 +227,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       identity,
       projects,
       projectDeletion,
+      uploads: new UploadStore(db, dataFolder),
       assets: options.assets,
       settings,
       sessions,

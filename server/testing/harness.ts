@@ -23,6 +23,7 @@ import { OS_RELEASE_FILE, type SystemFiles } from "../runtimes/setup-command.ts"
 import { UpdateCheckScheduler } from "../manifest/update-check.ts";
 import { ProjectStore } from "../projects/project-store.ts";
 import { ProjectDeletion } from "../projects/project-deletion.ts";
+import { UploadStore } from "../projects/upload-store.ts";
 import { RunStore } from "../runs/run-store.ts";
 import { RunTracker } from "../runs/run-tracker.ts";
 import { SAMPLE_DATASET, type SampleDatasetEntry } from "../sample/sample-dataset.ts";
@@ -276,6 +277,7 @@ export function openHarness(
     identity: TEST_IDENTITY,
     projects,
     projectDeletion,
+    uploads: new UploadStore(db, dataFolder),
     assets: options.assets ?? new Map(),
     settings,
     sessions,
