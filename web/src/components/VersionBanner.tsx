@@ -1,3 +1,4 @@
+import { Button } from "../controls/Button.tsx";
 import { t } from "../i18n/translate.ts";
 import { PAGE_VERSION, pageEntry, pageIsStale, useServerBuild, type BuildStamp } from "../version.ts";
 
@@ -14,9 +15,9 @@ export function VersionBanner({ page, server, onReload }: VersionBannerProps) {
   return (
     <div className="version-banner" role="alert">
       <p>{t("app.version_changed")}</p>
-      <button type="button" onClick={onReload}>
+      <Button type="button" onClick={onReload}>
         {t("app.reload")}
-      </button>
+      </Button>
     </div>
   );
 }

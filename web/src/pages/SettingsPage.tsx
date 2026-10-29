@@ -1,3 +1,5 @@
+import { Toggle } from "../controls/Toggle.tsx";
+import { Button } from "../controls/Button.tsx";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, asApiFailure, upload, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
@@ -91,12 +93,12 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   return (
     <div role="group" aria-label={t("settings.dataset.delete_ask")} className="actions">
       <p>{t("settings.dataset.delete_ask")}</p>
-      <button ref={first} type="button" onClick={onConfirm}>
+      <Button ref={first} type="button" onClick={onConfirm}>
         {t("settings.dataset.delete_confirm")}
-      </button>
-      <button type="button" className="secondary" onClick={onKeep}>
+      </Button>
+      <Button type="button" className="secondary" onClick={onKeep}>
         {t("settings.dataset.delete_keep")}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -150,9 +152,9 @@ export function SettingsForm(props: SettingsFormProps) {
             </p>
           </div>
           <Failure props={props} section="port" id="settings-port-error" />
-          <button type="submit" disabled={props.saving === "port"}>
+          <Button type="submit" disabled={props.saving === "port"}>
             {props.saving === "port" ? t("common.saving") : t("settings.port.save")}
-          </button>
+          </Button>
           <p role="status">{props.saved === "port" ? t("settings.port.saved") : ""}</p>
         </form>
       </section>
@@ -160,10 +162,9 @@ export function SettingsForm(props: SettingsFormProps) {
       <section aria-labelledby="settings-lan-title">
         <h2 id="settings-lan-title">{t("settings.lan.title")}</h2>
         <p>{t("settings.lan.explain")}</p>
-        <div className="check">
-          <input
+        <Toggle
             id="settings-lan"
-            type="checkbox"
+            label={t("settings.lan.switch")}
             checked={lanOn || props.lanWantsOn}
             disabled={props.saving === "lan"}
             onChange={(event) => {
@@ -171,8 +172,6 @@ export function SettingsForm(props: SettingsFormProps) {
               else props.onLanWantsOnChange(event.target.checked);
             }}
           />
-          <label htmlFor="settings-lan">{t("settings.lan.switch")}</label>
-        </div>
 
         {!lanOn && props.lanWantsOn && (
           <form onSubmit={submitLan}>
@@ -193,9 +192,9 @@ export function SettingsForm(props: SettingsFormProps) {
               </p>
             </div>
             <Failure props={props} section="lan" />
-            <button type="submit" disabled={props.saving === "lan"}>
+            <Button type="submit" disabled={props.saving === "lan"}>
               {props.saving === "lan" ? t("common.saving") : t("settings.lan.save")}
-            </button>
+            </Button>
           </form>
         )}
 
@@ -216,9 +215,9 @@ export function SettingsForm(props: SettingsFormProps) {
               <p>{t("settings.lan.no_addresses")}</p>
             )}
             <Failure props={props} section="lan" />
-            <button type="button" disabled={props.saving === "lan"} onClick={props.onTurnLanOff}>
+            <Button type="button" disabled={props.saving === "lan"} onClick={props.onTurnLanOff}>
               {t("settings.lan.turn_off")}
-            </button>
+            </Button>
           </>
         )}
         <p role="status">
@@ -242,7 +241,7 @@ export function SettingsForm(props: SettingsFormProps) {
           </p>
         )}
         <div className="actions">
-          <button
+          <Button
             type="button"
             aria-disabled={props.refreshing ? "true" : undefined}
             onClick={() => {
@@ -250,7 +249,7 @@ export function SettingsForm(props: SettingsFormProps) {
             }}
           >
             {props.refreshing ? t("settings.updates.refreshing") : t("settings.updates.refresh")}
-          </button>
+          </Button>
         </div>
         <p role="status">{updatesStatus(props)}</p>
       </section>
@@ -317,9 +316,9 @@ export function SettingsForm(props: SettingsFormProps) {
         <p>{t("settings.wizard.explain")}</p>
         <Failure props={props} section="wizard" />
         <div className="actions">
-          <button type="button" disabled={props.saving === "wizard"} onClick={props.onRunWizard}>
+          <Button type="button" disabled={props.saving === "wizard"} onClick={props.onRunWizard}>
             {props.saving === "wizard" ? t("settings.wizard.running") : t("settings.wizard.run")}
-          </button>
+          </Button>
           <a href="#/wizard/check">{t("settings.wizard.check_link")}</a>
         </div>
       </section>

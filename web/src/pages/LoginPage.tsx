@@ -1,3 +1,5 @@
+import { TextField } from "../controls/TextField.tsx";
+import { Button } from "../controls/Button.tsx";
 import { useState, type FormEvent } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
@@ -22,9 +24,8 @@ export function LoginView(props: LoginViewProps) {
       <h1>{t("login.title")}</h1>
       <p>{t("login.body")}</p>
       <form onSubmit={submit}>
-        <div className="field">
-          <label htmlFor="login-passphrase">{t("login.label")}</label>
-          <input
+        <TextField
+            label={t("login.label")}
             id="login-passphrase"
             type="password"
             autoComplete="current-password"
@@ -32,11 +33,10 @@ export function LoginView(props: LoginViewProps) {
             value={props.passphrase}
             onChange={(event) => props.onPassphraseChange(event.target.value)}
           />
-        </div>
         {props.failure && <ErrorMessage failure={props.failure} />}
-        <button type="submit" disabled={props.signingIn}>
+        <Button type="submit" disabled={props.signingIn}>
           {props.signingIn ? t("login.working") : t("login.submit")}
-        </button>
+        </Button>
         <p role="status">{props.signingIn ? t("login.working") : ""}</p>
       </form>
     </main>

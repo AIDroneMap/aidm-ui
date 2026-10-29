@@ -1,3 +1,5 @@
+import { Select } from "../controls/Select.tsx";
+import { Button } from "../controls/Button.tsx";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiFailure, asApiFailure } from "../api.ts";
 import { DownloadBlock, interruptionText } from "../components/DownloadBlock.tsx";
@@ -103,9 +105,8 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
           {t("sample.engine.none")} <a href="#/engines">{t("sample.engine.go_to_engines")}</a>
         </p>
       ) : (
-        <div className="field">
-          <label htmlFor="sample-engine">{t("sample.engine.label")}</label>
-          <select
+        <Select
+            label={t("sample.engine.label")}
             id="sample-engine"
             value={engineId ?? undefined}
             disabled={starting}
@@ -116,8 +117,7 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
                 {engineLabel(engine)}
               </option>
             ))}
-          </select>
-        </div>
+        </Select>
       )}
       {refused.length > 0 && (
         <>
@@ -140,9 +140,9 @@ export function SampleIntro({ sample, engineId, onEngineChange, starting, failur
       )}
       <div className="actions">
         {offered.length > 0 && (
-          <button type="button" disabled={starting || engineId === null} onClick={onStart}>
+          <Button type="button" disabled={starting || engineId === null} onClick={onStart}>
             {starting ? t("sample.starting") : t("sample.start")}
-          </button>
+          </Button>
         )}
         {showSkip && <a href="#/">{t("sample.skip")}</a>}
       </div>
@@ -263,9 +263,9 @@ export function RunProgress({
 
       <div className="actions">
         {!finished && (
-          <button type="button" className="secondary" disabled={cancelling} onClick={onCancel}>
+          <Button type="button" className="secondary" disabled={cancelling} onClick={onCancel}>
             {cancelling ? t("run.cancelling") : t("run.cancel")}
-          </button>
+          </Button>
         )}
         {run.state === "completed" &&
           (run.resultsAvailable ? (
@@ -276,9 +276,9 @@ export function RunProgress({
             <span role="status">{t("run.results_preparing")}</span>
           ))}
         {finished && (
-          <button type="button" className="secondary" onClick={onAgain}>
+          <Button type="button" className="secondary" onClick={onAgain}>
             {t("sample.again")}
-          </button>
+          </Button>
         )}
       </div>
     </>

@@ -1,3 +1,4 @@
+import { Button } from "../controls/Button.tsx";
 import { useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { t } from "../i18n/translate.ts";
@@ -71,16 +72,16 @@ export function ConnectionHelp(props: { view: LocalEngineView; onView: (view: Lo
               <BusyButton busy={busy} onClick={() => void move()}>
                 {busy ? t("local.connection.moving") : t("local.connection.move_yes")}
               </BusyButton>
-              <button type="button" className="secondary" disabled={busy} onClick={() => setAsking(false)}>
+              <Button type="button" className="secondary" disabled={busy} onClick={() => setAsking(false)}>
                 {t("local.connection.move_no")}
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
           <div className="actions">
-            <button type="button" className="secondary" onClick={() => setAsking(true)}>
+            <Button type="button" className="secondary" onClick={() => setAsking(true)}>
               {t("local.connection.move")}
-            </button>
+            </Button>
           </div>
         ))}
       {failure && <ErrorMessage failure={failure} />}

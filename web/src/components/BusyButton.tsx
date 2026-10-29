@@ -1,3 +1,4 @@
+import { Button } from "../controls/Button.tsx";
 import type { ReactNode } from "react";
 
 export interface BusyButtonProps {
@@ -13,7 +14,7 @@ export interface BusyButtonProps {
 /** A busy button stays in the tab order: the disabled attribute would drop focus to the page. */
 export function BusyButton({ busy, onClick, className, describedBy, children }: BusyButtonProps) {
   return (
-    <button
+    <Button
       type="button"
       className={className}
       aria-disabled={busy ? "true" : undefined}
@@ -23,6 +24,6 @@ export function BusyButton({ busy, onClick, className, describedBy, children }: 
       }}
     >
       {children}
-    </button>
+    </Button>
   );
 }

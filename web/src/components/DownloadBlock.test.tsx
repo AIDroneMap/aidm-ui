@@ -72,7 +72,7 @@ const NOT_DOWNLOADS = new Set(["run-upload", "run-processing"]);
 test("no screen has a progress bar of its own for a download: only the shared block draws one", () => {
   const offenders: string[] = [];
   for (const file of sourceFiles(SRC)) {
-    if (file.endsWith("DownloadBlock.tsx")) continue;
+    if (file.endsWith("DownloadBlock.tsx") || file.endsWith("controls/Progress.tsx")) continue;
     const text = readFileSync(file, "utf8");
     for (const match of text.matchAll(/<progress\b\s*(?:id="([^"]*)")?/g)) {
       if (match[1] === undefined || !NOT_DOWNLOADS.has(match[1])) offenders.push(`${file.slice(SRC.length + 1)}: ${match[0].trim()}`);
