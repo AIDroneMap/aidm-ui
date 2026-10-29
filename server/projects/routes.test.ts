@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { openHarness, type Harness } from "../testing/harness.ts";
+import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -147,5 +147,33 @@ test("an unreachable engine leaves the project available for retry", async () =>
     expect((await send("GET", `/api/projects/${project.id}`)).status).toBe(200);
     await fake.restart();
     expect((await send("DELETE", `/api/projects/${project.id}`)).status).toBe(204);
+  } finally { await fake.stop(); }
+});
+
+
+test("a run after project deletion keeps the first lines already on its engine", async () => {
+  const fake = new FakeTaskApi();
+  await fake.start();
+  try {
+    const engine = harness.engineStore.addRemote({ name: "Engine", address: fake.address, token: fake.token });
+    const client = new TaskClient({ address: fake.address, token: fake.token });
+    async function followOutput(projectId: number, lines: string[]) {
+      const task = await client.createTask("Run", []);
+      if (!task.ok) throw new Error("Task creation failed");
+      fake.setTask(task.value.uuid, { statusCode: 40, output: lines });
+      const run = harness.runs.create({ projectId, engineId: engine.id, options: [] });
+      harness.runs.update(run.id, { taskUuid: task.value.uuid, state: "queued" });
+      harness.tracker.follow(run.id);
+      await eventually(async () => harness.tracker.view(run.id)?.state === "completed");
+      return run;
+    }
+    const first = harness.ctx.projects.create("First flight", "");
+    const oldRun = await followOutput(first.id, ["old line"]);
+    expect(harness.tracker.log(oldRun.id, 0).lines).toEqual(["old line"]);
+    expect((await send("DELETE", `/api/projects/${first.id}`)).status).toBe(204);
+    const second = harness.ctx.projects.create("Next flight", "");
+    const nextRun = await followOutput(second.id, ["first new line", "second new line"]);
+    expect(harness.tracker.log(nextRun.id, 0).lines).toEqual(["first new line", "second new line"]);
+    expect(nextRun.id).toBeGreaterThan(oldRun.id);
   } finally { await fake.stop(); }
 });

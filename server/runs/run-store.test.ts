@@ -3,6 +3,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { RunStore } from "./run-store.ts";
+import { ProjectStore } from "../projects/project-store.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let db: Database;
 let store: RunStore;
@@ -103,4 +107,25 @@ test("a run is marked restarted once, and later updates keep the mark", () => {
   store.update(run.id, { state: "queued", restarted: true });
   store.update(run.id, { progress: 3 });
   expect(store.get(run.id)).toMatchObject({ state: "queued", restarted: true, progress: 3 });
+});
+
+
+test("deleted legacy run IDs stay reserved after reopening the database", () => {
+  const folder = mkdtempSync(join(tmpdir(), "run-ids-"));
+  const path = join(folder, "database.sqlite");
+  let legacy: Database | undefined = new Database(path, { strict: true });
+  try {
+    applyMigrations(legacy, migrations.slice(0, 4));
+    const engine = new EngineStore(legacy).addRemote({ name: "Engine", address: "http://127.0.0.1:1", token: "test" });
+    const projectId = new RunStore(legacy).builtinProjectId("sample")!;
+    legacy.query(`INSERT INTO runs (id, project_id, engine_id, options, state, created_at, updated_at)
+      VALUES (42, ?, ?, '[]', 'completed', '2026-10-29', '2026-10-29')`).run(projectId, engine.id);
+    applyMigrations(legacy, migrations);
+    new ProjectStore(legacy).removeRows(projectId);
+    expect(legacy.query("SELECT id FROM runs").all()).toEqual([]);
+    legacy.close();
+    legacy = new Database(path, { strict: true });
+    const next = new RunStore(legacy).create({ projectId, engineId: engine.id, options: [] });
+    expect(next.id).toBeGreaterThan(42);
+  } finally { legacy?.close(); rmSync(folder, { recursive: true, force: true }); }
 });
