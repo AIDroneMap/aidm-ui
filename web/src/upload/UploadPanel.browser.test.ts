@@ -227,6 +227,7 @@ test("resumes after a connection cut and reload through the upload panel", async
     });
     expect(sent.slice(beforeDrop)).toEqual([0, 1, 2]);
     expect(completedHash).toBe(digest);
+    await wait("document.querySelector('#upload-files')?.disabled === false");
     await evaluate(`(() => {
       const event = new DragEvent('drop', { bubbles: true, cancelable: true });
       const file = new File(['delayed'], 'delayed.jpg');
@@ -235,6 +236,7 @@ test("resumes after a connection cut and reload through the upload panel", async
       Object.defineProperty(event, 'dataTransfer', { value: { items: [{ webkitGetAsEntry: () => ({ name: 'delayed.jpg', isFile: true, file(done) { window.finishDrop = () => done(file); } }) }], files: [] } });
       document.querySelector('section').dispatchEvent(event);
     })()`);
+    expect(await evaluate("typeof window.finishDrop")).toBe("function");
     await evaluate("location.hash = '#/projects/new'");
     await wait("document.querySelector('#project-name') && !document.querySelector('#upload-files')");
     expect(await evaluate("new Promise(resolve => { window.finishDrop(); setTimeout(() => resolve(window.staleFileReads), 0); })")).toBe(0);
