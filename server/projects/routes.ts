@@ -1,3 +1,4 @@
+import { ImportUnavailable } from "./import-store.ts";
 import { errorResponse } from "../../shared/api-error.ts";
 import { readJson, withBodyLimit, type RouteContext, type RouteTable } from "../http/route-table.ts";
 import { classifyUploadFile } from "../../shared/upload-files.ts";
@@ -24,11 +25,13 @@ export function projectRoutes(ctx: RouteContext): RouteTable {
         const id = idOf(req.params.id ?? "");
         if (id === ctx.projects.sampleId()) return errorResponse(409, "project.sample_photos_forbidden");
         if (id === null || ctx.projects.get(id) === null) return errorResponse(404, "project.not_found");
+        if (ctx.imports.has(id) || ctx.imports.isBusy(id)) return errorResponse(409, "import.source_selected");
         const release = ctx.projectDeletion.beginWrite(id);
         if (release === null) return errorResponse(409, "project.deletion_busy");
         try {
           const parsed = await readJson(req);
           if (!parsed.ok) return parsed.response;
+          if (ctx.imports.has(id) || ctx.imports.isBusy(id)) return errorResponse(409, "import.source_selected");
           const { name, size, sha256 } = parsed.body;
           if (typeof name !== "string" || name.length < 1 || name.length > 4096 || /[\u0000-\u001f\\]/.test(name) || name.split("/").some(part => part === "" || part === "." || part === "..") || /^[a-z]:/i.test(name) || !Number.isSafeInteger(size) || (size as number) < 1 || (size as number) > UPLOAD_CHUNK_SIZE * 1_000_000 || typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)) return errorResponse(400, "api.invalid_body");
           const kind = classifyUploadFile(name);
@@ -95,6 +98,9 @@ export function projectRoutes(ctx: RouteContext): RouteTable {
           if (result === "not_found") return errorResponse(404, "api.not_found");
           if (result === "busy") return errorResponse(409, "project.deletion_busy");
           return new Response(null, { status: 204 });
+        } catch (error) {
+          if (error instanceof ImportUnavailable) return errorResponse(409, error.state === "missing" ? "import.missing" : "import.changed");
+          throw error;
         } finally { release(); }
       },
     },
@@ -110,7 +116,10 @@ export function projectRoutes(ctx: RouteContext): RouteTable {
         const release = ctx.projectDeletion.beginWrite(id);
         if (release === null) return errorResponse(409, "project.deletion_busy");
         try { return Response.json(await ctx.photos.facts(id, Number(offset), Number(limit))); }
-        finally { release(); }
+        catch (error) {
+          if (error instanceof ImportUnavailable) return errorResponse(409, error.state === "missing" ? "import.missing" : "import.changed");
+          throw error;
+        } finally { release(); }
       },
     },
     "/api/projects/:id/photos": {

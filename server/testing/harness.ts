@@ -1,3 +1,4 @@
+import { ImportStore } from "../projects/import-store.ts";
 import { PhotoStore } from "../photos/photo-store.ts";
 import { test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -183,6 +184,7 @@ export function openHarness(
   const runs = new RunStore(db);
   const projects = new ProjectStore(db, (options.sampleDataset ?? SAMPLE_DATASET).imageCount);
   const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
+  const imports = new ImportStore(db, dataFolder);
   const tracker = new RunTracker({
     runs,
     engines: engineStore,
@@ -279,7 +281,8 @@ export function openHarness(
     projects,
     projectDeletion,
     uploads: new UploadStore(db, dataFolder),
-      photos: new PhotoStore(db, dataFolder),
+    photos: new PhotoStore(db, dataFolder, imports),
+    imports,
     assets: options.assets ?? new Map(),
     settings,
     sessions,

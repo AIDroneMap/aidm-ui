@@ -543,3 +543,14 @@ export interface ProjectPhotoFactsView {
   pendingMetadata: number;
   nextOffset: number | null;
 }
+
+export interface FolderImportView {
+  available: boolean;
+  state: "none" | "ready" | "changed" | "missing";
+  path: string | null;
+  acceptedCount: number;
+  skippedCount: number;
+  groundControlCount: number;
+  files: Array<{ name: string; size: number; kind: "photo" | "mask" | "video" }>;
+  nextOffset: number | null;
+}

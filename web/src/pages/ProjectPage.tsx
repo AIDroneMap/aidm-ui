@@ -10,6 +10,8 @@ import { useProjectKey } from "../router.ts";
 import { projectName } from "./HomePage.tsx";
 import { UploadPanel } from "../upload/UploadPanel.tsx";
 import { PhotoFacts } from "../photos/PhotoFacts.tsx";
+import { FolderImportPanel } from "../folders/FolderImportPanel.tsx";
+import type { FolderImportView } from "../../../shared/api-types.ts";
 
 interface FormProps {
   project: ProjectView | null;
@@ -56,6 +58,7 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
   const [asking, setAsking] = useState(false);
   const [saved, setSaved] = useState(false);
   const [factsRefresh, setFactsRefresh] = useState(0);
+  const [source, setSource] = useState<{ id: number; state: FolderImportView["state"] | null } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { if (asking) dialog.current?.showModal(); }, [asking]);
   useEffect(() => {
@@ -95,7 +98,7 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     {failure && <ErrorMessage failure={failure} />}
     {!loaded ? (!failure && <p>{t("projects.loading")}</p>) : <ProjectForm project={project} name={name} notes={notes} working={working} onName={setName} onNotes={setNotes} onSave={() => void save()} onAskDelete={() => setAsking(true)} />}
     <p role="status">{saved ? t("projects.saved") : null}</p>
-    {loaded && project !== null && project.builtin !== "sample" && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><UploadPanel key={project.id} projectId={project.id} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} /><PhotoFacts key={project.id} projectId={project.id} refresh={factsRefresh} onAuthRequired={onAuthRequired} /></>}
+    {loaded && project !== null && project.builtin !== "sample" && <><FolderImportPanel key={project.id} projectId={project.id} onSource={state => setSource({ id: project.id, state })} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} />{source?.id === project.id && source.state === "none" && <UploadPanel key={project.id} projectId={project.id} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} />}{(source?.id !== project.id || source.state === null || source.state === "none" || source.state === "ready") && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><PhotoFacts key={project.id} projectId={project.id} refresh={factsRefresh} onAuthRequired={onAuthRequired} /></>}</>}
     {asking && <Dialog ref={dialog} label={t("projects.delete_title")} onCancel={event => { event.preventDefault(); if (!working) setAsking(false); }}>
       <DeleteConfirmation working={working} onKeep={() => setAsking(false)} onDelete={() => void remove()} />
     </Dialog>}

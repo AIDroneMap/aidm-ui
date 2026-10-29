@@ -1,0 +1,13 @@
+# Folder import
+
+The project page asks the server whether folder import is available. Only a loopback socket can select or relink a folder. An authenticated remote browser can read the source state and relative file list, but receives no absolute path. Forwarded address headers do not grant access. The existing Host and Origin checks still apply.
+
+An empty project can select a folder instead of browser uploads. Existing upload sessions prevent that selection, and an imported project refuses new uploads. Relinking replaces the source inventory atomically. A failed scan leaves the previous selection intact. Names and notes stay separate from source changes.
+
+The server records the canonical folder path and scans nested directories. It skips symbolic links, special files and unsupported names, and counts ground-control text files separately. Directory traversal stops beyond 64 levels. A source must be separate from the app data folder, including neither an ancestor nor a descendant of it. File bytes are read in bounded chunks and never stored in the app data folder. Only inventory, cached facts and flight choices are stored there.
+
+The inventory records file and directory identities, sizes, permissions and write times. Reading access times does not affect validity. Status checks and metadata reads refuse a missing or changed inventory until the operator relinks it. Photo counts and facts use distinct checksums. Flight choices survive a restart and follow unchanged content through relinking.
+
+The copy adapter uses the existing task API upload call. It sends each chosen photo checksum once, omits masks paired with omitted photos, and gives nested files distinct bounded names while retaining photo and mask pairs. It holds a verified file descriptor during each upload and checks identities and checksums before and after the transfer. It makes no snapshot. Another process can write during a transfer, so a drift failure can leave bytes in an uncommitted task. The caller must discard that task and must not commit after any failure. Run creation, commit, cancellation and cleanup remain the caller's responsibility. The project run flow belongs to #68.
+
+Evidence is in `server/projects/import-routes.test.ts`, `server/projects/import-store.test.ts`, `web/src/folders/FolderImportPanel.browser.test.ts` and the imported-project case in `server/packages/real-task-api.test.ts`. Source snapshots compare names, content digests, permissions and write-related times before and after listing, facts, copy and deletion. The hosted task API test uses tiny synthetic files in test mode. It is not a photogrammetry run or the maintainer's full-test record.

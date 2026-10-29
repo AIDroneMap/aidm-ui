@@ -1,3 +1,4 @@
+import type { ImportStore } from "../projects/import-store.ts";
 import { errorResponse } from "../../shared/api-error.ts";
 import { MAX_REQUEST_BODY_BYTES } from "./limits.ts";
 import type { ProjectStore } from "../projects/project-store.ts";
@@ -38,6 +39,7 @@ export interface RouteContext {
   projectDeletion: ProjectDeletion;
   uploads: UploadStore;
   photos: PhotoStore;
+  imports: ImportStore;
   assets: AssetMap;
   settings: Settings;
   sessions: Sessions;
