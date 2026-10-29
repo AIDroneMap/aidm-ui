@@ -55,6 +55,7 @@ export const MESSAGE_CODES = [
   "project.deletion_incomplete",
   "project.deletion_engine_missing",
   "project.deletion_busy",
+  "upload.ground_control_unsupported",
   "run.not_found",
   "run.not_cancellable",
   "run.results_not_ready",

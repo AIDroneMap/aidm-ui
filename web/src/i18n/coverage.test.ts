@@ -9,6 +9,11 @@ test("every message code has a translation", () => {
   expect(missing).toEqual([]);
 });
 
+test("ground control rejection has a translated server code", () => {
+  expect(MESSAGE_CODES).toContain("upload.ground_control_unsupported");
+  expect(messages["upload.ground_control_unsupported"]).toBeTruthy();
+});
+
 test("the interface-only code has a translation", () => {
   expect(messages["network.unreachable"]).toBeTruthy();
 });
