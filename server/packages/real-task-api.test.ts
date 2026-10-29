@@ -4,6 +4,9 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { folderSnapshot } from "../../test-support/import-folder.ts";
+import { TaskClient } from "../task-api/task-client.ts";
 import type { RunView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
@@ -142,6 +145,35 @@ real(
       return last.state === "completed" || last.state === "failed";
     }, 240_000);
     expect(last?.state).toBe("completed");
+
+    const source = join(scratch, "imported-photos");
+    await mkdir(source);
+    for (let index = 0; index < 3; index++) await writeFile(join(source, `photo-${index}.jpg`), `synthetic imported image ${index}\n`, { mode: 0o444 });
+    await chmod(source, 0o555);
+    try {
+      const before = await folderSnapshot(source);
+      const project = await (await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Imported field", notes: "" }) })).json() as { id: number };
+      expect((await fetch(`${h.base}/api/projects/${project.id}/import`, { method: "PUT", body: JSON.stringify({ path: source }) })).status).toBe(200);
+      expect(await (await fetch(`${h.base}/api/projects/${project.id}/photo-facts`)).json()).toMatchObject({ photoCount: 3, pendingMetadata: 0 });
+      const engine = h.engineStore.get(engineId)!;
+      const client = new TaskClient({ address: engine.address, token: engine.token });
+      const created = await client.createTask("Imported field", []);
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error("Could not create imported task");
+      try {
+        expect((await h.ctx.imports.copyToTask(project.id, client, created.value.uuid)).ok).toBe(true);
+        expect((await client.commitTask(created.value.uuid)).ok).toBe(true);
+        let status: unknown;
+        await eventually(async () => {
+          const info = await client.taskInfo(created.value.uuid);
+          if (!info.ok) return false;
+          status = info.value.statusCode;
+          return status === 40 || status === 30;
+        }, 240_000);
+        expect(status).toBe(40);
+        expect(await folderSnapshot(source)).toEqual(before);
+      } finally { await client.removeTask(created.value.uuid); }
+    } finally { await chmod(source, 0o700); }
   },
   SLOW,
 );

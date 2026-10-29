@@ -6,7 +6,10 @@ import runRestartLineSql from "./migrations/0004-run-restart-line.sql" with { ty
 
 import projectMetadataSql from "./migrations/0005-project-metadata.sql" with { type: "text" };
 import projectUploadsSql from "./migrations/0006-project-uploads.sql" with { type: "text" };
-import runMetadataSql from "./migrations/0007-run-metadata.sql" with { type: "text" };
+
+import photoFactsSql from "./migrations/0007-photo-facts.sql" with { type: "text" };
+import folderImportsSql from "./migrations/0008-folder-imports.sql" with { type: "text" };
+import runMetadataSql from "./migrations/0009-run-metadata.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -14,7 +17,8 @@ export interface Migration {
   sql: string;
 }
 
-// Imported as text so that the compiled executable carries them.
+// Imported as text so that the compiled executable carries them. Later tickets
+// add theirs as 0005 and so on.
 export const migrations: Migration[] = [
   { version: 1, name: "settings", sql: settingsSql },
   { version: 2, name: "engines", sql: enginesSql },
@@ -22,7 +26,9 @@ export const migrations: Migration[] = [
   { version: 4, name: "run-restart-line", sql: runRestartLineSql },
   { version: 5, name: "project-metadata", sql: projectMetadataSql },
   { version: 6, name: "project-uploads", sql: projectUploadsSql },
-  { version: 7, name: "run-metadata", sql: runMetadataSql },
+  { version: 7, name: "photo-facts", sql: photoFactsSql },
+  { version: 8, name: "folder-imports", sql: folderImportsSql },
+  { version: 9, name: "run-metadata", sql: runMetadataSql },
 ];
 
 function storedVersion(db: Database): number {
