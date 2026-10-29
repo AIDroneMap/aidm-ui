@@ -93,7 +93,11 @@ export class UploadStore {
           }
         }
       } finally { await output.close(); }
-      if (total !== row.size || hash.digest("hex") !== row.sha256) return "checksum";
+      if (total !== row.size || hash.digest("hex") !== row.sha256) {
+        this.db.query("DELETE FROM project_upload_chunks WHERE upload_id = ?").run(id);
+        await rm(directory, { recursive: true, force: true });
+        return "checksum";
+      }
       await rename(temporary, join(files, storageId));
       const inserted = this.db.transaction(() => {
         const result = this.db.query("INSERT OR IGNORE INTO project_upload_files (project_id, sha256, size, storage_id) VALUES (?, ?, ?, ?)").run(projectId, row.sha256, row.size, storageId);
@@ -107,9 +111,10 @@ export class UploadStore {
       this.db.query("DELETE FROM project_upload_chunks WHERE upload_id = ?").run(id);
       return "ok";
     } finally {
-      await rm(temporary, { force: true });
-      if (!published) await rm(join(files, storageId), { force: true });
-      this.busy.delete(id);
+      try {
+        await rm(temporary, { force: true });
+        if (!published) await rm(join(files, storageId), { force: true });
+      } finally { this.busy.delete(id); }
     }
   }
 
@@ -178,8 +183,8 @@ export class UploadStore {
       this.db.query("INSERT INTO project_upload_chunks (upload_id, chunk_index, sha256) VALUES (?, ?, ?) ON CONFLICT (upload_id, chunk_index) DO UPDATE SET sha256 = excluded.sha256").run(id, index, checksum);
       return "ok";
     } finally {
-      await rm(temporary, { force: true });
-      this.busy.delete(id);
+      try { await rm(temporary, { force: true }); }
+      finally { this.busy.delete(id); }
     }
   }
 }

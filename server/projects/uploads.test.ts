@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { openHarness, type Harness } from "../testing/harness.ts";
 import type { ProjectView } from "../../shared/api-types.ts";
 import { projectRoutes } from "./routes.ts";
@@ -83,6 +84,22 @@ test("rejects damaged chunks and missing stored bytes and permits retry", async 
   expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(409);
   expect((await put("correct", digest("correct"))).status).toBe(204);
   expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+});
+
+test("a full-file checksum mismatch asks for the file again before completion", async () => {
+  const created = await project();
+  const session = await (await upload(created.id, "image.jpg", "correct")).json() as { id: string };
+  const root = `${harness.base}/api/projects/${created.id}`;
+  const path = `${root}/uploads/${session.id}`;
+  expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": digest("damaged") }, body: "damaged" })).status).toBe(204);
+  expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(400);
+  const pending = await (await fetch(path)).json() as { received: number[]; complete: boolean };
+  expect(pending).toMatchObject({ received: [], complete: false });
+  expect(await (await fetch(`${root}/photos`)).json()).toEqual({ files: [], nextOffset: null });
+  expect((await (await fetch(root)).json() as ProjectView).photoCount).toBe(0);
+  expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": digest("correct") }, body: "correct" })).status).toBe(204);
+  expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+  expect((await (await fetch(root)).json() as ProjectView).photoCount).toBe(1);
 });
 
 test("cancels a pending session without touching another upload", async () => {
@@ -205,4 +222,64 @@ test("rejects invalid indexes before reading and stops an oversized chunk", asyn
   expect((await route(request("0"), context)).status).toBe(400);
   expect(reads).toBe(1);
   expect((await (await fetch(`${harness.base}/api/projects/${created.id}/uploads/${session.id}`)).json() as { received: number[] }).received).toEqual([]);
+});
+
+
+test("a temporary-file cleanup failure does not keep the session busy", async () => {
+  const created = await project();
+  const session = await (await upload(created.id, "image.jpg", "correct")).json() as { id: string };
+  const directory = join(harness.dataFolder, "projects", String(created.id), "uploads", session.id);
+  let temporary: string | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const entry = (await readdir(directory)).find(name => name.endsWith(".tmp"));
+      if (entry === undefined) throw new Error("The chunk writer has not opened its temporary file");
+      temporary = join(directory, entry);
+      await rm(temporary);
+      await mkdir(temporary);
+      controller.enqueue(new TextEncoder().encode("damaged"));
+      controller.close();
+    },
+  }, { highWaterMark: 0 });
+  const request = Object.assign(new Request("http://localhost/chunk", { method: "PUT", headers: { "x-chunk-sha256": digest("correct") }, body }), { params: { id: String(created.id), uploadId: session.id, index: "0" } }) as unknown as Bun.BunRequest;
+  const route = projectRoutes(harness.ctx)["/api/projects/:id/uploads/:uploadId/chunks/:index"]!.PUT!;
+  try {
+    await expect(Promise.resolve(route(request, { server: { timeout() {} } } as unknown as RequestContext))).rejects.toThrow();
+  } finally {
+    if (temporary !== undefined) await rm(temporary, { recursive: true, force: true });
+  }
+  const path = `${harness.base}/api/projects/${created.id}/uploads/${session.id}`;
+  expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": digest("correct") }, body: "correct" })).status).toBe(204);
+  expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+});
+
+
+test("resumes a verified file after reopening the server data folder", async () => {
+  await harness.stop();
+  const folder = await mkdtemp(join(tmpdir(), "upload-restart-"));
+  harness = openHarness({ dataFolder: folder });
+  try {
+    const created = await project();
+    const bytes = Buffer.alloc(1024 * 1024 + 7, 81);
+    const input = { name: "flight/image.jpg", size: bytes.length, sha256: digest(bytes) };
+    const session = await (await fetch(`${harness.base}/api/projects/${created.id}/uploads`, { method: "POST", body: JSON.stringify(input) })).json() as { id: string; chunkSize: number };
+    const first = bytes.subarray(0, session.chunkSize);
+    expect((await fetch(`${harness.base}/api/projects/${created.id}/uploads/${session.id}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": digest(first) }, body: first })).status).toBe(204);
+    await harness.stop();
+    harness = openHarness({ dataFolder: folder });
+    const root = `${harness.base}/api/projects/${created.id}`;
+    const path = `${root}/uploads/${session.id}`;
+    expect(await (await fetch(path)).json()).toMatchObject({ id: session.id, received: [0], complete: false });
+    expect(await (await fetch(`${root}/uploads`, { method: "POST", body: JSON.stringify(input) })).json()).toMatchObject({ id: session.id, received: [0], complete: false });
+    const last = bytes.subarray(session.chunkSize);
+    expect((await fetch(`${path}/chunks/1`, { method: "PUT", headers: { "x-chunk-sha256": digest(last) }, body: last })).status).toBe(204);
+    expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+    expect((await (await fetch(root)).json() as ProjectView).photoCount).toBe(1);
+    const files = await readdir(join(folder, "projects", String(created.id), "files"));
+    expect(files).toHaveLength(1);
+    expect(digest(await readFile(join(folder, "projects", String(created.id), "files", files[0]!)))).toBe(input.sha256);
+  } finally {
+    await harness.stop();
+    await rm(folder, { recursive: true, force: true });
+  }
 });

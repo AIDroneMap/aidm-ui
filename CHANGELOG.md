@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recover upload retries after a full-file checksum failure or a temporary-file cleanup error. Evidence: the checksum reset, cleanup failure and disk-backed server restart tests in `server/projects/uploads.test.ts`.
+
 - Add resumable project upload routes with checksum verification, stored-file deduplication and photo counts. File classification follows engine commit `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. Evidence: `server/projects/uploads.test.ts`, `shared/upload-files.test.ts` and `web/src/i18n/coverage.test.ts`. Browser upload is not yet implemented.
 
 - Keep deleted run IDs reserved so a later run retains all of its engine log. Evidence: the deletion regression in `server/projects/routes.test.ts` and legacy database reopening test in `server/runs/run-store.test.ts`.
