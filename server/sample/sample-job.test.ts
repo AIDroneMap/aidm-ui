@@ -926,3 +926,33 @@ test("the engine's token is in no log, stream or line of the server's own log du
   }
   expect(seen[2]).toContain("calling /info?token=***");
 });
+
+test("deleting the sample project keeps the dataset and allows another sample run", async () => {
+  const { run, uuid, engine } = await startAndQueue();
+  fake.setTask(uuid, { statusCode: 40, processingTime: 1000 });
+  await waitRun(run.id, candidate => candidate.state === "completed");
+  const sampleId = harness.runs.builtinProjectId("sample");
+  expect(sampleId).not.toBeNull();
+  const before = await harness.sample.datasetFile();
+  expect(before.present).toBe(true);
+  expect((await send("DELETE", `/api/projects/${sampleId}`)).status).toBe(204);
+  expect(harness.runs.builtinProjectId("sample")).toBe(sampleId);
+  expect((await getJson<unknown[]>("/api/projects")).length).toBe(0);
+  expect(harness.sample.datasetFile()).toEqual(before);
+  expect((await startSample(engine.id)).status).toBe(202);
+});
+
+test("a sample run after deletion starts its log at the first line", async () => {
+  const { run, uuid, engine } = await startAndQueue();
+  fake.setTask(uuid, { output: ["old line"] });
+  await eventually(async () => (await getJson<RunLogView>(`/api/runs/${run.id}/log`)).lines.includes("old line"));
+  fake.setTask(uuid, { statusCode: 40, processingTime: 1000 });
+  await waitRun(run.id, candidate => candidate.state === "completed");
+  const sampleId = harness.runs.builtinProjectId("sample")!;
+  expect((await send("DELETE", `/api/projects/${sampleId}`)).status).toBe(204);
+  const next = await startedRun(engine.id);
+  await waitRun(next.id, candidate => candidate.state === "queued");
+  const nextUuid = theTask();
+  fake.setTask(nextUuid, { output: ["new line"] });
+  await eventually(async () => (await getJson<RunLogView>(`/api/runs/${next.id}/log`)).lines.includes("new line"), 1000);
+});

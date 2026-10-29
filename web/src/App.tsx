@@ -7,6 +7,7 @@ import { firstRunRedirect } from "./firstRun.ts";
 import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
+import { ProjectPage } from "./pages/ProjectPage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { SampleJobPage } from "./pages/SampleJobPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
@@ -69,6 +70,8 @@ function Screens() {
     <Layout route={route}>
       {route === "wizard" ? (
         <WizardPage onAuthRequired={() => setSession("login")} onCompleted={() => setWizardDone(true)} />
+      ) : route === "project" ? (
+        <ProjectPage onAuthRequired={() => setSession("login")} />
       ) : route === "settings" ? (
         <SettingsPage onAuthRequired={() => setSession("login")} onWizardReopened={() => setWizardDone(false)} />
       ) : route === "engines" ? (
@@ -76,7 +79,7 @@ function Screens() {
       ) : route === "sample" ? (
         <SampleJobPage onAuthRequired={() => setSession("login")} />
       ) : (
-        <HomePage />
+        <HomePage onAuthRequired={() => setSession("login")} />
       )}
     </Layout>
   );
