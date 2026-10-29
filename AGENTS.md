@@ -65,7 +65,9 @@ These apply to everything you write: code comments, docs, specs, commit messages
 
 ## Building and testing
 
-Edit, run the unit tests and open pull requests from your own worktree. Do not run the full test on the machine you work on: it runs on a machine that has the engine runtime, as the Tests section says. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. Read the checks; link them in the pull request instead of describing a local run.
+Edit, run the unit tests and open pull requests from your own worktree. Do not run the full test on the machine you work on: it runs on a machine that has the engine runtime, as the Tests section says. Never log into, sync files to, or run anything on any other machine of ours; the only machines you reach are GitHub's runners, through a push, and a scratch machine from the skill below. Read the checks; link them in the pull request instead of describing a local run.
+
+**Scratch machines.** When a task needs a machine to build, compile, profile or run something that the machine you work on and CI cannot give you, check whether the skill `givemeavm` is available and use it. If it is not, you have no machine: ask the maintainer, do not improvise on the machine you work on or through CI. A scratch machine is a bench, not a source of truth: what you measure or run there never becomes a claim in a pull request. CI proves, the benchmark process measures. Compiler reports, disassembly and profiles from a scratch machine may be posted to an issue as diagnostics, labelled with the CPU model they came from.
 
 ## Tests
 
