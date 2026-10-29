@@ -1,3 +1,4 @@
+import { PhotoStore } from "../photos/photo-store.ts";
 import { mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
@@ -228,6 +229,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       projects,
       projectDeletion,
       uploads: new UploadStore(db, dataFolder),
+      photos: new PhotoStore(db, dataFolder),
       assets: options.assets,
       settings,
       sessions,

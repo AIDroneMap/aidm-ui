@@ -517,3 +517,29 @@ export interface UploadRequest { name: string; size: number; sha256: string }
 export interface UploadSessionView { id: string; chunkSize: number; received: number[]; complete: boolean }
 export interface UploadedFileView { name: string; size: number; sha256: string; kind: "photo" | "mask" | "video" }
 export interface UploadedFilesView { files: UploadedFileView[]; nextOffset: number | null }
+
+export interface PhotoFlightView {
+  id: string;
+  make: string | null;
+  model: string | null;
+  clock: "camera" | "offset";
+  first: string;
+  last: string;
+  photoCount: number;
+  excludedPhotoCount: number;
+}
+export interface ProjectPhotoFactsView {
+  photoCount: number;
+  photoBytes: number;
+  duplicates: number;
+  videoCount: number;
+  withoutGps: number;
+  cameras: Array<{ make: string | null; model: string | null; photoCount: number }>;
+  bands: Array<{ name: string; photoCount: number }>;
+  dateSpans: Array<{ clock: "camera" | "offset"; first: string; last: string }>;
+  flights: PhotoFlightView[];
+  flightCount: number;
+  unassignedCount: number;
+  pendingMetadata: number;
+  nextOffset: number | null;
+}

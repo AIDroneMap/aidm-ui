@@ -9,6 +9,7 @@ import { t } from "../i18n/translate.ts";
 import { useProjectKey } from "../router.ts";
 import { projectName } from "./HomePage.tsx";
 import { UploadPanel } from "../upload/UploadPanel.tsx";
+import { PhotoFacts } from "../photos/PhotoFacts.tsx";
 
 interface FormProps {
   project: ProjectView | null;
@@ -54,6 +55,7 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
   const [working, setWorking] = useState(false);
   const [asking, setAsking] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [factsRefresh, setFactsRefresh] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { if (asking) dialog.current?.showModal(); }, [asking]);
   useEffect(() => {
@@ -93,7 +95,7 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     {failure && <ErrorMessage failure={failure} />}
     {!loaded ? (!failure && <p>{t("projects.loading")}</p>) : <ProjectForm project={project} name={name} notes={notes} working={working} onName={setName} onNotes={setNotes} onSave={() => void save()} onAskDelete={() => setAsking(true)} />}
     <p role="status">{saved ? t("projects.saved") : null}</p>
-    {loaded && project !== null && project.builtin !== "sample" && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><UploadPanel key={project.id} projectId={project.id} onChange={() => refreshProject(project.id)} onAuthRequired={onAuthRequired} /></>}
+    {loaded && project !== null && project.builtin !== "sample" && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><UploadPanel key={project.id} projectId={project.id} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} /><PhotoFacts key={project.id} projectId={project.id} refresh={factsRefresh} onAuthRequired={onAuthRequired} /></>}
     {asking && <Dialog ref={dialog} label={t("projects.delete_title")} onCancel={event => { event.preventDefault(); if (!working) setAsking(false); }}>
       <DeleteConfirmation working={working} onKeep={() => setAsking(false)} onDelete={() => void remove()} />
     </Dialog>}

@@ -1,3 +1,4 @@
+import { PhotoStore } from "../photos/photo-store.ts";
 import { test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -278,6 +279,7 @@ export function openHarness(
     projects,
     projectDeletion,
     uploads: new UploadStore(db, dataFolder),
+      photos: new PhotoStore(db, dataFolder),
     assets: options.assets ?? new Map(),
     settings,
     sessions,

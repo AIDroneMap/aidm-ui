@@ -79,6 +79,40 @@ export function projectRoutes(ctx: RouteContext): RouteTable {
         } finally { release(); }
       },
     },
+    "/api/projects/:id/flights/:flightId": {
+      PUT: async req => {
+        const id = idOf(req.params.id ?? "");
+        if (id === ctx.projects.sampleId()) return errorResponse(409, "project.sample_photos_forbidden");
+        if (id === null || ctx.projects.get(id) === null) return errorResponse(404, "project.not_found");
+        const input = await readJson(req);
+        if (!input.ok) return input.response;
+        if (typeof input.body.excluded !== "boolean" || Object.keys(input.body).some(key => key !== "excluded")) return errorResponse(400, "api.invalid_body");
+        if (!/^[a-f0-9]{64}$/.test(req.params.flightId ?? "")) return errorResponse(404, "api.not_found");
+        const release = ctx.projectDeletion.beginWrite(id);
+        if (release === null) return errorResponse(409, "project.deletion_busy");
+        try {
+          const result = await ctx.photos.setFlightExcluded(id, req.params.flightId!, input.body.excluded);
+          if (result === "not_found") return errorResponse(404, "api.not_found");
+          if (result === "busy") return errorResponse(409, "project.deletion_busy");
+          return new Response(null, { status: 204 });
+        } finally { release(); }
+      },
+    },
+    "/api/projects/:id/photo-facts": {
+      GET: async req => {
+        const id = idOf(req.params.id ?? "");
+        if (id === ctx.projects.sampleId()) return errorResponse(409, "project.sample_photos_forbidden");
+        if (id === null || ctx.projects.get(id) === null) return errorResponse(404, "project.not_found");
+        const query = new URL(req.url).searchParams;
+        const offset = query.get("offset") ?? "0";
+        const limit = query.get("limit") ?? "50";
+        if (!/^(0|[1-9]\d*)$/.test(offset) || !/^[1-9]\d*$/.test(limit) || !Number.isSafeInteger(Number(offset)) || Number(limit) > 100) return errorResponse(400, "api.invalid_body");
+        const release = ctx.projectDeletion.beginWrite(id);
+        if (release === null) return errorResponse(409, "project.deletion_busy");
+        try { return Response.json(await ctx.photos.facts(id, Number(offset), Number(limit))); }
+        finally { release(); }
+      },
+    },
     "/api/projects/:id/photos": {
       GET: req => {
         const id = idOf(req.params.id ?? "");
