@@ -51,12 +51,16 @@ A named collection of flights and runs.
 _Avoid_: Job, survey, site
 
 **Flight**:
-One set of images captured together. Flights are detected from the images, never declared by the operator. Defined in a later specification.
+One set of photos captured together: the photos of one camera whose capture times run on with no gap longer than thirty minutes. Flights are detected from the photos, never declared by the operator. A run may leave a flight out.
 _Avoid_: Mission, sortie, batch
 
 **Run**:
-One processing of a project's images on one engine, with its settings and its results.
+One processing of a project's photos on one engine, with its run settings, its log and its archive.
 _Avoid_: Job, task (except at the API boundary), processing
+
+**Stage**:
+One step of the engine's pipeline, named on the run page in the operator's words.
+_Avoid_: Phase; step (reserved for what the interface does around a run, such as uploading or fetching results)
 
 **Task**:
 The task API's word for a run on one engine. Used only in code that talks to the API.
@@ -69,3 +73,57 @@ _Avoid_: Demo data, example images
 **Sample job**:
 The run the wizard offers on the sample dataset, so a new installation proves itself end to end.
 _Avoid_: Demo, tutorial run, test job
+
+### Bringing photos in
+
+**Way in**:
+How a project's photos reach the engine. There are three: upload, import and link.
+_Avoid_: Source (for all three together), ingest
+
+**Upload**:
+Photos sent from the browser to the aidm-ui server, which keeps the only copy.
+_Avoid_: Transfer, push
+
+**Import**:
+Photos read from a folder on the server's machine, in place. The folder is never changed.
+_Avoid_: Sync, attach
+
+**Link**:
+The address of one zip file of photos that the engine fetches itself. The photos never pass through the operator's machine.
+_Avoid_: Remote dataset, URL import
+
+### Choosing what to produce
+
+**Preset**:
+A named set of option values chosen by what the operator wants out, such as a quick map or a ground model.
+_Avoid_: Profile, template, mode
+
+**Option**:
+One setting of the engine as the catalogue describes it, with a plain name and the engine's own name.
+_Avoid_: Flag, parameter, argument (except in code)
+
+**Catalogue**:
+The described set of options: for each one its facts and its explanation in the operator's words.
+_Avoid_: Schema, dictionary, option list
+
+**Run settings**:
+The option values of one run, as sent to the engine. They can be saved as a file and loaded again.
+_Avoid_: Configuration, config
+
+**Review**:
+The screen between the run settings and the start of a run, which shows what will be processed, where, and what will come out.
+_Avoid_: Summary, confirmation
+
+### Results
+
+**Archive**:
+The results file of one run, as the engine made it.
+_Avoid_: Results zip, bundle
+
+**Output**:
+One named file inside an archive: the orthophoto, the surface model, the ground model, the point cloud, the 3D model or the report.
+_Avoid_: Asset, artefact, deliverable
+
+**Basemap**:
+The tile source an operator may configure under the map. There is none unless the operator adds one.
+_Avoid_: Background layer; tiles (which are the engine's output)
