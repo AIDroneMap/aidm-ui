@@ -150,7 +150,7 @@ export function SampleJobPage({
 }) {
   const [sample, setSample] = useState<SampleView | null>(null);
   const [engineId, setEngineId] = useState<number | null>(null);
-  const { run, setRun, log, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel } = useRun(onAuthRequired);
+  const { run, setRun, log, stage, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel } = useRun(onAuthRequired);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
@@ -195,6 +195,7 @@ export function SampleJobPage({
       ) : run !== null ? (
         <RunProgress
           run={run}
+          stage={stage}
           lines={log.lines}
           lineCount={log.count}
           restartedAtLine={restartedAtLine}

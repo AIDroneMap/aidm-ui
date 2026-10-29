@@ -5,7 +5,7 @@ import { DownloadBlock, interruptionText } from "./DownloadBlock.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
 import { formatCount } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
-import { currentStage, isFinished, linesWithRestart } from "../runs.ts";
+import { isFinished, linesWithRestart, type Stage } from "../runs.ts";
 import { RUN_STATES, type RunView } from "../../../shared/api-types.ts";
 
 function LogView({ lines }: { lines: string[] }) {
@@ -38,6 +38,7 @@ function LogView({ lines }: { lines: string[] }) {
 
 export interface RunProgressProps {
   run: RunView;
+  stage: Stage | null;
   lines: string[];
   /** How many lines the run has written so far, counting the ones the page dropped. Needed to place the restart separator. */
   lineCount?: number;
@@ -54,6 +55,7 @@ export interface RunProgressProps {
 /** A run in progress or finished: its state in words, its progress, its log and what the operator can do next. */
 export function RunProgress({
   run,
+  stage,
   lines,
   lineCount,
   restartedAtLine,
@@ -64,9 +66,6 @@ export function RunProgress({
   onAgain,
 }: RunProgressProps) {
   const finished = isFinished(run);
-  const firstHeld = (lineCount ?? lines.length) - lines.length;
-  const stageLines = restartedAtLine == null ? lines : lines.slice(Math.max(0, restartedAtLine - firstHeld));
-  const stage = currentStage(stageLines);
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
     <>

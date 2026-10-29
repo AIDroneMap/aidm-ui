@@ -76,6 +76,7 @@ const runData = ["Barn engine", "line one\nline two"];
 function renderRun(view: Partial<RunView>, overrides: Partial<RunProgressProps> = {}): string {
   return renderToStaticMarkup(
     <RunProgress
+      stage={null}
       run={{ ...run, ...view }}
       lines={["line one", "line two"]}
       connectionLost={false}
@@ -353,7 +354,7 @@ test("the page has its own heading, and leaves it out when it sits inside a scre
 });
 
 test("the run page explains the current stage", () => {
-  const html = renderRun({ state: "processing" }, { lines: ["Running odm_dem stage"] });
+  const html = renderRun({ state: "processing" }, { stage: "odm_dem", lines: ["Running odm_dem stage"] });
   expect(html).toContain("Make elevation models");
   expect(html).toContain("surface and terrain models");
 });
@@ -362,7 +363,7 @@ test("each engine stage is shown in translated words", () => {
   const stages = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"];
   const messages: Record<string, string> = en;
   for (const stage of stages) {
-    const html = renderRun({ state: "processing" }, { lines: [`Running ${stage} stage`] });
+    const html = renderRun({ state: "processing" }, { stage: stage as RunProgressProps["stage"], lines: [`Running ${stage} stage`] });
     expect(html).toContain(messages[`run.stage.${stage}.name`]!);
     expect(html).toContain(messages[`run.stage.${stage}.description`]!);
   }

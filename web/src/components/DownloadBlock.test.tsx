@@ -130,7 +130,7 @@ test("every download state of the engine, the Mac steps and the sample photos dr
     "kernel before the first byte": renderToStaticMarkup(<LocalInstallStatus view={mac("kernel", null)} />),
     init: renderToStaticMarkup(<LocalInstallStatus view={mac("init", 10 * MIB)} />),
     "sample photos": renderToStaticMarkup(
-      <RunProgress run={run} lines={[]} connectionLost={false} cancelling={false} failure={null} onCancel={() => {}} onAgain={() => {}} />,
+      <RunProgress stage={null} run={run} lines={[]} connectionLost={false} cancelling={false} failure={null} onCancel={() => {}} onAgain={() => {}} />,
     ),
   };
   for (const [name, html] of Object.entries(screens)) {

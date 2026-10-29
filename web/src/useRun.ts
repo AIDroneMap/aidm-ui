@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "./api.ts";
-import { EMPTY_LOG, isFinished, isRunView, mergeLog, parseLogEvent, parseRunEvent, type LogLines } from "./runs.ts";
+import { EMPTY_LOG, EMPTY_STAGE_PROGRESS, reduceStageProgress, isFinished, isRunView, mergeLog, parseLogEvent, parseRunEvent, type LogLines, type StageProgress } from "./runs.ts";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
 
 export function useRun(onAuthRequired: () => void) {
   const [run, setRun] = useState<RunView | null>(null);
   const [log, setLog] = useState<LogLines>(EMPTY_LOG);
+  const [stageState, setStageState] = useState<{ runId: number | null; progress: StageProgress }>({ runId: null, progress: EMPTY_STAGE_PROGRESS });
   const [restartedAtLine, setRestartedAtLine] = useState<number | null>(null);
   const [connectionLost, setConnectionLost] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -28,7 +29,9 @@ export function useRun(onAuthRequired: () => void) {
     if (runId === null) return;
     let current = true;
     setLog(EMPTY_LOG);
-    setRestartedAtLine(null);
+    const initialBoundary = run?.restartedAtLine ?? null;
+    setStageState({ runId, progress: reduceStageProgress(EMPTY_STAGE_PROGRESS, { restartedAtLine: initialBoundary }) });
+    setRestartedAtLine(initialBoundary);
     logCount.current = 0;
     let seenRestartedAtLine: number | null = null;
     const catchUp = (start?: number) => {
@@ -36,7 +39,8 @@ export function useRun(onAuthRequired: () => void) {
       api<RunLogView>("GET", `/api/runs/${runId}/log?from=${from}`).then(
         (view) => {
           if (!current) return;
-          setRestartedAtLine(view.restartedAtLine ?? null);
+          setStageState((existing) => existing.runId === runId ? { runId, progress: reduceStageProgress(existing.progress, { from, lines: view.lines, restartedAtLine: view.restartedAtLine }) } : existing);
+          setRestartedAtLine((existing) => view.restartedAtLine == null ? existing : Math.max(existing ?? 0, view.restartedAtLine));
           setLog((existing) => mergeLog(existing, from, view.lines));
           // The server sends at most one page of lines, so ask again from where it ended.
           if (view.next > from) catchUp(view.next);
@@ -57,6 +61,8 @@ export function useRun(onAuthRequired: () => void) {
       setConnectionLost(false);
       // Only the log route has the lines the separator sits between, so ask again whenever the engine restarts, also a second time.
       const restartedAt = view.restartedAtLine ?? null;
+      setStageState((existing) => existing.runId === runId ? { runId, progress: reduceStageProgress(existing.progress, { restartedAtLine: restartedAt }) } : existing);
+      setRestartedAtLine((existing) => restartedAt == null ? existing : Math.max(existing ?? 0, restartedAt));
       if (restartedAt !== seenRestartedAtLine) catchUp();
       seenRestartedAtLine = restartedAt;
       if (isFinished(view)) {
@@ -67,6 +73,7 @@ export function useRun(onAuthRequired: () => void) {
     source.addEventListener("log", (event) => {
       const block = parseLogEvent((event as MessageEvent<string>).data);
       if (!block || !current) return;
+      setStageState((existing) => existing.runId === runId ? { runId, progress: reduceStageProgress(existing.progress, block) } : existing);
       if (block.from > logCount.current) {
         catchUp();
         return;
@@ -93,5 +100,5 @@ export function useRun(onAuthRequired: () => void) {
     }
   };
 
-  return { run, setRun, log, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel };
+  return { run, setRun, log, stage: stageState.runId === runId ? stageState.progress.stage : null, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel };
 }
