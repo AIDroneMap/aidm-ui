@@ -72,7 +72,7 @@ Uncertainties to list in the PR:
 - `pc-copc`: The engine declaration identifies COPC output but does not explain compatibility or access behavior.
 - `mesh-size`: The engine uses this as a maximum, but does not explain the resulting file size or detail trade-off.
 - `sfm-algorithm`: The engine does not explain the practical differences among all listed methods.
-- `pc-classify`: The help does not identify the output classes or explain how DEM parameters affect classification.
+- `pc-classify`: The available help does not list all output classes. The consuming code applies the ground classification settings.
 - `smrf-scalar`: The engine help names the parameter but does not explain how changing it affects classification.
 - `smrf-slope`: The engine help does not describe the effect of different slope values.
 - `smrf-threshold`: The engine help does not describe the effect of different threshold values.

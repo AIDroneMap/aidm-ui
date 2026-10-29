@@ -679,7 +679,7 @@
   "option.optimize-disk-space.example": "Use it for a large flight when you need to save disk space and can give up intermediate restarts.",
   "option.pc-classify.name": "Classify point cloud",
   "option.pc-classify.description": "Classifies the point cloud output.",
-  "option.pc-classify.when": "Use it when you need classified points; the engine notes that DEM parameters control its behavior.",
+  "option.pc-classify.when": "Use it when you need classified points. Adjust the ground classification settings to tune the ground filter.",
   "option.pc-classify.cost": "Engine does not describe cost.",
   "option.pc-classify.example": "Turn it on when you need classified points from a flight over mixed ground and objects.",
   "option.dem-gapfill-steps.name": "Fill gaps in height models",
