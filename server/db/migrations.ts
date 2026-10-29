@@ -4,7 +4,8 @@ import enginesSql from "./migrations/0002-engines.sql" with { type: "text" };
 import projectsRunsSql from "./migrations/0003-projects-runs.sql" with { type: "text" };
 import runRestartLineSql from "./migrations/0004-run-restart-line.sql" with { type: "text" };
 
-import runMetadataSql from "./migrations/0005-run-metadata.sql" with { type: "text" };
+import projectMetadataSql from "./migrations/0005-project-metadata.sql" with { type: "text" };
+import runMetadataSql from "./migrations/0006-run-metadata.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -12,14 +13,14 @@ export interface Migration {
   sql: string;
 }
 
-// Imported as text so that the compiled executable carries them. Later tickets
-// add theirs as 0005 and so on.
+// Imported as text so that the compiled executable carries them.
 export const migrations: Migration[] = [
   { version: 1, name: "settings", sql: settingsSql },
   { version: 2, name: "engines", sql: enginesSql },
   { version: 3, name: "projects-runs", sql: projectsRunsSql },
   { version: 4, name: "run-restart-line", sql: runRestartLineSql },
-  { version: 5, name: "run-metadata", sql: runMetadataSql },
+  { version: 5, name: "project-metadata", sql: projectMetadataSql },
+  { version: 6, name: "run-metadata", sql: runMetadataSql },
 ];
 
 function storedVersion(db: Database): number {

@@ -502,3 +502,18 @@ export interface RuntimeSetupView {
 export interface ForceCpuRequest {
   forceCpu: boolean;
 }
+
+/** Project facts shown in the list and project page. */
+export interface ProjectView {
+  id: number;
+  name: string;
+  notes: string;
+  builtin: "sample" | null;
+  photoCount: number;
+  runCount: number;
+  latestState: RunState | null;
+  /** Latest persisted metadata, source, or run update. */
+  lastChange: string;
+}
+
+export interface ProjectWriteRequest { name: string; notes: string }

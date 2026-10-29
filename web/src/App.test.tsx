@@ -9,12 +9,11 @@ import { textNodes, untranslatedText } from "./test-helpers.ts";
 test("the home page shows only text from the translation file", () => {
   const html = renderToStaticMarkup(
     <Layout route="home">
-      <HomePage />
+      <HomePage onAuthRequired={() => {}} />
     </Layout>,
   );
   expect(untranslatedText(html)).toEqual([]);
-  expect(textNodes(html)).toContain(en["home.title"]);
-  expect(textNodes(html)).toContain(en["home.body"]);
+  expect(textNodes(html)).toContain(en["projects.loading"]);
 });
 
 test("the navigation marks the current page", () => {

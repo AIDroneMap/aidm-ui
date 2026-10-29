@@ -100,14 +100,21 @@ export class RunStore {
   }
 
   create(run: { projectId: number; engineId: number; options: TaskOption[]; name?: string | null; preset?: string | null; wayIn?: "upload" | "import" | "link" | null; sample?: boolean }): RunRecord {
-    const now = new Date().toISOString();
-    const row = this.db
-      .query(
-        `INSERT INTO runs (project_id, engine_id, options, state, created_at, updated_at, name, preset, way_in, sample)
-         VALUES (?, ?, ?, 'created', ?, ?, ?, ?, ?, ?) RETURNING *`,
-      )
-      .get(run.projectId, run.engineId, JSON.stringify(run.options), now, now, run.name ?? null, run.preset ?? null, run.wayIn ?? null, run.sample ? 1 : 0) as RunRow;
-    return toRecord(row);
+    return this.db.transaction(() => {
+      // Deleted runs keep their IDs reserved, including across server restarts.
+      const { id } = this.db.query(`INSERT INTO settings (key, value)
+        VALUES ('runs.lastId', CAST((SELECT COALESCE(MAX(id), 0) + 1 FROM runs) AS TEXT))
+        ON CONFLICT (key) DO UPDATE SET value = CAST(MAX(CAST(settings.value AS INTEGER) + 1, CAST(excluded.value AS INTEGER)) AS TEXT)
+        RETURNING CAST(value AS INTEGER) AS id`).get() as { id: number };
+      const now = new Date().toISOString();
+      const row = this.db
+        .query(
+          `INSERT INTO runs (id, project_id, engine_id, options, state, created_at, updated_at, name, preset, way_in, sample)
+           VALUES (?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?) RETURNING *`,
+        )
+        .get(id, run.projectId, run.engineId, JSON.stringify(run.options), now, now, run.name ?? null, run.preset ?? null, run.wayIn ?? null, run.sample ? 1 : 0) as RunRow;
+      return toRecord(row);
+    })();
   }
 
   get(id: number): RunRecord | null {

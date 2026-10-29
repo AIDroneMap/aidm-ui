@@ -3,6 +3,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { applyMigrations, migrations } from "../db/migrations.ts";
 import { EngineStore } from "../engines/engine-store.ts";
 import { RunStore } from "./run-store.ts";
+import { ProjectStore } from "../projects/project-store.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let db: Database;
 let store: RunStore;
@@ -119,5 +123,41 @@ test("migration preserves old runs with unknown metadata", () => {
   old.run("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')", [projectId]);
   applyMigrations(old, migrations);
   expect(oldStore.get(1)).toMatchObject({ name: null, preset: null, wayIn: null, sample: false });
+  old.close();
+});
+
+
+test("deleted legacy run IDs stay reserved after reopening the database", () => {
+  const folder = mkdtempSync(join(tmpdir(), "run-ids-"));
+  const path = join(folder, "database.sqlite");
+  let legacy: Database | undefined = new Database(path, { strict: true });
+  try {
+    applyMigrations(legacy, migrations.slice(0, 4));
+    const engine = new EngineStore(legacy).addRemote({ name: "Engine", address: "http://127.0.0.1:1", token: "test" });
+    const projectId = new RunStore(legacy).builtinProjectId("sample")!;
+    legacy.query(`INSERT INTO runs (id, project_id, engine_id, options, state, created_at, updated_at)
+      VALUES (42, ?, ?, '[]', 'completed', '2026-10-29', '2026-10-29')`).run(projectId, engine.id);
+    applyMigrations(legacy, migrations);
+    new ProjectStore(legacy).removeRows(projectId);
+    expect(legacy.query("SELECT id FROM runs").all()).toEqual([]);
+    legacy.close();
+    legacy = new Database(path, { strict: true });
+    const next = new RunStore(legacy).create({ projectId, engineId: engine.id, options: [] });
+    expect(next.id).toBeGreaterThan(42);
+  } finally { legacy?.close(); rmSync(folder, { recursive: true, force: true }); }
+});
+
+test("version 5 run IDs stay reserved when run metadata is added", () => {
+  const old = new Database(":memory:", { strict: true });
+  applyMigrations(old, migrations.slice(0, 4));
+  const projectId = new RunStore(old).builtinProjectId("sample")!;
+  old.run("INSERT INTO runs (id, project_id, options, state, created_at, updated_at) VALUES (42, ?, '[]', 'completed', 'then', 'then')", [projectId]);
+  applyMigrations(old, migrations.slice(0, 5));
+  old.run("DELETE FROM runs WHERE id = 42");
+  applyMigrations(old, migrations);
+  const engine = new EngineStore(old).addRemote({ name: "Engine", address: "http://127.0.0.1:1", token: "test" });
+  const run = new RunStore(old).create({ projectId, engineId: engine.id, options: [], name: "Field", preset: "map-with-heights", wayIn: "upload", sample: false });
+  expect(run).toMatchObject({ id: 43, name: "Field", preset: "map-with-heights", wayIn: "upload", sample: false });
+  expect(new RunStore(old).get(run.id)).toEqual(run);
   old.close();
 });
