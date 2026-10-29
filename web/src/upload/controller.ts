@@ -10,13 +10,14 @@ type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type Options = { fetch?: Fetch; storage?: Storage; hash?: (blob: Blob, signal: AbortSignal) => Promise<string> };
 const storageKey = "aidm.pendingUploads";
+export const UPLOAD_LOCAL_CODES = ["upload.unsupported", "upload.pending_invalid", "upload.reselection_mismatch", "upload.hash_failed", "api.invalid_response", "api.request_failed"] as const;
 
 export class UploadController {
   private readonly request: Fetch;
   private readonly storage: Storage;
   private readonly hash: (blob: Blob, signal: AbortSignal) => Promise<string>;
   constructor(options: Options = {}) {
-    this.request = options.fetch ?? fetch;
+    this.request = options.fetch ?? ((input, init) => fetch(input, init));
     this.storage = options.storage ?? localStorage;
     this.hash = options.hash ?? hashInWorker;
   }
@@ -54,7 +55,7 @@ export class UploadController {
       return failure(error);
     }
   }
-  async upload(projectId: number, file: File, name: string, signal: AbortSignal, progress?: (value: UploadProgress) => void, resume?: PendingUpload): Promise<UploadResult> {
+  async upload(projectId: number, file: File, name: string, signal: AbortSignal, progress?: (value: UploadProgress) => void, resume?: PendingUpload, onSession?: (entry: PendingUpload) => void): Promise<UploadResult> {
     if (!Number.isSafeInteger(projectId) || projectId < 1 || name.length < 1 || name.length > 4096 || /[\u0000-\u001f\\]/.test(name) || name.split("/").some(part => part === "" || part === "." || part === "..") || /^[a-z]:/i.test(name) || file.size < 1) return { status: "error", code: "api.invalid_body" };
     const kind = classifyUploadFile(name);
     if (kind === "ground_control") return { status: "error", code: "upload.ground_control_unsupported" };
@@ -78,6 +79,7 @@ export class UploadController {
         entry = { projectId, id: session.id, name, size: file.size, sha256: digest };
         if (!session.complete) this.save(entry);
       }
+      if (!session.complete) onSession?.(entry);
       const path = `${base}/${encodeURIComponent(entry.id)}`;
       for (let attempt = 0; attempt < 2 && !session.complete; attempt++) {
         const received = new Set(session.received);
@@ -87,7 +89,14 @@ export class UploadController {
           const chunk = file.slice(index * session.chunkSize, Math.min(file.size, (index + 1) * session.chunkSize));
           const checksum = await this.hash(chunk, signal);
           started ??= performance.now();
-          await this.response(`${path}/chunks/${index}`, { method: "PUT", headers: { "x-chunk-sha256": checksum }, body: chunk, signal });
+          for (let retry = 0; ; retry++) {
+            try {
+              await this.response(`${path}/chunks/${index}`, { method: "PUT", headers: { "x-chunk-sha256": checksum }, body: chunk, signal });
+              break;
+            } catch (error) {
+              if (!(error instanceof UploadError) || error.code !== "upload.checksum_mismatch" || retry !== 0) throw error;
+            }
+          }
           transferred += chunk.size;
           const elapsedMs = performance.now() - started;
           progress?.({ transferred, elapsedMs, bytesPerSecond: elapsedMs > 0 ? transferred * 1000 / elapsedMs : null });

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { MESSAGE_CODES } from "../../../shared/message-codes.ts";
 import en from "./en.json";
+import { UPLOAD_LOCAL_CODES } from "../upload/controller.ts";
 
 const messages: Record<string, string> = en;
 
@@ -15,7 +16,7 @@ test("ground control rejection has a translated server code", () => {
 });
 
 test("the interface-only code has a translation", () => {
-  expect(messages["network.unreachable"]).toBeTruthy();
+  for (const code of ["network.unreachable", ...UPLOAD_LOCAL_CODES]) expect(messages[code]).toBeTruthy();
 });
 
 test("the placeholders the server fills are in the text", () => {

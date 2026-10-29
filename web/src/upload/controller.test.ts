@@ -149,3 +149,22 @@ test("failed cancellation retains the session until cleanup succeeds", async () 
   expect(await controller.cancel(entry)).toEqual({ status: "cancelled" });
   expect(controller.pending(1)).toEqual([]);
 });
+
+test("a chunk rejected for checksum damage is sent again before completion", async () => {
+  const id = "0123456789abcdef0123456789abcdef";
+  const sent: string[] = [];
+  let attempts = 0;
+  const controller = new UploadController({ storage: new MapStorage(), hash: hashBlob, fetch: async (input, init) => {
+    const path = String(input);
+    if (path.endsWith("/uploads")) return Response.json({ id, chunkSize: 2, received: [], complete: false });
+    if (path.endsWith("/chunks/0")) {
+      sent.push(await (init!.body as Blob).text());
+      if (++attempts === 1) return Response.json({ error: { code: "upload.checksum_mismatch", data: {} } }, { status: 400 });
+      return new Response(null, { status: 204 });
+    }
+    expect(path).toBe(`/api/projects/1/uploads/${id}/complete`);
+    return Response.json({ id, chunkSize: 2, received: [0], complete: true });
+  } });
+  expect(await controller.upload(1, new File(["ab"], "a.jpg"), "a.jpg", new AbortController().signal)).toEqual({ status: "complete" });
+  expect(sent).toEqual(["ab", "ab"]);
+});
