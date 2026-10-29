@@ -7,12 +7,23 @@ import type { ProjectStore } from "./project-store.ts";
 /** Removes engine tasks before touching local records or files. */
 export class ProjectDeletion {
   private readonly deleting = new Set<number>();
+  private readonly active = new Map<number, number>();
   constructor(private readonly projects: ProjectStore, private readonly engines: EngineStore, private readonly folder: string, private readonly log: (line: string) => void) {}
 
   isDeleting(id: number): boolean { return this.deleting.has(id); }
 
+  beginWrite(id: number): (() => void) | null {
+    if (this.deleting.has(id)) return null;
+    this.active.set(id, (this.active.get(id) ?? 0) + 1);
+    return () => {
+      const remaining = (this.active.get(id) ?? 1) - 1;
+      if (remaining === 0) this.active.delete(id);
+      else this.active.set(id, remaining);
+    };
+  }
+
   async delete(id: number): Promise<"ok" | "not_found" | "busy" | "incomplete" | "engine_missing"> {
-    if (this.deleting.has(id)) return "busy";
+    if (this.deleting.has(id) || this.active.has(id)) return "busy";
     if (this.projects.get(id) === null) return "not_found";
     this.deleting.add(id);
     try {

@@ -8,6 +8,7 @@ import { TextField } from "../controls/TextField.tsx";
 import { t } from "../i18n/translate.ts";
 import { useProjectKey } from "../router.ts";
 import { projectName } from "./HomePage.tsx";
+import { UploadPanel } from "../upload/UploadPanel.tsx";
 
 interface FormProps {
   project: ProjectView | null;
@@ -83,10 +84,16 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     try { await api<void>("DELETE", `/api/projects/${project.id}`); window.location.hash = "#/"; }
     catch (error) { setAsking(false); showError(error); } finally { setWorking(false); }
   }
+  function refreshProject(id: number) {
+    void api<ProjectView>("GET", `/api/projects/${id}`).then(value => {
+      setProject(current => current?.id === id ? value : current);
+    }, showError);
+  }
   return <>
     {failure && <ErrorMessage failure={failure} />}
     {!loaded ? (!failure && <p>{t("projects.loading")}</p>) : <ProjectForm project={project} name={name} notes={notes} working={working} onName={setName} onNotes={setNotes} onSave={() => void save()} onAskDelete={() => setAsking(true)} />}
     <p role="status">{saved ? t("projects.saved") : null}</p>
+    {loaded && project !== null && project.builtin !== "sample" && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><UploadPanel key={project.id} projectId={project.id} onChange={() => refreshProject(project.id)} onAuthRequired={onAuthRequired} /></>}
     {asking && <Dialog ref={dialog} label={t("projects.delete_title")} onCancel={event => { event.preventDefault(); if (!working) setAsking(false); }}>
       <DeleteConfirmation working={working} onKeep={() => setAsking(false)} onDelete={() => void remove()} />
     </Dialog>}

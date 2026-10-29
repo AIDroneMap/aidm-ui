@@ -1,6 +1,7 @@
+import { browserPath } from "./browser-path.ts";
 import { findBrowserPage } from "./browser-target.ts";
 import { startBrowser } from "./browser-start.ts";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -14,21 +15,6 @@ import { Table } from "./Table.tsx";
 import { Dialog } from "./Dialog.tsx";
 import { Notice } from "./Notice.tsx";
 import { Progress } from "./Progress.tsx";
-
-async function browserPath(): Promise<string> {
-  const configured = process.env.CHROME_BIN ?? process.env.CHROMIUM_BIN;
-  if (configured) {
-    if (await Bun.file(configured).exists()) return configured;
-    throw new Error(`Configured browser does not exist: ${configured}`);
-  }
-  const candidates = [Bun.which("google-chrome"), Bun.which("google-chrome-stable"), Bun.which("chromium"), Bun.which("chromium-browser"), "/opt/google/chrome/chrome", "/usr/bin/google-chrome-stable"];
-  const cache = join(process.env.HOME ?? "", ".cache", "ms-playwright");
-  for (const dir of await readdir(cache).catch(() => [])) {
-    if (dir.startsWith("chromium-")) candidates.push(join(cache, dir, "chrome-linux64", "chrome"));
-  }
-  for (const path of candidates) if (path && await Bun.file(path).exists()) return path;
-  throw new Error("A Chrome or Chromium executable is required for the control tests. Set CHROME_BIN.");
-}
 
 export async function browserCheck(): Promise<string[]> {
   const browser = await browserPath();
