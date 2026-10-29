@@ -1,3 +1,4 @@
+import { Button } from "../controls/Button.tsx";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ConnectionHelp } from "../components/ConnectionHelp.tsx";
@@ -77,22 +78,22 @@ function RemoveAsk(props: {
   return (
     <div role="group" aria-label={t("engines.remove_ask", { name: engine.name })} className="actions">
       <p>{t("engines.remove_ask", { name: engine.name })}</p>
-      <button
+      <Button
         ref={first}
         type="button"
         aria-label={t("engines.remove_confirm_named", { name: engine.name })}
         onClick={() => props.onConfirm(engine)}
       >
         {t("engines.remove_confirm")}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
         className="secondary"
         aria-label={t("engines.remove_keep_named", { name: engine.name })}
         onClick={() => props.onKeep(engine)}
       >
         {t("engines.remove_keep")}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -152,9 +153,9 @@ export function EngineList(props: EngineListProps) {
               {props.localConnection}
               <div className="actions">
                 {props.log && (
-                  <button type="button" className="secondary" aria-controls={LOG_ID} onClick={props.log.onToggle}>
+                  <Button type="button" className="secondary" aria-controls={LOG_ID} onClick={props.log.onToggle}>
                     {t(props.log.open ? "engines.log.hide" : "engines.log.show")}
-                  </button>
+                  </Button>
                 )}
               </div>
               {props.log?.open && <EngineLog id={LOG_ID} lines={props.log.lines} />}
@@ -163,30 +164,30 @@ export function EngineList(props: EngineListProps) {
             <RemoveAsk engine={engine} onConfirm={props.onConfirmRemove} onKeep={props.onKeep} />
           ) : (
             <div className="actions">
-              <button
+              <Button
                 type="button"
                 className="secondary"
                 aria-label={t("engines.edit_named", { name: engine.name })}
                 onClick={() => props.onEdit(engine)}
               >
                 {t("engines.edit")}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 className="secondary"
                 aria-label={t(engine.enabled ? "engines.disable_named" : "engines.enable_named", { name: engine.name })}
                 onClick={() => props.onSetEnabled(engine, !engine.enabled)}
               >
                 {t(engine.enabled ? "engines.disable" : "engines.enable")}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 className="secondary"
                 aria-label={t("engines.remove_named", { name: engine.name })}
                 onClick={() => props.onAskRemove(engine)}
               >
                 {t("engines.remove")}
-              </button>
+              </Button>
             </div>
           )}
         </li>
@@ -295,15 +296,15 @@ export function EngineForm(props: EngineFormProps) {
       </div>
 
       <div className="actions">
-        <button type="button" className="secondary" disabled={busy || cannotTest} onClick={props.onTest}>
+        <Button type="button" className="secondary" disabled={busy || cannotTest} onClick={props.onTest}>
           {props.testing ? t("engine.form.testing") : t("engine.form.test")}
-        </button>
-        <button type="submit" disabled={busy}>
+        </Button>
+        <Button type="submit" disabled={busy}>
           {props.saving ? t("common.saving") : t("engine.form.save")}
-        </button>
-        <button type="button" className="secondary" onClick={props.onCancel}>
+        </Button>
+        <Button type="button" className="secondary" onClick={props.onCancel}>
           {t("engine.form.cancel")}
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -527,9 +528,9 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
             onCancel={() => setForm(null)}
           />
         ) : (
-          <button type="button" onClick={() => setForm({ ...EMPTY_FORM })}>
+          <Button type="button" onClick={() => setForm({ ...EMPTY_FORM })}>
             {t("engines.add")}
-          </button>
+          </Button>
         )}
       </section>
     </>

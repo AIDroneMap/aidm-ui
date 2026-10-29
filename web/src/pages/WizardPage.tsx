@@ -1,3 +1,4 @@
+import { Button } from "../controls/Button.tsx";
 import { useEffect, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
@@ -69,9 +70,9 @@ export function WelcomeScreen({ onNext }: { onNext: () => void }) {
       <p>{t("wizard.welcome.body")}</p>
       <p>{t("wizard.welcome.next_steps")}</p>
       <div className="actions">
-        <button type="button" onClick={onNext}>
+        <Button type="button" onClick={onNext}>
           {t("wizard.next")}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -119,15 +120,15 @@ export function MachineCheckScreen(props: MachineCheckScreenProps) {
         {props.checking ? t("wizard.check.checking") : props.announcement}
       </p>
       <div className="actions">
-        <button type="button" className="secondary" onClick={props.onBack}>
+        <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
-        </button>
+        </Button>
         <BusyButton className="secondary" busy={props.checking} onClick={props.onCheckAgain}>
           {props.checking ? t("wizard.check.checking") : t("wizard.check.again")}
         </BusyButton>
-        <button type="button" onClick={props.onNext}>
+        <Button type="button" onClick={props.onNext}>
           {t("wizard.next")}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -201,9 +202,9 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
         {props.checking ? t("wizard.check.checking") : ""}
       </p>
       <div className="actions">
-        <button type="button" className="secondary" onClick={props.onBack}>
+        <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -393,12 +394,12 @@ export function InstallScreen(props: InstallScreenProps) {
         {props.announcement}
       </p>
       <div className="actions">
-        <button type="button" className="secondary" onClick={props.onBack}>
+        <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
-        </button>
-        <button type="button" onClick={props.onNext}>
+        </Button>
+        <Button type="button" onClick={props.onNext}>
           {t("wizard.next")}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -420,9 +421,9 @@ export function SampleScreen(props: SampleScreenProps) {
       <SampleJobPage onAuthRequired={props.onAuthRequired} embedded />
       {props.failure && <ErrorMessage failure={props.failure} />}
       <div className="actions">
-        <button type="button" className="secondary" onClick={props.onBack}>
+        <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
-        </button>
+        </Button>
         <BusyButton busy={props.busy} onClick={props.onFinish}>
           {t("wizard.sample.finish")}
         </BusyButton>
