@@ -372,3 +372,12 @@ test("a restart clears the previous stage until a new stage starts", () => {
   const html = renderRun({ state: "processing", restarted: true }, { lines: ["Running odm_dem stage"], lineCount: 1, restartedAtLine: 1 });
   expect(html).not.toContain("Make elevation models");
 });
+
+
+test("sample titles are translated and operator names remain data", () => {
+  const sampleHtml = renderRun({ name: "run.sample_name", sample: true });
+  expect(sampleHtml).toContain(en["run.sample_name"]);
+  expect(sampleHtml).not.toContain("run.sample_name");
+  const customHtml = renderRun({ name: "North field", sample: false });
+  expect(customHtml).toContain("North field");
+});

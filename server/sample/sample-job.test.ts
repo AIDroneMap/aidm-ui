@@ -110,7 +110,7 @@ function theTask(): string {
 async function startAndQueue(): Promise<{ run: RunView; uuid: string; engine: EngineView }> {
   const engine = await addEngine();
   const run = await startedRun(engine.id);
-  expect(run).toMatchObject({ name: null, preset: "map-with-heights", wayIn: "upload", sample: true });
+  expect(run).toMatchObject({ name: "run.sample_name", preset: "map-with-heights", wayIn: "upload", sample: true });
   const queued = await waitRun(run.id, (candidate) => candidate.state === "queued");
   return { run: queued, uuid: theTask(), engine };
 }

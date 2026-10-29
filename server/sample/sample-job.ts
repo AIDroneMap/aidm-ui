@@ -146,7 +146,7 @@ export class SampleJob {
     }
     if (this.importing) return { ok: false, status: 409, error: { code: "sample.dataset_in_use", data: {} } };
 
-    const run = this.deps.runs.create({ projectId, engineId, options: this.deps.dataset.options, name: null, preset: "map-with-heights", wayIn: "upload", sample: true });
+    const run = this.deps.runs.create({ projectId, engineId, options: this.deps.dataset.options, name: "run.sample_name", preset: "map-with-heights", wayIn: "upload", sample: true });
     const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.deps.tracker.update(run.id, {
       step: "download",
