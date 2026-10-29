@@ -1,8 +1,10 @@
+import { currentStage } from "./runs.ts";
 import { expect, test } from "bun:test";
 import type { RunView } from "../../shared/api-types.ts";
 import { EMPTY_LOG, MAX_LOG_LINES, isFinished, linesWithRestart, mergeLog, parseLogEvent, parseRunEvent } from "./runs.ts";
 
 const run: RunView = {
+  name: null, preset: null, wayIn: null, sample: false,
   id: 4,
   projectId: 1,
   engineId: 2,
@@ -97,4 +99,9 @@ test("the separator is counted from the first line the page dropped, and left ou
   // Line 10 is the first one still held.
   expect(linesWithRestart(log, 12, SEPARATOR).indexOf(SEPARATOR)).toBe(2);
   expect(linesWithRestart(log, 5, SEPARATOR)).toBe(log.lines);
+});
+
+test("recognises the latest engine stage without exposing unknown names", () => {
+  expect(currentStage(["Running dataset stage", "Running odm_dem stage"])).toBe("odm_dem");
+  expect(currentStage(["Running dataset stage", "Running future_stage stage"])).toBeNull();
 });

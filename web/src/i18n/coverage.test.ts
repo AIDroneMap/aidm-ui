@@ -25,3 +25,12 @@ test("no text uses an em dash or is empty", () => {
     expect(text, key).not.toContain("\u2014");
   }
 });
+
+test("all thirteen engine stages have a name and explanation", () => {
+  const stages = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"];
+  for (const stage of stages) {
+    expect(messages[`run.stage.${stage}.name`]).toBeTruthy();
+    expect(messages[`run.stage.${stage}.description`]).toBeTruthy();
+  }
+  expect(Object.keys(messages).filter((key) => key.startsWith("run.stage."))).toHaveLength(26);
+});

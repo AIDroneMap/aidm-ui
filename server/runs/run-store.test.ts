@@ -104,3 +104,20 @@ test("a run is marked restarted once, and later updates keep the mark", () => {
   store.update(run.id, { progress: 3 });
   expect(store.get(run.id)).toMatchObject({ state: "queued", restarted: true, progress: 3 });
 });
+
+test("run metadata survives storage", () => {
+  const projectId = store.builtinProjectId("sample") as number;
+  const run = store.create({ projectId, engineId, options: [], name: "North field", preset: "map-with-heights", wayIn: "upload", sample: false });
+  expect(store.get(run.id)).toMatchObject({ name: "North field", preset: "map-with-heights", wayIn: "upload", sample: false });
+});
+
+test("migration preserves old runs with unknown metadata", () => {
+  const old = new Database(":memory:", { strict: true });
+  applyMigrations(old, migrations.slice(0, 4));
+  const oldStore = new RunStore(old);
+  const projectId = oldStore.builtinProjectId("sample") as number;
+  old.run("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')", [projectId]);
+  applyMigrations(old, migrations);
+  expect(oldStore.get(1)).toMatchObject({ name: null, preset: null, wayIn: null, sample: false });
+  old.close();
+});

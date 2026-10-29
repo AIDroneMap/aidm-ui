@@ -94,3 +94,13 @@ export function parseLogEvent(data: string): { lines: string[]; from: number } |
     return null;
   }
 }
+
+export const STAGES = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"] as const;
+
+export function currentStage(lines: string[]): (typeof STAGES)[number] | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const match = /Running ([a-z0-9_]+) stage\b/.exec(lines[i]!);
+    if (match) return (STAGES as readonly string[]).includes(match[1]!) ? match[1] as (typeof STAGES)[number] : null;
+  }
+  return null;
+}

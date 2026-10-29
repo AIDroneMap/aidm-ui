@@ -100,6 +100,7 @@ const engine: LocalEngineView = {
 };
 
 const run: RunView = {
+  name: null, preset: null, wayIn: null, sample: false,
   id: 7,
   projectId: 1,
   engineId: 1,
