@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { FakeTaskApi, WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
 import { isTaskNotFound, TaskClient } from "./task-client.ts";
+import { problemFromFailure } from "../engines/problems.ts";
 
 let fake: FakeTaskApi | undefined;
 
@@ -18,6 +19,16 @@ async function startFake(options?: ConstructorParameters<typeof FakeTaskApi>[0])
 function clientFor(api: FakeTaskApi, logs: string[] = [], token = api.token): TaskClient {
   return new TaskClient({ address: api.address, token }, { log: (line) => logs.push(line), timeoutMs: 2000 });
 }
+
+test("the option list preserves the engine's facts and scrubs echoed tokens", async () => {
+  const api = await startFake({ token: "private-option-token" });
+  api.options = [{ name: "dsm", type: "bool", value: "false", domain: "", help: `Engine help ${api.token}`, extra: api.token }] as unknown as typeof api.options;
+  expect(await clientFor(api).options()).toEqual({
+    ok: true,
+    value: [{ name: "dsm", type: "bool", value: "false", domain: "", help: "Engine help ***" }],
+  });
+  expect(api.requests).toContainEqual({ method: "GET", path: "/options", token: api.token });
+});
 
 test("info reads the version, cores, memory and queue length", async () => {
   const api = await startFake({ info: { taskQueueCount: 3 } });
@@ -392,4 +403,93 @@ test("a task's output may be several megabytes, while other answers stay capped 
   api.info.engineVersion = "y".repeat(2 * 1024 * 1024);
   const info = await client.info();
   expect(info.ok).toBe(false);
+});
+
+
+test("task creation refuses an option outside the engine domain before init", async () => {
+  const api = await startFake();
+  api.options = [{ name: "mesh-octree-depth", type: "int", value: "11", domain: "integer: 1 <= x <= 14", help: "Mesh detail" }];
+  const result = await clientFor(api).createTask("Run", [{ name: "mesh-octree-depth", value: 15 }]);
+  expect(result).toEqual({
+    ok: false, failure: { kind: "invalid_options", name: "mesh-octree-depth", reason: "domain" },
+  });
+  if (result.ok) throw new Error("An invalid option created a task.");
+  expect(problemFromFailure(result.failure)).toEqual({ code: "option.invalid_value", data: { name: "mesh-octree-depth" } });
+  expect(api.requests.some((request) => request.path === "/task/new/init")).toBe(false);
+  expect(api.tasks.size).toBe(0);
+});
+
+test("task creation checks types, every documented domain and duplicate names", async () => {
+  const api = await startFake();
+  const client = clientFor(api);
+  const cases: Array<{ type: "int" | "float" | "bool" | "string" | "enum"; domain: string | string[]; good: unknown; bad: unknown }> = [
+    { type: "int", domain: "integer", good: 3, bad: 1.5 },
+    { type: "int", domain: "positive integer", good: 0, bad: -1 },
+    { type: "float", domain: "negative float", good: -0.25, bad: 1 },
+    { type: "float", domain: "float", good: 1.25, bad: "1.25" },
+    { type: "float", domain: "percent", good: 100, bad: 100.1 },
+    { type: "int", domain: "integer: 1 <= x <= 14", good: 14, bad: 15 },
+    { type: "float", domain: "float > 0.0", good: 0.1, bad: 0 },
+    { type: "float", domain: "float >= 0", good: 0, bad: -0.1 },
+    { type: "int", domain: "integer < 4", good: 3, bad: 4 },
+    { type: "int", domain: "integer <= 4", good: 4, bad: 5 },
+    { type: "bool", domain: "", good: true, bad: "true" },
+    { type: "enum", domain: ["a", "b"], good: "b", bad: "c" },
+    { type: "string", domain: "json", good: "{\"x\":1}", bad: "invalid" },
+    { type: "string", domain: "string", good: "camera", bad: {} },
+    { type: "string", domain: "path", good: "photos", bad: null },
+  ];
+  for (const entry of cases) {
+    api.options = [{ name: "setting", type: entry.type, value: entry.type === "bool" ? "false" : "0", domain: entry.domain, help: "" }];
+    expect((await client.createTask("Run", [{ name: "setting", value: entry.good }])).ok, JSON.stringify(entry)).toBe(true);
+    const before = api.tasks.size;
+    const invalid = await client.createTask("Run", [{ name: "setting", value: entry.bad }]);
+    expect(invalid.ok, JSON.stringify(entry)).toBe(false);
+    if (!invalid.ok) expect(invalid.failure.kind).toBe("invalid_options");
+    expect(api.tasks.size).toBe(before);
+  }
+  api.options = [{ name: "setting", type: "int", value: "0", domain: "integer", help: "" }];
+  expect(await client.createTask("Run", [{ name: "setting", value: 1 }, { name: "setting", value: 2 }])).toEqual({
+    ok: false, failure: { kind: "invalid_options", name: "setting", reason: "duplicate" },
+  });
+  expect(await client.createTask("Run", [{ name: "absent", value: true }])).toEqual({
+    ok: false, failure: { kind: "invalid_options", name: "absent", reason: "unavailable" },
+  });
+  api.options[0]!.domain = "new constraint syntax";
+  expect(await client.createTask("Run", [{ name: "setting", value: 1 }])).toEqual({
+    ok: false, failure: { kind: "invalid_options", name: "setting", reason: "domain" },
+  });
+});
+
+test("unusable option facts fail closed without creating a task", async () => {
+  const api = await startFake();
+  const client = clientFor(api);
+  const valid = { name: "setting", type: "int", value: "0", domain: "integer", help: "" };
+  const broken = [
+    { ...valid, type: "new-type" },
+    { ...valid, value: "NaN" },
+    { ...valid, value: "" },
+    { ...valid, value: "1.5" },
+    { ...valid, type: "bool", value: "maybe" },
+    { ...valid, help: null },
+    { ...valid, domain: [{}] },
+  ];
+  for (const option of broken) {
+    api.options = [option] as unknown as typeof api.options;
+    expect(await client.createTask("Run", [{ name: "setting", value: 1 }])).toMatchObject({
+      ok: false, failure: { kind: "bad_response" },
+    });
+  }
+  api.options = [valid, valid] as typeof api.options;
+  expect(await client.options()).toMatchObject({ ok: false, failure: { kind: "bad_response" } });
+  expect(api.tasks.size).toBe(0);
+});
+
+test("a value accepted locally still relays the engine's own creation error", async () => {
+  const api = await startFake();
+  api.createError = `Engine rejected this setting ${api.token}`;
+  expect(await clientFor(api).createTask("Run", [{ name: "dsm", value: true }])).toEqual({
+    ok: false, failure: { kind: "engine_error", message: "Engine rejected this setting ***" },
+  });
+  expect(api.tasks.size).toBe(0);
 });

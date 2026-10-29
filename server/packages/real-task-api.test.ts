@@ -1,3 +1,5 @@
+import { assertCatalogueDrift } from "../../test-support/catalogue-drift.ts";
+import type { ReconciledOption } from "../../shared/engine-options.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -126,6 +128,11 @@ real(
     expect(h.localEngine.view().installed).toMatchObject({ packageVersion: version, kind: "native", runtime: null });
 
     const engineId = h.engineStore.local()?.id as number;
+    const reconciled = await fetch(`${h.base}/api/engines/${engineId}/options`);
+    expect(reconciled.status).toBe(200);
+    const catalogue = (await reconciled.json()) as { options: ReconciledOption[] };
+    assertCatalogueDrift(catalogue.options, version as string);
+
     const started = await fetch(`${h.base}/api/sample/start`, { method: "POST", body: JSON.stringify({ engineId }) });
     expect(started.status).toBe(202);
     const run = (await started.json()) as RunView;

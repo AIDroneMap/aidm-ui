@@ -19,6 +19,7 @@ export const MESSAGE_CODES = [
   "settings.lan_local_only",
   "settings.port_invalid",
   "settings.passphrase_too_short",
+  "option.invalid_value",
   "engine.address_invalid",
   "engine.https_required",
   "engine.plain_http_local",

@@ -1,3 +1,6 @@
+import recordedOptions from "./fixtures/task-api-2.6.1-options.json";
+import type { EngineOption } from "../shared/engine-options.ts";
+
 // A stand-in for the engine's task API (aidm-api 2.5.0), for tests. It answers
 // like the real one does, including the habit of sending errors with HTTP 200.
 // Its tasks follow aidm-api 2.5.0: a test drives a task through its states
@@ -58,6 +61,9 @@ export interface FakeRequest {
 
 export class FakeTaskApi {
   info: FakeInfo;
+  /** The API 2.6.1 test-mode option fixture, independent of the catalogue. */
+  options: EngineOption[] = structuredClone(recordedOptions) as EngineOption[];
+  createError: string | null = null;
   token: string;
   /** How long the info call waits before it answers. */
   infoDelayMs = 0;
@@ -148,6 +154,7 @@ export class FakeTaskApi {
       const base = typeof this.info.taskQueueCount === "number" ? this.info.taskQueueCount : 0;
       return Response.json({ ...this.info, taskQueueCount: base + active });
     }
+    if (req.method === "GET" && url.pathname === "/options") return Response.json(this.options);
     if (req.method === "POST" && url.pathname === "/task/new/init") return this.init(req);
     if (req.method === "POST" && url.pathname === "/task/cancel") return this.command(req, "cancel");
     if (req.method === "POST" && url.pathname === "/task/remove") return this.command(req, "remove");
@@ -189,7 +196,7 @@ export class FakeTaskApi {
   private isKnownRoute(method: string, pathname: string): boolean {
     const path = pathname.split("/");
     if (method === "GET") {
-      return pathname === "/info" || (path[1] === "task" && ((path.length === 4 && (path[3] === "info" || path[3] === "output")) || (path.length === 5 && path[3] === "download")));
+      return pathname === "/info" || pathname === "/options" || (path[1] === "task" && ((path.length === 4 && (path[3] === "info" || path[3] === "output")) || (path.length === 5 && path[3] === "download")));
     }
     if (method === "POST") {
       return (
@@ -216,6 +223,7 @@ export class FakeTaskApi {
   }
 
   private async init(req: Request): Promise<Response> {
+    if (this.createError !== null) return Response.json({ error: this.createError });
     let form: FormData;
     try {
       form = await req.formData();

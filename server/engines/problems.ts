@@ -7,6 +7,8 @@ import type { TaskApiFailure } from "../task-api/task-client.ts";
  */
 export function problemFromFailure(failure: TaskApiFailure): ApiError {
   switch (failure.kind) {
+    case "invalid_options":
+      return { code: "option.invalid_value", data: { name: failure.name } };
     case "unreachable":
       return { code: "engine.unreachable", data: {} };
     case "engine_error":

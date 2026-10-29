@@ -1,4 +1,6 @@
+import { validateOptions, type InvalidOptions } from "../options/validate.ts";
 import type { EngineInfoView } from "../../shared/api-types.ts";
+import type { EngineOption } from "../../shared/engine-options.ts";
 import { isReadableVersion } from "../engines/versions.ts";
 import type { UnreachableLines } from "./unreachable-lines.ts";
 
@@ -21,6 +23,7 @@ export interface EngineEndpoint {
 }
 
 export type TaskApiFailure =
+  | InvalidOptions
   /** Connection refused, name not found, timeout, TLS. */
   | { kind: "unreachable"; detail: string }
   /** The engine's own text from an {"error": ...} body. */
@@ -128,6 +131,10 @@ export class TaskClient {
   }
 
   async createTask(name: string, options: TaskOption[], signal?: AbortSignal): Promise<TaskApiResult<{ uuid: string }>> {
+    const reported = await this.options(signal);
+    if (!reported.ok) return reported;
+    const invalid = validateOptions(options, reported.value);
+    if (invalid !== null) return { ok: false, failure: invalid };
     const form = new FormData();
     form.append("name", name);
     form.append("options", JSON.stringify(options));
@@ -138,6 +145,31 @@ export class TaskClient {
       return this.badResponse(`${this.endpoint.address}/task/new/init`, "The answer has no uuid.");
     }
     return { ok: true, value: { uuid } };
+  }
+
+  async options(signal?: AbortSignal): Promise<TaskApiResult<EngineOption[]>> {
+    const result = await this.request("GET", "/options", { signal });
+    if (!result.ok) return result;
+    if (!Array.isArray(result.value) || !result.value.every(isEngineOption)) {
+      return this.badResponse(`${this.endpoint.address}/options`, "The option list has an unusable shape.");
+    }
+    const names = new Set<string>();
+    for (const option of result.value) {
+      if (names.has(option.name)) return this.badResponse(`${this.endpoint.address}/options`, "The option list repeats a name.");
+      names.add(option.name);
+    }
+    return {
+      ok: true,
+      value: result.value.map((option) => ({
+        type: option.type,
+        name: this.scrub(option.name),
+        value: this.scrub(option.value),
+        domain: Array.isArray(option.domain)
+          ? option.domain.map((value) => typeof value === "string" ? this.scrub(value) : value)
+          : this.scrub(option.domain),
+        help: this.scrub(option.help),
+      })),
+    };
   }
 
   /** The data should be a file-backed Blob (Bun.file(path).slice(...)) so that the image is not read into memory first. */
@@ -380,6 +412,27 @@ export class TaskClient {
     if (token === "") return text;
     return text.split(token).join("***").split(encodeURIComponent(token)).join("***");
   }
+}
+
+function usableDefault(type: EngineOption["type"], value: string): boolean {
+  if (type === "bool") return value === "true" || value === "false";
+  if (type === "int" || type === "float") {
+    if (value.trim() === "") return false;
+    const number = Number(value);
+    return type === "int" ? Number.isSafeInteger(number) : Number.isFinite(number);
+  }
+  return true;
+}
+
+function isEngineOption(value: unknown): value is EngineOption {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const option = value as Record<string, unknown>;
+  return typeof option.name === "string" && option.name !== "" &&
+    ["int", "float", "string", "bool", "enum"].includes(option.type as string) &&
+    typeof option.value === "string" && usableDefault(option.type as EngineOption["type"], option.value) && typeof option.help === "string" &&
+    (typeof option.domain === "string" ||
+      (Array.isArray(option.domain) && option.domain.every((choice) =>
+        typeof choice === "string" || typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice)))));
 }
 
 interface RequestOptions {
