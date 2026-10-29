@@ -8,11 +8,11 @@ AIDM UI will give a single operator a complete drone mapping tool in the browser
 
 ## What it will do
 
-- **Projects and uploads.** Group images into projects and upload them, with a dataset pre-flight report that flags blurry images, missing GPS data and poor overlap before you spend time processing.
-- **Task setup.** Choose processing options through presets, with full control when you need it.
-- **Job queue.** Follow every job stage by stage, with logs.
-- **Viewers.** Orthophotos and elevation models in a 2D map view; point clouds and textured models in a 3D view.
-- **Exports.** GeoTIFF, LAZ, OBJ and 3D Tiles.
+- **Projects and photos.** Group photos into projects. Bring them in from the browser, from a folder on the same computer, or as a link the engine fetches itself. Before processing, see what the photos say about themselves: cameras, flights, photos without GPS, duplicates.
+- **Presets and options.** Pick what you want out of a flight, from a quick map to a ground model, then change any option, each explained in plain words: what it does, when to change it, what it costs.
+- **Runs.** Follow every run stage by stage, with its log. Cancel it, retry it, or run it again with other settings without sending the photos again.
+- **Viewers.** Orthophotos and elevation models on a 2D map; the textured model in 3D. Point clouds in 3D come later.
+- **Exports.** The whole results archive, or one output at a time: GeoTIFF, LAZ, OBJ, GLB, the report.
 - **An engine on your own computer.** A first-run wizard checks the machine, installs the engine, and proves it with a sample job. No Docker, no terminal.
 - **Local or cloud, per job.** Run small jobs on your own computer and send large ones to engines on your network or in the cloud, from the same interface.
 
@@ -33,7 +33,7 @@ AIDM UI talks to every engine only through the task API, so it works the same wi
 
 - A small server written in TypeScript on Bun, with SQLite, compiled into one executable per platform. It serves the interface, holds the engine manager, and makes every call to every engine.
 - A single-page application built with TypeScript, React and Vite, compiled to static files and embedded in that executable, so there is nothing extra to install, and it works without an internet connection.
-- Planned: MapLibre GL for the 2D map, and a three.js viewer that streams point clouds for 3D.
+- Planned: MapLibre GL for the 2D map and three.js for the 3D model, both fed only from what the engine produced. The map has no basemap unless you configure one; no key, no token.
 - The engine runs as a native package where one exists, and through a container runtime (Podman, Docker or Apple's container tool) until then. The wizard installs the runtime when the computer has none.
 
 ## Troubleshooting
