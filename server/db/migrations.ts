@@ -7,6 +7,8 @@ import runRestartLineSql from "./migrations/0004-run-restart-line.sql" with { ty
 import projectMetadataSql from "./migrations/0005-project-metadata.sql" with { type: "text" };
 import projectUploadsSql from "./migrations/0006-project-uploads.sql" with { type: "text" };
 
+import photoFactsSql from "./migrations/0007-photo-facts.sql" with { type: "text" };
+
 export interface Migration {
   version: number;
   name: string;
@@ -22,6 +24,7 @@ export const migrations: Migration[] = [
   { version: 4, name: "run-restart-line", sql: runRestartLineSql },
   { version: 5, name: "project-metadata", sql: projectMetadataSql },
   { version: 6, name: "project-uploads", sql: projectUploadsSql },
+  { version: 7, name: "photo-facts", sql: photoFactsSql },
 ];
 
 function storedVersion(db: Database): number {
