@@ -1,4 +1,5 @@
 {
+  "option.invalid_value": "Check {name} in the run settings. Its value is not supported by this engine.",
   "app.name": "AIDM UI",
   "app.loading": "Loading...",
   "common.saving": "Saving...",

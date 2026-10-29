@@ -1,3 +1,4 @@
+import { reconcileOptions } from "../options/reconcile.ts";
 import { errorResponse, type ApiError } from "../../shared/api-error.ts";
 import type { EngineAddRequest, EngineTestView } from "../../shared/api-types.ts";
 import { readJson, type RouteContext, type RouteTable } from "../http/route-table.ts";
@@ -129,6 +130,16 @@ export function engineRoutes(ctx: RouteContext): RouteTable {
           sendViews(engines.views());
           return unsubscribe;
         });
+      },
+    },
+
+    "/api/engines/:id/options": {
+      GET: async (req) => {
+        const id = parseId(req.params.id ?? "");
+        const engine = id === null ? null : store.get(id);
+        if (engine === null) return errorResponse(404, "engine.not_found");
+        const result = await new TaskClient(engine, { log: ctx.log }).options();
+        return result.ok ? Response.json({ options: reconcileOptions(result.value) }) : failureResponse(result.failure);
       },
     },
 
