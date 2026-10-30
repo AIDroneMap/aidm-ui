@@ -237,7 +237,7 @@ export class TaskClient {
    * "Asset not ready"); anything else is returned to the caller to stream, so
    * the archive is never held in memory here.
    */
-  async downloadResults(uuid: string): Promise<TaskApiResult<Response>> {
+  async downloadResults(uuid: string, options: { headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<TaskApiResult<Response>> {
     const where = `${this.endpoint.address}/task/download`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_HEADER_TIMEOUT_MS);
@@ -246,7 +246,8 @@ export class TaskClient {
       response = await this.send(`/task/${encodeURIComponent(uuid)}/download/all.zip`, {}, {
         method: "GET",
         redirect: "manual",
-        signal: controller.signal,
+        signal: options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
+        headers: options.headers,
       });
     } catch (error) {
       const detail = this.scrub(describeFailure(error, DOWNLOAD_HEADER_TIMEOUT_MS));
@@ -269,7 +270,7 @@ export class TaskClient {
         return { ok: false, failure: { kind: "unreachable", detail } };
       }
     }
-    if (response.status !== 200 || response.body === null) {
+    if ((response.status !== 200 && response.status !== 206) || response.body === null) {
       await response.body?.cancel();
       return this.badResponse(where, `HTTP ${response.status}, and no archive.`);
     }

@@ -325,6 +325,32 @@ test("a completed run offers the results", () => {
   expect(untranslatedText(html, runData)).toEqual([]);
 });
 
+test("fetching results keeps the run open without offering cancellation or downloads", () => {
+  const html = renderRun({ state: "completed", step: "results", resultsAvailable: false, results: { state: "fetching", archiveSize: null, outputs: [] } });
+  expect(html).toContain("Fetching results");
+  expect(html).not.toContain("Finished");
+  expect(html).not.toContain("Cancel run");
+  expect(html).not.toContain("Download the results");
+});
+
+test("ready results list the archive and available outputs with sizes", () => {
+  const html = renderRun({ state: "completed", resultsAvailable: true, results: { state: "ready", archiveSize: 2048, outputs: [{ name: "orthophoto", size: 1024 }, { name: "glb", size: 512 }] } });
+  expect(html).toContain('href="/api/runs/7/outputs/orthophoto"');
+  expect(html).toContain('href="/api/runs/7/outputs/glb"');
+  expect(html).toContain("Orthophoto");
+  expect(html).toContain("2 KiB");
+  expect(html).toContain("512 B");
+  expect(html).toContain("Delete results");
+});
+
+test("failed and deleted results do not offer downloads", () => {
+  const failed = renderRun({ state: "completed", results: { state: "failed", archiveSize: null, outputs: [] } });
+  expect(failed).toContain("Try fetching results again");
+  const deleted = renderRun({ state: "completed", results: { state: "deleted", archiveSize: null, outputs: [] } });
+  expect(deleted).toContain("Results deleted");
+  expect(deleted).not.toContain("/outputs/");
+});
+
 test("a completed run whose results are not ready offers no link", () => {
   const html = renderRun({ state: "completed", resultsAvailable: false });
   expect(html).not.toContain("/results");

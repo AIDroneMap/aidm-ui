@@ -4,7 +4,7 @@ import { FINISHED_RUN_STATES, RUN_STATES, type RunView } from "../../shared/api-
 export const MAX_LOG_LINES = 2000;
 
 export function isFinished(run: RunView): boolean {
-  return FINISHED_RUN_STATES.includes(run.state);
+  return run.step !== "results" && FINISHED_RUN_STATES.includes(run.state);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -20,7 +20,7 @@ export function isRunView(value: unknown): value is RunView {
   return (
     typeof value["id"] === "number" &&
     (RUN_STATES as readonly unknown[]).includes(value["state"]) &&
-    (value["step"] === null || value["step"] === "download" || value["step"] === "upload") &&
+    (value["step"] === null || value["step"] === "download" || value["step"] === "upload" || value["step"] === "results") &&
     (value["download"] === null || isCount(value["download"], "received")) &&
     (value["upload"] === null || isCount(value["upload"], "done")) &&
     (value["progress"] === null || typeof value["progress"] === "number") &&
