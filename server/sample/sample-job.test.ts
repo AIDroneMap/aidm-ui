@@ -935,12 +935,20 @@ test("the engine's token is in no log, stream or line of the server's own log du
 
 test("deleting the sample project keeps the dataset and allows another sample run", async () => {
   const { run, uuid, engine } = await startAndQueue();
-  fake.setTask(uuid, { statusCode: 40, processingTime: 1000 });
-  await waitRun(run.id, candidate => candidate.state === "completed");
+  let releaseResults!: () => void;
+  fake.resultsWait = new Promise<void>(resolve => { releaseResults = resolve; });
+  fake.setTask(uuid, { statusCode: 40, processingTime: 1000, results: zipBytes });
+  await waitRun(run.id, candidate => candidate.state === "completed" && candidate.results?.state === "fetching");
   const sampleId = harness.runs.builtinProjectId("sample");
   expect(sampleId).not.toBeNull();
   const before = await harness.sample.datasetFile();
   expect(before.present).toBe(true);
+  const busy = await send("DELETE", `/api/projects/${sampleId}`);
+  const busyBody = await busy.json();
+  releaseResults();
+  expect(busy.status).toBe(409);
+  expect(busyBody).toEqual({ error: { code: "project.deletion_busy", data: {} } });
+  await waitRun(run.id, candidate => candidate.state === "completed" && candidate.resultsAvailable);
   expect((await send("DELETE", `/api/projects/${sampleId}`)).status).toBe(204);
   expect(harness.runs.builtinProjectId("sample")).toBe(sampleId);
   expect((await getJson<unknown[]>("/api/projects")).length).toBe(0);
@@ -952,8 +960,12 @@ test("a sample run after deletion starts its log at the first line", async () =>
   const { run, uuid, engine } = await startAndQueue();
   fake.setTask(uuid, { output: ["old line"] });
   await eventually(async () => (await getJson<RunLogView>(`/api/runs/${run.id}/log`)).lines.includes("old line"));
-  fake.setTask(uuid, { statusCode: 40, processingTime: 1000 });
-  await waitRun(run.id, candidate => candidate.state === "completed");
+  let releaseResults!: () => void;
+  fake.resultsWait = new Promise<void>(resolve => { releaseResults = resolve; });
+  fake.setTask(uuid, { statusCode: 40, processingTime: 1000, results: zipBytes });
+  await waitRun(run.id, candidate => candidate.state === "completed" && candidate.results?.state === "fetching");
+  releaseResults();
+  await waitRun(run.id, candidate => candidate.state === "completed" && candidate.resultsAvailable);
   const sampleId = harness.runs.builtinProjectId("sample")!;
   expect((await send("DELETE", `/api/projects/${sampleId}`)).status).toBe(204);
   const next = await startedRun(engine.id);
