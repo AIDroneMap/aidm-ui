@@ -126,6 +126,7 @@ export class TaskClient {
         availableMemory: this.count(raw, "availableMemory"),
         queueCount: this.count(raw, "taskQueueCount"),
         maxParallelTasks: this.count(raw, "maxParallelTasks"),
+        maxImages: raw.maxImages === null ? null : typeof raw.maxImages === "number" && Number.isSafeInteger(raw.maxImages) && raw.maxImages >= 0 ? raw.maxImages : undefined,
       },
     };
   }
@@ -144,6 +145,23 @@ export class TaskClient {
     if (typeof uuid !== "string" || uuid === "") {
       return this.badResponse(`${this.endpoint.address}/task/new/init`, "The answer has no uuid.");
     }
+    return { ok: true, value: { uuid } };
+  }
+
+  /** The API submits a ZIP URL directly. It downloads the photos after returning the identity. */
+  async createLinkedTask(name: string, options: TaskOption[], zipurl: string): Promise<TaskApiResult<{ uuid: string }>> {
+    const reported = await this.options();
+    if (!reported.ok) return reported;
+    const invalid = validateOptions(options, reported.value);
+    if (invalid !== null) return { ok: false, failure: invalid };
+    const form = new FormData();
+    form.append("name", name);
+    form.append("options", JSON.stringify(options));
+    form.append("zipurl", zipurl);
+    const body = await this.requestObject("POST", "/task/new", { body: form });
+    if (!body.ok) return body;
+    const uuid = body.value.uuid;
+    if (typeof uuid !== "string" || uuid === "") return this.badResponse(`${this.endpoint.address}/task/new`, "The answer has no uuid.");
     return { ok: true, value: { uuid } };
   }
 
@@ -237,7 +255,7 @@ export class TaskClient {
    * "Asset not ready"); anything else is returned to the caller to stream, so
    * the archive is never held in memory here.
    */
-  async downloadResults(uuid: string): Promise<TaskApiResult<Response>> {
+  async downloadResults(uuid: string, options: { headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<TaskApiResult<Response>> {
     const where = `${this.endpoint.address}/task/download`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_HEADER_TIMEOUT_MS);
@@ -246,7 +264,8 @@ export class TaskClient {
       response = await this.send(`/task/${encodeURIComponent(uuid)}/download/all.zip`, {}, {
         method: "GET",
         redirect: "manual",
-        signal: controller.signal,
+        signal: options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
+        headers: options.headers,
       });
     } catch (error) {
       const detail = this.scrub(describeFailure(error, DOWNLOAD_HEADER_TIMEOUT_MS));
@@ -269,7 +288,7 @@ export class TaskClient {
         return { ok: false, failure: { kind: "unreachable", detail } };
       }
     }
-    if (response.status !== 200 || response.body === null) {
+    if ((response.status !== 200 && response.status !== 206) || response.body === null) {
       await response.body?.cancel();
       return this.badResponse(where, `HTTP ${response.status}, and no archive.`);
     }

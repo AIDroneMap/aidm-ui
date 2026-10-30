@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export type Route = "home" | "project" | "engines" | "sample" | "settings" | "wizard";
+export type Route = "home" | "project" | "run" | "engines" | "sample" | "settings" | "wizard";
 
 /** The five wizard screens, in order. Each has its own address so the back button and a link from settings work. */
 export const WIZARD_STEPS = ["welcome", "check", "engine", "install", "sample"] as const;
@@ -26,6 +26,7 @@ export function wizardStepFromHash(hash: string): WizardStep | null {
 export function routeFromHash(hash: string): Route {
   if (wizardStepFromHash(hash) !== null) return "wizard";
   if (/^#\/projects\/(new|[1-9]\d{0,14})$/.test(hash)) return "project";
+  if (/^#\/runs\/[1-9]\d{0,14}$/.test(hash)) return "run";
   if (hash === "#/settings") return "settings";
   if (hash === "#/sample") return "sample";
   return hash === "#/engines" ? "engines" : "home";
@@ -54,4 +55,8 @@ export function useWizardStep(): WizardStep {
 
 export function useProjectKey(): string {
   return useSyncExternalStore(subscribe, () => window.location.hash.slice("#/projects/".length), () => "new");
+}
+
+export function useRunKey(): string {
+  return useSyncExternalStore(subscribe, () => window.location.hash.slice("#/runs/".length), () => "");
 }

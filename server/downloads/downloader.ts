@@ -306,3 +306,50 @@ export async function downloadVerified(
   renameSync(part, target.path);
   return ended({ ok: true, path: target.path });
 }
+
+/** Streams an archive with no published digest. Its caller must validate the file before publishing it. */
+export async function downloadArchive(path: string, request: DownloadRequest, signal: AbortSignal): Promise<void> {
+  mkdirSync(dirname(path), { recursive: true });
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    signal.throwIfAborted();
+    const controller = new AbortController();
+    const combined = AbortSignal.any([signal, controller.signal]);
+    let idle = setTimeout(() => controller.abort(), DOWNLOAD_IDLE_MS);
+    let response: Response | undefined;
+    let file: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      const offset = existsSync(path) ? statSync(path).size : 0;
+      response = await request(offset > 0 ? { Range: `bytes=${offset}-` } : {}, combined);
+      if (response.body === null) throw new Error("Archive response has no body");
+      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
+      const resumed = response.status === 206 && offset > 0 && range !== null && Number(range[1]) === offset
+        && Number.isSafeInteger(Number(range[3])) && Number(range[2]) === Number(range[3]) - 1;
+      if (response.status !== 200 && !resumed) throw new Error("Invalid archive response range");
+      file = await open(path, resumed ? "a" : "w", 0o600);
+      let received = 0;
+      for await (const chunk of response.body) {
+        combined.throwIfAborted();
+        clearTimeout(idle);
+        idle = setTimeout(() => controller.abort(), DOWNLOAD_IDLE_MS);
+        let written = 0;
+        while (written < chunk.length) written += (await file.write(chunk, written, chunk.length - written)).bytesWritten;
+        received += chunk.length;
+      }
+      const length = response.headers.get("content-length");
+      if (length !== null && (!/^\d+$/.test(length) || received !== Number(length))) throw new Error("Incomplete archive response");
+      if (resumed && received + offset !== Number(range![3])) throw new Error("Incomplete archive range");
+      await file.sync();
+      return;
+    } catch (error) {
+      lastError = error;
+      signal.throwIfAborted();
+    } finally {
+      clearTimeout(idle);
+      controller.abort();
+      await response?.body?.cancel().catch(() => {});
+      await file?.close();
+    }
+  }
+  throw lastError;
+}

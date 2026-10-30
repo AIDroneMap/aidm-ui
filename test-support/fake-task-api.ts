@@ -35,6 +35,7 @@ function recordedInfo(): FakeInfo {
 }
 
 export interface FakeTask {
+  zipurl?: string;
   uuid: string;
   name: string;
   options: unknown;
@@ -77,6 +78,7 @@ export class FakeTaskApi {
   uploadDelayMs = 0;
   /** Milliseconds a cancel call waits before the engine acts on it, to make a cancel slow. */
   cancelDelayMs = 0;
+  resultsWait?: Promise<void>;
   private nextUuid = 1;
 
   private server: Bun.Server<undefined> | undefined;
@@ -155,7 +157,7 @@ export class FakeTaskApi {
       return Response.json({ ...this.info, taskQueueCount: base + active });
     }
     if (req.method === "GET" && url.pathname === "/options") return Response.json(this.options);
-    if (req.method === "POST" && url.pathname === "/task/new/init") return this.init(req);
+    if (req.method === "POST" && (url.pathname === "/task/new/init" || url.pathname === "/task/new")) return this.init(req);
     if (req.method === "POST" && url.pathname === "/task/cancel") return this.command(req, "cancel");
     if (req.method === "POST" && url.pathname === "/task/remove") return this.command(req, "remove");
 
@@ -181,6 +183,7 @@ export class FakeTaskApi {
       const task = this.tasks.get(path[2] as string);
       if (!task) return Response.json({ error: `${path[2]} not found` });
       if (path[4] !== "all.zip") return Response.json({ error: "Invalid asset" });
+      await this.resultsWait;
       if (task.results === null) return Response.json({ error: "Asset not ready" });
       return new Response(task.results as Uint8Array<ArrayBuffer>, {
         headers: { "content-type": "application/zip", "content-disposition": "attachment; filename=all.zip" },
@@ -200,6 +203,7 @@ export class FakeTaskApi {
     }
     if (method === "POST") {
       return (
+        pathname === "/task/new" ||
         pathname === "/task/new/init" ||
         pathname === "/task/cancel" ||
         pathname === "/task/remove" ||
@@ -247,7 +251,8 @@ export class FakeTaskApi {
       name: typeof name === "string" ? name : "",
       options,
       images: [],
-      committed: false,
+      committed: typeof form.get("zipurl") === "string",
+      ...(typeof form.get("zipurl") === "string" ? { zipurl: form.get("zipurl") as string } : {}),
       statusCode: 20,
       progress: 0,
       processingTime: -1,

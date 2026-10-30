@@ -466,9 +466,10 @@ test("the sample job completes on the local engine, end to end", async () => {
 
   engine.setTask(uuid, { statusCode: 20, processingTime: 2000, progress: 40 });
   await eventually(async () => (await getJson<RunView>(h, `/api/runs/${run.id}`)).state === "processing");
-  const results = new Uint8Array([80, 75, 3, 4, 9, 9, 9]);
+  const results = zip;
   engine.setTask(uuid, { statusCode: 40, processingTime: 9000, progress: 100, results });
   await eventually(async () => (await getJson<RunView>(h, `/api/runs/${run.id}`)).state === "completed");
+  await eventually(async () => (await getJson<RunView>(h, `/api/runs/${run.id}`)).resultsAvailable);
 
   const download = await send(h, "GET", `/api/runs/${run.id}/results`);
   expect(download.status).toBe(200);

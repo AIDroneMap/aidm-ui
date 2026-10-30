@@ -694,7 +694,24 @@ test("no start the manager makes carries a restart policy, whether it is the fir
 // Criterion: a run whose task went from processing back to queued shows it restarted.
 
 test("a task that goes from processing back to queued marks the run restarted, keeps it queued, and tells the page where the new output begins", async () => {
-  const h = start();
+  const held = gate();
+  let holdInfo = false;
+  let infoHeld = false;
+  cleanups.push(held.release);
+  const h = start({
+    runPollMs: 500,
+    runClientFor: (endpoint) => new TaskClient(endpoint, {
+      fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const response = await fetch(input, init);
+        if (holdInfo && new URL(String(input)).pathname.endsWith("/info")) {
+          holdInfo = false;
+          infoHeld = true;
+          await held.held;
+        }
+        return response;
+      }) as typeof fetch,
+    }),
+  });
   await installAndWaitReady(h);
   const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two", "old three"] });
   await eventually(async () => (await runView(h, runId)).state === "processing");
@@ -704,7 +721,10 @@ test("a task that goes from processing back to queued marks the run restarted, k
 
   // The task API restarted: the task is queued again and its output begins from line 0.
   podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { statusCode: 10, processingTime: -1, progress: 0, output: ["new one"] });
-  await eventually(async () => (await runView(h, runId)).restarted);
+  await eventually(async () => {
+    const run = await runView(h, runId);
+    return run.restarted && run.state === "queued";
+  });
   expect(await runView(h, runId)).toMatchObject({ state: "queued", restarted: true });
   await eventually(async () => (await logView(h, runId)).lines.length === 4);
   expect(await logView(h, runId)).toMatchObject({
@@ -715,9 +735,13 @@ test("a task that goes from processing back to queued marks the run restarted, k
 
   // It goes on from there, without repeating lines.
   const engine = podman(h).engine(CONTAINER_NAME);
+  holdInfo = true;
+  await eventually(async () => infoHeld);
   engine?.setTask(uuid, { statusCode: 20, processingTime: 1000, output: ["new one", "new two"] });
+  held.release();
   await eventually(async () => (await logView(h, runId)).lines.length === 5);
   expect((await logView(h, runId)).lines.slice(3)).toEqual(["new one", "new two"]);
+  await eventually(async () => (await runView(h, runId)).state === "processing");
   expect(await runView(h, runId)).toMatchObject({ state: "processing", restarted: true });
 });
 

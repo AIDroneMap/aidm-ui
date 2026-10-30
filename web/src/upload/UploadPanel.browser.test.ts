@@ -47,6 +47,8 @@ test("resumes after a connection cut and reload through the upload panel", async
       projectRequests++;
       json({ id: path.endsWith("/2") ? 2 : 1, name: completed ? "Survey updated" : "Survey", notes: "Saved notes", builtin: path.endsWith("/2") ? "sample" : null, photoCount: completed ? 1 : 0, runCount: 0, latestState: null, lastChange: "2024-01-01T00:00:00Z" }); return;
     }
+    if (path.endsWith("/link")) { json({ url: null, size: null, facts: null, factsRunId: null }); return; }
+    if (path.endsWith("/import")) { json({ available: true, state: "none", path: null, acceptedCount: 0, skippedCount: 0, groundControlCount: 0, files: [], nextOffset: null }); return; }
     if (path.endsWith("/photos")) { json({ files: completed ? [{ name: "flight.jpg", size: bytes.length, sha256: digest, kind: "photo" }] : [], nextOffset: null }); return; }
     const session = () => ({ id, chunkSize: 1024 * 1024, received: [...chunks.keys()], complete: completed });
     if (path.endsWith("/uploads") && request.method === "POST") {
@@ -192,7 +194,7 @@ test("resumes after a connection cut and reload through the upload panel", async
     await wait("document.querySelector('h1')?.textContent === 'Survey updated'");
     expect(await evaluate("document.querySelector('#project-name').value + '|' + document.querySelector('#project-notes').value")).toBe("Unsaved name|Unsaved notes");
     expect(await evaluate("document.querySelector('table').textContent.includes('2 MiB')")).toBe(true);
-    await evaluate(`(() => { const data = new DataTransfer(); data.items.add(new File(['x'], 'notes.txt')); data.items.add(new File(['x'], 'archive.zip')); document.querySelector('section').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
+    await evaluate(`(() => { const data = new DataTransfer(); data.items.add(new File(['x'], 'notes.txt')); data.items.add(new File(['x'], 'archive.zip')); document.querySelector('#upload-files').closest('section').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
     await wait("document.querySelector('summary')?.textContent.includes('Skipped files: 2')");
     expect(await evaluate("document.querySelector('[role=alert]').textContent.includes('later version')")).toBe(true);
     await focusByTab("document.activeElement.tagName === 'SUMMARY'");
@@ -219,7 +221,7 @@ test("resumes after a connection cut and reload through the upload panel", async
     expect(deletes).toBe(1);
     blocking = false;
     const beforeDrop = sent.length;
-    await evaluate(`(() => { const data = new DataTransfer(); const bytes = Uint8Array.from({ length: ${bytes.length} }, (_, index) => (index * 37 + 11) % 251); data.items.add(new File([bytes], 'flight.jpg')); document.querySelector('section').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
+    await evaluate(`(() => { const data = new DataTransfer(); const bytes = Uint8Array.from({ length: ${bytes.length} }, (_, index) => (index * 37 + 11) % 251); data.items.add(new File([bytes], 'flight.jpg')); document.querySelector('#upload-files').closest('section').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
     await new Promise<void>((resolve, reject) => {
       const deadline = Date.now() + 10000;
       const check = () => { if (completed) resolve(); else if (Date.now() > deadline) reject(new Error("Dropped file did not complete")); else setTimeout(check, 20); };
@@ -234,7 +236,7 @@ test("resumes after a connection cut and reload through the upload panel", async
       window.staleFileReads = 0;
       Object.defineProperty(file, 'size', { get() { window.staleFileReads++; return 7; } });
       Object.defineProperty(event, 'dataTransfer', { value: { items: [{ webkitGetAsEntry: () => ({ name: 'delayed.jpg', isFile: true, file(done) { window.finishDrop = () => done(file); } }) }], files: [] } });
-      document.querySelector('section').dispatchEvent(event);
+      document.querySelector('#upload-files').closest('section').dispatchEvent(event);
     })()`);
     expect(await evaluate("typeof window.finishDrop")).toBe("function");
     await evaluate("location.hash = '#/projects/new'");

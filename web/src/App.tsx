@@ -8,17 +8,19 @@ import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
 import { ProjectPage } from "./pages/ProjectPage.tsx";
+import { RunPage } from "./pages/RunPage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { SampleJobPage } from "./pages/SampleJobPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { WizardPage } from "./pages/WizardPage.tsx";
-import { useRoute } from "./router.ts";
+import { useRoute, useRunKey } from "./router.ts";
 import type { SessionView, WizardView } from "../../shared/api-types.ts";
 
 type Session = "loading" | "login" | "ready";
 
 function Screens() {
   const route = useRoute();
+  const runKey = useRunKey();
   const [session, setSession] = useState<Session>("loading");
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   // Null until the server says whether the first-run wizard is done.
@@ -72,6 +74,8 @@ function Screens() {
         <WizardPage onAuthRequired={() => setSession("login")} onCompleted={() => setWizardDone(true)} />
       ) : route === "project" ? (
         <ProjectPage onAuthRequired={() => setSession("login")} />
+      ) : route === "run" ? (
+        <RunPage key={runKey} runId={runKey} onAuthRequired={() => setSession("login")} />
       ) : route === "settings" ? (
         <SettingsPage onAuthRequired={() => setSession("login")} onWizardReopened={() => setWizardDone(false)} />
       ) : route === "engines" ? (

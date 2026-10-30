@@ -85,3 +85,12 @@ test("groups and presets have words and reasons match departures", () => {
   expect(Object.keys(messages).filter((key) => key.startsWith("group.")).sort()).toEqual([...groups].map((group) => `group.${group}`).sort());
   expect(Object.keys(messages).filter((key) => /^preset\.[^.]+\.(name|description)$/.test(key)).sort()).toEqual(PRESET_IDS.flatMap((preset) => [ `preset.${preset}.name`, `preset.${preset}.description` ]).sort());
 });
+
+test("all thirteen engine stages have a name and explanation", () => {
+  const stages = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"];
+  for (const stage of stages) {
+    expect(messages[`run.stage.${stage}.name`]).toBeTruthy();
+    expect(messages[`run.stage.${stage}.description`]).toBeTruthy();
+  }
+  expect(Object.keys(messages).filter((key) => key.startsWith("run.stage."))).toHaveLength(26);
+});

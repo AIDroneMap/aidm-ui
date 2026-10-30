@@ -17,7 +17,7 @@ export function ProjectList({ projects }: { projects: ProjectView[] }) {
       <thead><tr><th scope="col">{t("projects.name")}</th><th scope="col">{t("projects.photos")}</th><th scope="col">{t("projects.runs")}</th><th scope="col">{t("projects.latest")}</th><th scope="col">{t("projects.last_change")}</th></tr></thead>
       <tbody>{projects.map(project => <tr key={project.id}>
         <td><a href={`#/projects/${project.id}`}>{projectName(project)}</a></td>
-        <td>{project.photoCount}</td><td>{project.runCount}</td>
+        <td>{project.photoCount ?? t("run_start.not_reported")}</td><td>{project.runCount}</td>
         <td>{project.latestState === null ? t("projects.no_runs") : t(`run.state.${project.latestState}`)}</td>
         <td><time dateTime={project.lastChange}>{new Date(project.lastChange).toLocaleDateString()}</time></td>
       </tr>)}</tbody>

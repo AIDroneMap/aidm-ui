@@ -12,6 +12,10 @@ export class UploadStore {
   private readonly busy = new Set<string>();
   constructor(private readonly db: Database, private readonly folder: string) {}
 
+  hasSource(projectId: number): boolean {
+    return this.db.query("SELECT 1 FROM project_uploads WHERE project_id = ? LIMIT 1").get(projectId) !== null;
+  }
+
   create(projectId: number, input: UploadRequest): UploadSessionView {
     const existing = this.db.query("SELECT id FROM project_uploads WHERE project_id = ? AND name = ? AND size = ? AND sha256 = ?").get(projectId, input.name, input.size, input.sha256) as { id: string } | null;
     if (existing !== null) return this.get(projectId, existing.id)!;

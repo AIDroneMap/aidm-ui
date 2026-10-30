@@ -43,6 +43,7 @@ test("info reads the version, cores, memory and queue length", async () => {
       availableMemory: 59901734912,
       queueCount: 3,
       maxParallelTasks: 1,
+      maxImages: null,
     },
   });
 });
@@ -492,4 +493,14 @@ test("a value accepted locally still relays the engine's own creation error", as
     ok: false, failure: { kind: "engine_error", message: "Engine rejected this setting ***" },
   });
   expect(api.tasks.size).toBe(0);
+});
+
+test("a ZIP address creates an already submitted task without uploading photos", async () => {
+  const api = await startFake();
+  const url = "https://photos.example.test/flight.zip?signature=a%2Bb&expires=123";
+  const result = await clientFor(api).createLinkedTask("Linked flight", [{ name: "dsm", value: true }], url);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(api.tasks.get(result.value.uuid)).toMatchObject({ name: "Linked flight", zipurl: url, committed: true, images: [], options: [{ name: "dsm", value: true }] });
+  expect(api.requests.filter(request => request.method === "POST").map(request => request.path)).toEqual(["/task/new"]);
 });

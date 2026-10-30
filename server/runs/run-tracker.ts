@@ -4,8 +4,9 @@ import type { RunLogView, RunView } from "../../shared/api-types.ts";
 import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { readLogJson, stageStarted, summaryFromOutput, summaryLine } from "./run-summary.ts";
-import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure, type TaskApiResult } from "../task-api/task-client.ts";
+import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskApiFailure } from "../task-api/task-client.ts";
 import { isFinished, runStateFromTask } from "./run-state.ts";
+import { ResultArchives } from "../results/result-archives.ts";
 import type { RunPatch, RunRecord, RunStore } from "./run-store.ts";
 
 export const DEFAULT_RUN_POLL_INTERVAL_MS = 2000;
@@ -28,6 +29,7 @@ export interface RunUpdate extends RunPatch {
 }
 
 export interface RunTrackerDeps {
+  beginResultsWrite?: (projectId: number) => (() => void) | null;
   runs: RunStore;
   engines: EngineStore;
   dataFolder: string;
@@ -64,6 +66,7 @@ interface Following {
 
 /** Follows the tasks of runs on their engines, saves what they report, and tells whoever listens. */
 export class RunTracker {
+  readonly results: ResultArchives;
   private readonly runs: RunStore;
   private readonly engines: EngineStore;
   private readonly dataFolder: string;
@@ -88,6 +91,17 @@ export class RunTracker {
     this.logLine = deps.log;
     this.clientFor = deps.clientFor ?? ((endpoint) => new TaskClient(endpoint, { log: deps.log, unreachable: deps.unreachable }));
     this.taskFolder = deps.taskFolder ?? (() => null);
+    this.results = new ResultArchives({ runs: deps.runs, folder: deps.dataFolder, log: deps.log,
+      beginWrite: deps.beginResultsWrite ?? (() => () => {}),
+      changed: id => { const view = this.view(id); if (!this.stopped && view) this.emit(id, { type: "run", run: view }); },
+      request: run => async (headers, signal) => {
+        const engine = run.engineId === null ? null : this.engines.get(run.engineId);
+        if (engine === null || run.taskUuid === null) throw new Error("Results engine is unavailable");
+        const result = await this.clientFor({ address: engine.address, token: engine.token }).downloadResults(run.taskUuid, { headers, signal });
+        if (!result.ok) throw new Error("Results download failed");
+        return result.value;
+      },
+    });
   }
 
   /**
@@ -102,6 +116,7 @@ export class RunTracker {
       if (run.state === "created" || run.state === "uploading") this.abandon(run);
       else this.follow(run.id);
     }
+    for (const run of this.runs.completed()) this.results.ensure(run);
     this.timer = setInterval(() => {
       for (const runId of [...this.following.keys()]) void this.pollOnce(runId);
     }, this.intervalMs);
@@ -114,6 +129,7 @@ export class RunTracker {
     this.timer = undefined;
     this.following.clear();
     this.listeners.clear();
+    await this.results.stop();
   }
 
   /** Starts polling this run's task, at once and then every interval. */
@@ -133,6 +149,8 @@ export class RunTracker {
     });
     if (this.started) void this.pollOnce(runId);
   }
+
+  record(runId: number): RunRecord | null { return this.runs.get(runId); }
 
   view(runId: number): RunView | null {
     const run = this.runs.get(runId);
@@ -187,16 +205,8 @@ export class RunTracker {
       live.download = null;
       live.upload = null;
     }
+    if (record.state === "completed") this.results.ensure(record);
     this.emit(runId, { type: "run", run: this.viewOf(record) });
-  }
-
-  /** The engine's results archive for a completed run. */
-  async openResults(runId: number): Promise<TaskApiResult<Response> | null> {
-    const run = this.runs.get(runId);
-    if (run === null || run.state !== "completed" || run.taskUuid === null || run.engineId === null) return null;
-    const engine = this.engines.get(run.engineId);
-    if (engine === null) return null;
-    return this.clientFor({ address: engine.address, token: engine.token }).downloadResults(run.taskUuid);
   }
 
   private liveOf(runId: number): Live {
@@ -210,14 +220,19 @@ export class RunTracker {
 
   private viewOf(run: RunRecord): RunView {
     const live = this.live.get(run.id);
+    const results = this.results.view(run.id);
     return {
       id: run.id,
       projectId: run.projectId,
+      name: run.name,
+      preset: run.preset,
+      wayIn: run.wayIn,
+      sample: run.sample,
       engineId: run.engineId,
       engineName: run.engineId === null ? null : (this.engines.get(run.engineId)?.name ?? null),
       engineLocal: run.engineId !== null && this.engines.get(run.engineId)?.kind === "local",
       state: run.state,
-      step: live?.step ?? null,
+      step: results?.state === "fetching" ? "results" : live?.step ?? null,
       download: live?.download ?? null,
       upload: live?.upload ?? null,
       progress: run.progress,
@@ -225,7 +240,8 @@ export class RunTracker {
       problem: run.problem,
       restarted: run.restarted,
       restartedAtLine: run.restartedAtLine,
-      resultsAvailable: run.state === "completed" && run.taskUuid !== null,
+      resultsAvailable: results?.state === "ready",
+      ...(results ? { results } : {}),
       createdAt: run.createdAt,
     };
   }

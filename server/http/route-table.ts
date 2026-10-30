@@ -1,7 +1,11 @@
+import type { LinkStore } from "../projects/link-store.ts";
+import type { ProjectRuns } from "../projects/project-runs.ts";
+import type { ImportStore } from "../projects/import-store.ts";
 import { errorResponse } from "../../shared/api-error.ts";
 import { MAX_REQUEST_BODY_BYTES } from "./limits.ts";
 import type { ProjectStore } from "../projects/project-store.ts";
 import type { ProjectDeletion } from "../projects/project-deletion.ts";
+import type { PhotoStore } from "../photos/photo-store.ts";
 import type { UploadStore } from "../projects/upload-store.ts";
 import type { AuthHook, ClientInfo } from "../auth/hook.ts";
 import type { Sessions } from "../auth/sessions.ts";
@@ -35,7 +39,11 @@ export interface RouteContext {
   identity: InstanceIdentity;
   projects: ProjectStore;
   projectDeletion: ProjectDeletion;
+  links: LinkStore;
   uploads: UploadStore;
+  photos: PhotoStore;
+  imports: ImportStore;
+  projectRuns: ProjectRuns;
   assets: AssetMap;
   settings: Settings;
   sessions: Sessions;

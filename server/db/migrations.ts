@@ -7,6 +7,14 @@ import runRestartLineSql from "./migrations/0004-run-restart-line.sql" with { ty
 import projectMetadataSql from "./migrations/0005-project-metadata.sql" with { type: "text" };
 import projectUploadsSql from "./migrations/0006-project-uploads.sql" with { type: "text" };
 
+import photoFactsSql from "./migrations/0007-photo-facts.sql" with { type: "text" };
+import folderImportsSql from "./migrations/0008-folder-imports.sql" with { type: "text" };
+import runMetadataSql from "./migrations/0009-run-metadata.sql" with { type: "text" };
+
+import runResultsSql from "./migrations/0010-run-results.sql" with { type: "text" };
+
+import projectLinksSql from "./migrations/0011-project-links.sql" with { type: "text" };
+
 export interface Migration {
   version: number;
   name: string;
@@ -22,6 +30,11 @@ export const migrations: Migration[] = [
   { version: 4, name: "run-restart-line", sql: runRestartLineSql },
   { version: 5, name: "project-metadata", sql: projectMetadataSql },
   { version: 6, name: "project-uploads", sql: projectUploadsSql },
+  { version: 7, name: "photo-facts", sql: photoFactsSql },
+  { version: 8, name: "folder-imports", sql: folderImportsSql },
+  { version: 9, name: "run-metadata", sql: runMetadataSql },
+  { version: 10, name: "run-results", sql: runResultsSql },
+  { version: 11, name: "project-links", sql: projectLinksSql },
 ];
 
 function storedVersion(db: Database): number {

@@ -1,5 +1,4 @@
 import { errorResponse } from "../../shared/api-error.ts";
-import { failureResponse } from "../engines/routes.ts";
 import type { RouteContext, RouteTable } from "../http/route-table.ts";
 
 
@@ -23,6 +22,8 @@ export function runRoutes(ctx: RouteContext): RouteTable {
       POST: async (req) => {
         const id = parseId(req.params.id ?? "");
         if (id === null) return errorResponse(404, "run.not_found");
+        const preparation = await ctx.projectRuns.cancel(id);
+        if (preparation) return preparation.ok ? Response.json(preparation.value) : errorResponse(preparation.status, preparation.error.code, preparation.error.data);
         const outcome = await ctx.sample.cancel(id);
         return outcome.ok ? Response.json(outcome.run) : errorResponse(outcome.status, outcome.error.code, outcome.error.data);
       },
@@ -58,21 +59,48 @@ export function runRoutes(ctx: RouteContext): RouteTable {
     },
 
     "/api/runs/:id/results": {
+      GET: (req) => {
+        const run = tracker.record(Number(req.params.id));
+        if (!run) return errorResponse(404, "run.not_found");
+        return tracker.results.response(run, req) ?? errorResponse(409, "run.results_not_ready");
+      },
+      DELETE: async (req) => {
+        const run = tracker.record(Number(req.params.id));
+        if (!run) return errorResponse(404, "run.not_found");
+        if (run.state !== "completed" || !await tracker.results.delete(run)) return errorResponse(409, "run.results_not_ready");
+        return Response.json(tracker.view(run.id));
+      },
+      POST: (req) => {
+        const run = tracker.record(Number(req.params.id));
+        if (!run) return errorResponse(404, "run.not_found");
+        if (!tracker.results.ensure(run, true)) return errorResponse(409, "run.results_not_ready");
+        return Response.json(tracker.view(run.id), { status: 202 });
+      },
+    },
+    "/api/runs/:id/map": {
       GET: async (req) => {
         const id = parseId(req.params.id ?? "");
-        if (id === null || tracker.view(id) === null) return errorResponse(404, "run.not_found");
-        const opened = await tracker.openResults(id);
-        if (opened === null) return errorResponse(409, "run.results_not_ready");
-        if (!opened.ok) return failureResponse(opened.failure);
-        // The engine's body goes straight on, never held in memory here.
-        const headers = new Headers({
-          "Content-Type": "application/zip",
-          "Content-Disposition": 'attachment; filename="sample-job-results.zip"',
-          "Cache-Control": "no-store",
-        });
-        const length = opened.value.headers.get("content-length");
-        if (length !== null) headers.set("Content-Length", length);
-        return new Response(opened.value.body, { headers });
+        const run = id === null ? null : tracker.record(id);
+        if (!run) return errorResponse(404, "run.not_found");
+        return Response.json(await tracker.results.map(run), { headers: { "Cache-Control": "no-store" } });
+      },
+    },
+    "/api/runs/:id/outputs/:name": {
+      GET: (req) => {
+        const run = tracker.record(Number(req.params.id));
+        if (!run) return errorResponse(404, "run.not_found");
+        return tracker.results.response(run, req, req.params.name) ?? errorResponse(409, "run.results_not_ready");
+      },
+    },
+    "/api/runs/:id/tiles/:layer/:z/:x/:y": {
+      GET: (req) => {
+        const run = tracker.record(Number(req.params.id));
+        if (!run) return errorResponse(404, "run.not_found");
+        const layers: Record<string, string> = { orthophoto: "orthophoto_tiles", surface: "dsm_tiles", ground: "dtm_tiles" };
+        const layer = layers[req.params.layer ?? ""];
+        const { z, x, y } = req.params;
+        if (!layer || !/^\d{1,2}$/.test(z ?? "") || !/^\d{1,10}$/.test(x ?? "") || !/^\d{1,10}\.png$/.test(y ?? "")) return errorResponse(404, "api.not_found");
+        return tracker.results.response(run, req, undefined, `${layer}/${z}/${x}/${y}`) ?? errorResponse(409, "run.results_not_ready");
       },
     },
   };

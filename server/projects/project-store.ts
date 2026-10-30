@@ -9,7 +9,7 @@ export class ProjectStore {
 
   list(): Project[] {
     const rows = this.db.query(`SELECT p.id, p.name, p.notes, p.builtin,
-      p.photo_count AS photoCount,
+      CASE WHEN EXISTS (SELECT 1 FROM project_links l WHERE l.project_id = p.id) THEN NULL ELSE p.photo_count END AS photoCount,
       (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id) AS runCount,
       (SELECT state FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS latestState,
       MAX(p.updated_at, COALESCE((SELECT MAX(updated_at) FROM runs r WHERE r.project_id = p.id), p.updated_at)) AS lastChange
@@ -17,9 +17,17 @@ export class ProjectStore {
       ORDER BY lastChange DESC, p.id DESC`).all() as Project[];
     return rows.map((row) => ({
       ...row,
+      ...this.resultSizes(row.id),
       photoCount: row.builtin === "sample" ? this.sampleCount : row.photoCount,
       latestState: row.latestState === null || (RUN_STATES as readonly string[]).includes(row.latestState) ? row.latestState : "unknown",
     }));
+  }
+
+  private resultSizes(projectId: number): Pick<ProjectView, "resultsBytes" | "resultArchives"> {
+    const rows = this.db.query(`SELECT r.id AS runId, CAST(json_extract(a.details, '$.archiveSize') AS INTEGER) AS size
+      FROM runs r JOIN run_results a ON a.run_id = r.id
+      WHERE r.project_id = ? AND json_extract(a.details, '$.state') = 'ready' ORDER BY r.id`).all(projectId) as Array<{ runId: number; size: number }>;
+    return { resultsBytes: rows.reduce((sum, row) => sum + row.size, 0), resultArchives: rows };
   }
 
   sampleId(): number | null {

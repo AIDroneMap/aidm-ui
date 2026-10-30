@@ -1,3 +1,8 @@
+import { LinkStore } from "../projects/link-store.ts";
+import { ProjectRuns } from "../projects/project-runs.ts";
+import { RunInputs } from "../projects/run-inputs.ts";
+import { ImportStore } from "../projects/import-store.ts";
+import { PhotoStore } from "../photos/photo-store.ts";
 import { mkdirSync, realpathSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
@@ -142,7 +147,9 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const runStore = new RunStore(db);
     const projects = new ProjectStore(db, SAMPLE_DATASET.imageCount);
     const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
+    const imports = new ImportStore(db, dataFolder);
     const tracker = new RunTracker({
+    beginResultsWrite: id => projectDeletion.beginWrite(id),
       runs: runStore,
       engines: engineStore,
       dataFolder,
@@ -223,11 +230,18 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: log });
     let listener: Listener | undefined;
 
+    const links = new LinkStore(db);
+  const photos = new PhotoStore(db, dataFolder, imports);
+    const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
     const routes = createRoutes({
       identity,
       projects,
       projectDeletion,
-      uploads: new UploadStore(db, dataFolder),
+      links,
+    uploads: new UploadStore(db, dataFolder),
+      photos,
+      projectRuns,
+      imports,
       assets: options.assets,
       settings,
       sessions,
@@ -285,6 +299,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
           // No request can arrive once the listener is down, and nothing may use the database after it closes.
           await running.stop();
           await updateChecks.stop();
+          await projectRuns.stop();
           await sample.stop();
           await tracker.stop();
           // Stops following the log. The engine keeps running when aidm-ui stops.

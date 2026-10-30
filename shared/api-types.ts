@@ -69,6 +69,8 @@ export interface EngineInfoView {
   /** Tasks waiting or running on the engine. */
   queueCount: number | null;
   maxParallelTasks: number | null;
+  /** Undefined when unreported or invalid; null when the engine reports no limit. */
+  maxImages?: number | null;
 }
 
 export interface EngineView {
@@ -144,8 +146,18 @@ export interface RunDownloadView {
   lastRetry: ApiError | null;
 }
 
+export interface RunResultsView {
+  state: "fetching" | "ready" | "failed" | "deleted";
+  archiveSize: number | null;
+  outputs: Array<{ name: string; size: number }>;
+}
+
 export interface RunView {
   id: number;
+  name: string | null;
+  preset: string | null;
+  wayIn: "upload" | "import" | "link" | null;
+  sample: boolean;
   projectId: number;
   engineId: number | null;
   engineName: string | null;
@@ -153,7 +165,7 @@ export interface RunView {
   engineLocal: boolean;
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
-  step: "download" | "upload" | null;
+  step: "download" | "upload" | "results" | null;
   download: RunDownloadView | null;
   upload: { done: number; total: number } | null;
   /** The engine's own progress, 0 to 100, while it processes. */
@@ -168,6 +180,7 @@ export interface RunView {
   restartedAtLine: number | null;
   /** True when the results archive can be downloaded. */
   resultsAvailable: boolean;
+  results?: RunResultsView;
   createdAt: string;
 }
 
@@ -501,11 +514,13 @@ export interface ForceCpuRequest {
 
 /** Project facts shown in the list and project page. */
 export interface ProjectView {
+  resultsBytes?: number;
+  resultArchives?: Array<{ runId: number; size: number }>;
   id: number;
   name: string;
   notes: string;
   builtin: "sample" | null;
-  photoCount: number;
+  photoCount: number | null;
   runCount: number;
   latestState: RunState | null;
   /** Latest persisted metadata, source, or run update. */
@@ -517,3 +532,40 @@ export interface UploadRequest { name: string; size: number; sha256: string }
 export interface UploadSessionView { id: string; chunkSize: number; received: number[]; complete: boolean }
 export interface UploadedFileView { name: string; size: number; sha256: string; kind: "photo" | "mask" | "video" }
 export interface UploadedFilesView { files: UploadedFileView[]; nextOffset: number | null }
+
+export interface PhotoFlightView {
+  id: string;
+  make: string | null;
+  model: string | null;
+  clock: "camera" | "offset";
+  first: string;
+  last: string;
+  photoCount: number;
+  excludedPhotoCount: number;
+}
+export interface ProjectPhotoFactsView {
+  photoCount: number;
+  photoBytes: number;
+  duplicates: number;
+  videoCount: number;
+  withoutGps: number;
+  cameras: Array<{ make: string | null; model: string | null; photoCount: number }>;
+  bands: Array<{ name: string; photoCount: number }>;
+  dateSpans: Array<{ clock: "camera" | "offset"; first: string; last: string }>;
+  flights: PhotoFlightView[];
+  flightCount: number;
+  unassignedCount: number;
+  pendingMetadata: number;
+  nextOffset: number | null;
+}
+
+export interface FolderImportView {
+  available: boolean;
+  state: "none" | "ready" | "changed" | "missing";
+  path: string | null;
+  acceptedCount: number;
+  skippedCount: number;
+  groundControlCount: number;
+  files: Array<{ name: string; size: number; kind: "photo" | "mask" | "video" }>;
+  nextOffset: number | null;
+}

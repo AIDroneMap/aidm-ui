@@ -1,0 +1,9 @@
+CREATE TABLE project_links (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  url TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE run_link_sources (
+  run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+  source_hash TEXT NOT NULL
+) STRICT;

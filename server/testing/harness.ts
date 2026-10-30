@@ -1,3 +1,8 @@
+import { LinkStore } from "../projects/link-store.ts";
+import { ProjectRuns } from "../projects/project-runs.ts";
+import { RunInputs } from "../projects/run-inputs.ts";
+import { ImportStore } from "../projects/import-store.ts";
+import { PhotoStore } from "../photos/photo-store.ts";
 import { test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -182,7 +187,9 @@ export function openHarness(
   const runs = new RunStore(db);
   const projects = new ProjectStore(db, (options.sampleDataset ?? SAMPLE_DATASET).imageCount);
   const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
+  const imports = new ImportStore(db, dataFolder);
   const tracker = new RunTracker({
+    beginResultsWrite: id => projectDeletion.beginWrite(id),
     runs,
     engines: engineStore,
     dataFolder,
@@ -273,11 +280,18 @@ export function openHarness(
     log,
   });
 
+  const links = new LinkStore(db);
+  const photos = new PhotoStore(db, dataFolder, imports);
+  const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     projects,
     projectDeletion,
+    links,
     uploads: new UploadStore(db, dataFolder),
+    photos,
+    projectRuns,
+    imports,
     assets: options.assets ?? new Map(),
     settings,
     sessions,
@@ -341,6 +355,7 @@ export function openHarness(
       stopped = true;
       await listener?.stop();
       await updateChecks.stop();
+      await projectRuns.stop();
       await sample.stop();
       await tracker.stop();
       await localEngine.close();

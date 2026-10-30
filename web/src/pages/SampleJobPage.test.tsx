@@ -52,6 +52,7 @@ function renderIntro(view: SampleView = sample, overrides: Partial<SampleIntroPr
 }
 
 const run: RunView = {
+  name: null, preset: null, wayIn: null, sample: false,
   id: 7,
   projectId: 1,
   engineId: 1,
@@ -75,6 +76,7 @@ const runData = ["Barn engine", "line one\nline two"];
 function renderRun(view: Partial<RunView>, overrides: Partial<RunProgressProps> = {}): string {
   return renderToStaticMarkup(
     <RunProgress
+      stage={null}
       run={{ ...run, ...view }}
       lines={["line one", "line two"]}
       connectionLost={false}
@@ -323,6 +325,32 @@ test("a completed run offers the results", () => {
   expect(untranslatedText(html, runData)).toEqual([]);
 });
 
+test("fetching results keeps the run open without offering cancellation or downloads", () => {
+  const html = renderRun({ state: "completed", step: "results", resultsAvailable: false, results: { state: "fetching", archiveSize: null, outputs: [] } });
+  expect(html).toContain("Fetching results");
+  expect(html).not.toContain("Finished");
+  expect(html).not.toContain("Cancel run");
+  expect(html).not.toContain("Download the results");
+});
+
+test("ready results list the archive and available outputs with sizes", () => {
+  const html = renderRun({ state: "completed", resultsAvailable: true, results: { state: "ready", archiveSize: 2048, outputs: [{ name: "orthophoto", size: 1024 }, { name: "glb", size: 512 }] } });
+  expect(html).toContain('href="/api/runs/7/outputs/orthophoto"');
+  expect(html).toContain('href="/api/runs/7/outputs/glb"');
+  expect(html).toContain("Orthophoto");
+  expect(html).toContain("2 KiB");
+  expect(html).toContain("512 B");
+  expect(html).toContain("Delete results");
+});
+
+test("failed and deleted results do not offer downloads", () => {
+  const failed = renderRun({ state: "completed", results: { state: "failed", archiveSize: null, outputs: [] } });
+  expect(failed).toContain("Try fetching results again");
+  const deleted = renderRun({ state: "completed", results: { state: "deleted", archiveSize: null, outputs: [] } });
+  expect(deleted).toContain("Results deleted");
+  expect(deleted).not.toContain("/outputs/");
+});
+
 test("a completed run whose results are not ready offers no link", () => {
   const html = renderRun({ state: "completed", resultsAvailable: false });
   expect(html).not.toContain("/results");
@@ -349,4 +377,34 @@ test("the page has its own heading, and leaves it out when it sits inside a scre
   const inside = renderToStaticMarkup(<SampleJobPage onAuthRequired={() => {}} embedded />);
   expect(inside).not.toContain("<h1");
   expect(inside).toContain("Loading the sample job...");
+});
+
+test("the run page explains the current stage", () => {
+  const html = renderRun({ state: "processing" }, { stage: "odm_dem", lines: ["Running odm_dem stage"] });
+  expect(html).toContain("Make elevation models");
+  expect(html).toContain("surface and terrain models");
+});
+
+test("each engine stage is shown in translated words", () => {
+  const stages = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"];
+  const messages: Record<string, string> = en;
+  for (const stage of stages) {
+    const html = renderRun({ state: "processing" }, { stage: stage as RunProgressProps["stage"], lines: [`Running ${stage} stage`] });
+    expect(html).toContain(messages[`run.stage.${stage}.name`]!);
+    expect(html).toContain(messages[`run.stage.${stage}.description`]!);
+  }
+});
+
+test("a restart clears the previous stage until a new stage starts", () => {
+  const html = renderRun({ state: "processing", restarted: true }, { lines: ["Running odm_dem stage"], lineCount: 1, restartedAtLine: 1 });
+  expect(html).not.toContain("Make elevation models");
+});
+
+
+test("sample titles are translated and operator names remain data", () => {
+  const sampleHtml = renderRun({ name: "run.sample_name", sample: true });
+  expect(sampleHtml).toContain(en["run.sample_name"]);
+  expect(sampleHtml).not.toContain("run.sample_name");
+  const customHtml = renderRun({ name: "North field", sample: false });
+  expect(customHtml).toContain("North field");
 });
