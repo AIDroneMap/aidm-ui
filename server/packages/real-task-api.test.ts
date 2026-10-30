@@ -232,6 +232,45 @@ real(
     expect(projectAfter.resultsBytes).toBe(0);
     expect(projectAfter.resultArchives).toEqual([]);
 
+    const linkedProjectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Linked field", notes: "" }) });
+    expect(linkedProjectResponse.status).toBe(201);
+    const linkedProject = await linkedProjectResponse.json() as ProjectView;
+    const linkPath = `${h.base}/api/projects/${linkedProject.id}/link`;
+    const linkUrl = files.url("/linked-dataset.zip");
+    files.files.set("/linked-dataset.zip", bytes);
+    const selected = await fetch(linkPath, { method: "PUT", body: JSON.stringify({ url: linkUrl }) });
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toEqual({ url: linkUrl, size: bytes.length, facts: null, factsRunId: null });
+    expect(files.requests.filter(request => request.path === "/linked-dataset.zip").map(request => request.method)).toEqual(["HEAD"]);
+    expect(await (await fetch(linkPath)).json()).toEqual({ url: linkUrl, size: null, facts: null, factsRunId: null });
+
+    const linkedReviewResponse = await fetch(`${h.base}/api/projects/${linkedProject.id}/run-review?engineId=${engineId}&preset=quick-map&offset=0`);
+    expect(linkedReviewResponse.status).toBe(200);
+    const linkedReview = await linkedReviewResponse.json() as RunReviewView;
+    expect(linkedReview).toMatchObject({ wayIn: "link", photos: { included: null, excluded: null, total: null, bytes: null }, blocked: null });
+    const linkedStart = await fetch(`${h.base}/api/projects/${linkedProject.id}/runs`, {
+      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Linked field", revision: linkedReview.revision }),
+    });
+    expect(linkedStart.status).toBe(202);
+    const linkedRun = await linkedStart.json() as RunView;
+    expect(linkedRun).toMatchObject({ projectId: linkedProject.id, wayIn: "link", upload: null });
+    let linkedCompleted: RunView | undefined;
+    await eventually(async () => {
+      linkedCompleted = await (await fetch(`${h.base}/api/runs/${linkedRun.id}`)).json() as RunView;
+      return linkedCompleted.resultsAvailable || linkedCompleted.state === "failed" || linkedCompleted.results?.state === "failed";
+    }, 240_000);
+    expect(linkedCompleted).toMatchObject({ state: "completed", resultsAvailable: true, results: { state: "ready" } });
+    expect(files.requests.filter(request => request.path === "/linked-dataset.zip").map(request => request.method)).toEqual(["HEAD", "HEAD", "GET"]);
+    const linkedArchiveResponse = await fetch(`${h.base}/api/runs/${linkedRun.id}/results`);
+    expect(linkedArchiveResponse.status).toBe(200);
+    const linkedArchive = Buffer.from(await linkedArchiveResponse.arrayBuffer());
+    const images = JSON.parse(archiveEntry(linkedArchive, "images.json").toString()) as unknown;
+    expect(images).toMatchObject([{ filename: "DJI_0028.JPG", camera_make: "DJI", camera_model: "FC300S", width: 4000, height: 2250 }]);
+    expect(await (await fetch(linkPath)).json()).toEqual({
+      url: linkUrl, size: null, factsRunId: linkedRun.id,
+      facts: { photoCount: 1, withoutGps: 0, cameras: [{ make: "DJI", model: "FC300S", photoCount: 1 }], dimensions: [{ width: 4000, height: 2250, photoCount: 1 }] },
+    });
+
     const projectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Uploaded field", notes: "" }) });
     expect(projectResponse.status).toBe(201);
     const uploadedProject = await projectResponse.json() as ProjectView;

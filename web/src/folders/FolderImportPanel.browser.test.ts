@@ -22,6 +22,7 @@ test("folder availability, relinking and stale page responses", async () => {
     if (url.pathname === "/fixture.css") { res.setHeader("content-type", "text/css"); res.end(styles); return; }
     if (url.pathname === "/fixture.js") { res.writeHead(200, { "content-type": "text/javascript" }); res.end(await readFile(join(dir, "fixture.js"))); return; }
     if (/^\/api\/projects\/\d+$/.test(url.pathname)) { json({ id: Number(url.pathname.split("/").pop()), name: "Survey", notes: "Saved", builtin: null, photoCount: state === "none" ? 0 : 51, runCount: 0, latestState: null, lastChange: "2024-01-01T00:00:00Z" }); return; }
+    if (url.pathname.endsWith("/link")) { json({ url: null, size: null, facts: null, factsRunId: null }); return; }
     if (url.pathname.endsWith("/import")) {
       if (req.method === "PUT") { const parts: Buffer[] = []; for await (const part of req) parts.push(Buffer.from(part)); submitted = JSON.parse(Buffer.concat(parts).toString()).path; state = "ready"; json(source()); return; }
       if (url.searchParams.get("offset") === "50") { const old = source(50); held = () => json(old); return; }

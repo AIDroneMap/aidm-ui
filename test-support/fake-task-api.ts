@@ -35,6 +35,7 @@ function recordedInfo(): FakeInfo {
 }
 
 export interface FakeTask {
+  zipurl?: string;
   uuid: string;
   name: string;
   options: unknown;
@@ -155,7 +156,7 @@ export class FakeTaskApi {
       return Response.json({ ...this.info, taskQueueCount: base + active });
     }
     if (req.method === "GET" && url.pathname === "/options") return Response.json(this.options);
-    if (req.method === "POST" && url.pathname === "/task/new/init") return this.init(req);
+    if (req.method === "POST" && (url.pathname === "/task/new/init" || url.pathname === "/task/new")) return this.init(req);
     if (req.method === "POST" && url.pathname === "/task/cancel") return this.command(req, "cancel");
     if (req.method === "POST" && url.pathname === "/task/remove") return this.command(req, "remove");
 
@@ -200,6 +201,7 @@ export class FakeTaskApi {
     }
     if (method === "POST") {
       return (
+        pathname === "/task/new" ||
         pathname === "/task/new/init" ||
         pathname === "/task/cancel" ||
         pathname === "/task/remove" ||
@@ -247,7 +249,8 @@ export class FakeTaskApi {
       name: typeof name === "string" ? name : "",
       options,
       images: [],
-      committed: false,
+      committed: typeof form.get("zipurl") === "string",
+      ...(typeof form.get("zipurl") === "string" ? { zipurl: form.get("zipurl") as string } : {}),
       statusCode: 20,
       progress: 0,
       processingTime: -1,

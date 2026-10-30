@@ -1,3 +1,4 @@
+import { LinkStore } from "../projects/link-store.ts";
 import { ProjectRuns } from "../projects/project-runs.ts";
 import { RunInputs } from "../projects/run-inputs.ts";
 import { ImportStore } from "../projects/import-store.ts";
@@ -229,13 +230,15 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: log });
     let listener: Listener | undefined;
 
-    const photos = new PhotoStore(db, dataFolder, imports);
-    const projectRuns = new ProjectRuns({ projects, projectDeletion, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
+    const links = new LinkStore(db);
+  const photos = new PhotoStore(db, dataFolder, imports);
+    const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
     const routes = createRoutes({
       identity,
       projects,
       projectDeletion,
-      uploads: new UploadStore(db, dataFolder),
+      links,
+    uploads: new UploadStore(db, dataFolder),
       photos,
       projectRuns,
       imports,
