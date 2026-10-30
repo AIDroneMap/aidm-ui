@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open an archived textured 3D model on demand, with mouse, touch and keyboard controls. Evidence: `docs/testing/result-model.md`, the textured Chromium fixture and the run-page availability test. Closes #77.
+
 - Open retained orthophoto and elevation tiles on an offline map, with result coordinates, a scale bar and keyboard controls. Evidence: archive georeferencing and map-route tests, the real Chromium map fixture, and the existing hosted task API acceptance. See `docs/testing/result-map.md`. Closes #75.
 - Projects can use a checked ZIP address that the engine fetches when a run starts. Photo details come from the retained results, without copying photos through the interface. Evidence: `docs/testing/linked-photos.md` and its route, archive and browser tests.
 

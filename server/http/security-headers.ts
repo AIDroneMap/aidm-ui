@@ -4,7 +4,7 @@ const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob:",
   "style-src 'self'",
   "script-src 'self'",
-  "connect-src 'self'",
+  "connect-src 'self' blob: data:",
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "form-action 'self'",
