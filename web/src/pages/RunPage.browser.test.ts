@@ -9,7 +9,9 @@ import { findBrowserPage } from "../controls/browser-target.ts";
 test("project archive links open the requested run, including after a reload", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-run-page-"));
   const requests: string[] = [];
-  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "worker-url", setup(builder) {
+  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "viewer-assets", setup(builder) {
+    builder.onResolve({ filter: /draco_(wasm_wrapper\.js|decoder\.wasm)\?url$/ }, args => ({ path: args.path, namespace: "decoder-assets" }));
+    builder.onLoad({ filter: /.*/, namespace: "decoder-assets" }, args => ({ contents: `export default ${JSON.stringify(`/decoder/${args.path.includes("wrapper") ? "draco_wasm_wrapper.js" : "draco_decoder.wasm"}`)}`, loader: "js" }));
     builder.onResolve({ filter: /maplibre-gl-worker\.mjs\?url$/ }, () => ({ path: "worker-url", namespace: "fixture" }));
     builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: 'export default "/map-worker.mjs"', loader: "js" }));
   } }] });
@@ -25,7 +27,7 @@ test("project archive links open the requested run, including after a reload", a
     if (path === "/api/runs/9") return Response.json({ error: { code: "run.not_found", data: {} } }, { status: 404 });
     if (/^\/api\/runs\/[78]$/.test(path)) {
       const id = Number(path.split("/").at(-1));
-      return Response.json({ id, projectId: 1, engineId: 1, createdAt: "2026-10-26T10:00:00Z", name: `Flight ${id}`, preset: null, wayIn: null, sample: false, engineName: null, engineLocal: false, state: "completed", step: null, download: null, upload: null, progress: null, engineMessage: null, problem: null, restarted: false, restartedAtLine: null, resultsAvailable: true, results: { state: "ready", archiveSize: id === 7 ? 1024 : 2048, outputs: [{ name: "glb", size: 512 }] } });
+      return Response.json({ id, projectId: 1, engineId: 1, createdAt: "2026-10-26T10:00:00Z", name: `Flight ${id}`, preset: null, wayIn: null, sample: false, engineName: null, engineLocal: false, state: "completed", step: null, download: null, upload: null, progress: null, engineMessage: null, problem: null, restarted: false, restartedAtLine: null, resultsAvailable: true, results: { state: "ready", archiveSize: id === 7 ? 1024 : 2048, outputs: id === 7 ? [{ name: "glb", size: 512 }] : [{ name: "orthophoto", size: 512 }] } });
     }
     if (path.endsWith("/log")) return Response.json({ lines: [], next: 0, restartedAtLine: null });
     if (path.endsWith("/events")) return new Response("", { headers: { "content-type": "text/event-stream" } });
@@ -54,9 +56,11 @@ test("project archive links open the requested run, including after a reload", a
     expect(await evaluate("document.querySelector('a[href=\"#/projects/1\"]')?.textContent")).toBe("Back to project");
     expect(await evaluate("!document.body.textContent.includes('Start again')")).toBe(true);
     expect(requests).toContain("/api/runs/7");
+    expect(await evaluate("Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Open the 3D model')")).toBe(true);
     await evaluate("location.hash = '#/runs/8'");
     await wait("document.body.textContent.includes('Flight 8')");
     expect(await evaluate("!document.body.textContent.includes('Flight 7')")).toBe(true);
+    expect(await evaluate("!Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Open the 3D model')")).toBe(true);
     await send("Page.reload");
     await wait("document.body.textContent.includes('Flight 8')");
     expect(requests.filter(path => path === "/api/runs/8").length).toBeGreaterThanOrEqual(2);

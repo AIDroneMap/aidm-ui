@@ -1,0 +1,204 @@
+import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { browserPath } from "../controls/browser-path.ts";
+import { startBrowser } from "../controls/browser-start.ts";
+import { findBrowserPage } from "../controls/browser-target.ts";
+
+import { withSecurityHeaders } from "../../../server/http/security-headers.ts";
+import { texturedGlb as glb } from "../../../test-support/textured-glb.ts";
+import { dracoGlb } from "../../../test-support/draco-glb.ts";
+
+test("opens a model on demand, handles interaction and rejects unsafe resources", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aidm-model-page-"));
+  const build = await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "decoder-assets", setup(builder) {
+    builder.onResolve({ filter: /draco_(wasm_wrapper\.js|decoder\.wasm)\?url$/ }, args => ({ path: args.path, namespace: "decoder-assets" }));
+    builder.onLoad({ filter: /.*/, namespace: "decoder-assets" }, args => ({ contents: `export default ${JSON.stringify(`/decoder/${args.path.includes("wrapper") ? "draco_wasm_wrapper.js" : "draco_decoder.wasm"}`)}`, loader: "js" }));
+  } }] });
+  expect(build.success).toBe(true);
+  let output = glb();
+  let failed = false;
+  let responseGate: Promise<void> | undefined;
+  let decoderGate: Promise<void> | undefined;
+  let releaseDocument: (() => void) | undefined;
+  const requests: string[] = [];
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
+    const path = new URL(request.url).pathname; requests.push(path);
+    if (path === "/") return withSecurityHeaders(new Response(new ReadableStream({ async start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode("<!doctype html><html><head>"));
+      await new Promise<void>(resolve => { releaseDocument = resolve; });
+      controller.enqueue(encoder.encode('</head><body><div id="root"></div><script type="module" src="/fixture.js"></script></body></html>'));
+      controller.close();
+    } }), { headers: { "content-type": "text/html" } }));
+    if (path === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
+    if (path === "/decoder/draco_wasm_wrapper.js" || path === "/decoder/draco_decoder.wasm") {
+      if (decoderGate) await decoderGate;
+      return new Response(Bun.file(`node_modules/three/examples/jsm/libs/draco/gltf/${path.split("/").at(-1)}`));
+    }
+    if (path === "/api/runs/7/outputs/glb") {
+      if (responseGate) await responseGate;
+      return failed ? new Response(null, { status: 500 }) : new Response(output);
+    }
+    return new Response(null, { status: 404 });
+  } });
+  let browser: Awaited<ReturnType<typeof startBrowser>> | undefined;
+  let socket: WebSocket | undefined;
+  try {
+    browser = await startBrowser(await browserPath(), directory, "about:blank");
+    socket = new WebSocket((await findBrowserPage(Number(browser.port))).webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => { socket!.onopen = () => resolve(); socket!.onerror = () => reject(new Error("Browser connection failed")); });
+    let id = 0;
+    let evaluating = "opening the browser";
+    const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+    socket.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      const entry = pending.get(message.id);
+      if (!entry) return;
+      clearTimeout(entry.timer); pending.delete(message.id);
+      if (message.error) entry.reject(new Error(message.error.message));
+      else entry.resolve(message);
+    };
+    socket.onclose = () => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error("Browser connection closed")); } pending.clear(); };
+    const send = (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+      const next = ++id;
+      const timer = setTimeout(() => { pending.delete(next); reject(new Error(`Browser command ${method} timed out while ${evaluating}. Requests: ${JSON.stringify(requests)}. ${browser?.diagnostics()}`)); }, 12000);
+      pending.set(next, { resolve, reject, timer });
+      socket!.send(JSON.stringify({ id: next, method, params }));
+    });
+    const evaluate = async (expression: string) => {
+      evaluating = expression.slice(0, 400);
+      const answer = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+      if (answer.result.exceptionDetails) throw new Error(JSON.stringify(answer.result.exceptionDetails));
+      return answer.result.result.value;
+    };
+    const wait = async (expression: string) => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (await evaluate(`(async () => Boolean(await (${expression})))()`)) return;
+        await Bun.sleep(20);
+      }
+      throw new Error(`Waiting for ${expression.slice(0, 400)}. Requests: ${JSON.stringify(requests)}. Page: ${await evaluate("document.body.innerText")} ${browser?.diagnostics()}`);
+    };
+    const click = (text: string) => evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === ${JSON.stringify(text)}).click()`);
+    await send("Network.enable");
+    await send("Page.enable");
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => { const Original = window.Worker; const revoke = URL.revokeObjectURL.bind(URL); window.activeDecoderWorkers = 0; window.createdDecoderWorkers = 0; window.decoderWorkerUrls = new Set(); URL.revokeObjectURL = url => { window.decoderWorkerUrls.delete(url); revoke(url); }; window.Worker = class extends Original { constructor(...args) { super(...args); window.activeDecoderWorkers++; window.createdDecoderWorkers++; window.decoderWorkerUrls.add(String(args[0])); } terminate() { window.activeDecoderWorkers--; return super.terminate(); } }; })()` });
+    const network: string[] = [];
+    socket.addEventListener("message", event => { const message = JSON.parse(String(event.data)); if (message.method === "Network.requestWillBeSent") network.push(message.params.request.url); });
+    await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
+    expect(await evaluate("document.body === null")).toBe(true);
+    const readiness = wait("document.body && document.body.textContent.includes('Open the 3D model')").then(() => null, error => error);
+    await evaluate("true");
+    expect(releaseDocument).toBeDefined();
+    releaseDocument!();
+    const readinessError = await readiness;
+    if (readinessError) throw readinessError;
+    expect(requests).not.toContain("/api/runs/7/outputs/glb");
+    await click("Open the 3D model");
+    await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
+    expect(requests.filter(path => path === "/api/runs/7/outputs/glb")).toHaveLength(1);
+    await wait(`(async () => { const image = new Image(); image.src = document.querySelector('canvas').toDataURL(); await image.decode(); const copy = document.createElement('canvas'); copy.width = image.width; copy.height = image.height; const context = copy.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, copy.width, copy.height).data; for (let i = 0; i < pixels.length; i += 4) if (Math.abs(pixels[i] - pixels[i + 1]) > 40 || Math.abs(pixels[i + 1] - pixels[i + 2]) > 40) return true; return false; })()`);
+
+    const image = () => evaluate("document.querySelector('canvas').toDataURL()");
+    let before = await image();
+    await evaluate("document.querySelector('canvas').focus(); document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowLeft', bubbles:true}))");
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await evaluate("document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', shiftKey:true, bubbles:true}))");
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await evaluate("document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'+', bubbles:true}))");
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await evaluate("document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'-', bubbles:true}))");
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    const rect = await evaluate("(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()");
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "left", buttons: 1, clickCount: 1 });
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x + 60, y: rect.y + 20, button: "left", buttons: 1 });
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x + 60, y: rect.y + 20, button: "left", buttons: 0, clickCount: 1 });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await send("Input.dispatchMouseEvent", { type: "mouseWheel", x: rect.x, y: rect.y, deltaX: 0, deltaY: 100 });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "right", buttons: 2, clickCount: 1 });
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x + 35, y: rect.y + 15, button: "right", buttons: 2 });
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x + 35, y: rect.y + 15, button: "right", buttons: 0, clickCount: 1 });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    await click("Reset view");
+    before = await image();
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: rect.x - 30, y: rect.y, id: 1 }, { x: rect.x + 30, y: rect.y, id: 2 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: rect.x - 55, y: rect.y, id: 1 }, { x: rect.x + 55, y: rect.y, id: 2 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: rect.x - 30, y: rect.y, id: 1 }, { x: rect.x + 30, y: rect.y, id: 2 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: rect.x - 10, y: rect.y + 20, id: 1 }, { x: rect.x + 50, y: rect.y + 20, id: 2 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    before = await image();
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: rect.x, y: rect.y, id: 1 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: rect.x + 70, y: rect.y + 30, id: 1 }] });
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await Bun.sleep(150); expect(await image()).not.toBe(before);
+    await click("Close the 3D model");
+    output = dracoGlb();
+    let releaseDecoder!: () => void;
+    decoderGate = new Promise<void>(resolve => { releaseDecoder = resolve; });
+    await click("Open the 3D model");
+    const decoderDeadline = Date.now() + 3000;
+    while (!requests.includes("/decoder/draco_decoder.wasm") && Date.now() < decoderDeadline) await Bun.sleep(10);
+    expect(requests).toContain("/decoder/draco_decoder.wasm");
+    await click("Close the 3D model");
+    releaseDecoder(); decoderGate = undefined;
+    await wait("window.createdDecoderWorkers > 0 && window.activeDecoderWorkers === 0 && window.decoderWorkerUrls.size === 0");
+    await click("Open the 3D model");
+    await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
+    await wait(`(async () => { const image = new Image(); image.src = document.querySelector('canvas').toDataURL(); await image.decode(); const copy = document.createElement('canvas'); copy.width = image.width; copy.height = image.height; const context = copy.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, copy.width, copy.height).data; for (let i = 0; i < pixels.length; i += 4) if (Math.abs(pixels[i] - pixels[i + 1]) > 40 || Math.abs(pixels[i + 1] - pixels[i + 2]) > 40) return true; return false; })()`);
+    await click("Close the 3D model");
+    await wait("window.activeDecoderWorkers === 0 && window.decoderWorkerUrls.size === 0");
+    expect(await evaluate("document.querySelector('canvas') === null")).toBe(true);
+    output = glb();
+    const pngStart = output.findIndex((byte, index) => byte === 137 && output[index + 1] === 80 && output[index + 2] === 78 && output[index + 3] === 71);
+    output[pngStart] = 0;
+    await click("Open the 3D model");
+    await wait("document.body.textContent.includes('The 3D model could not be opened.')");
+    await click("Close the 3D model");
+    output = glb(true);
+    await click("Open the 3D model");
+    await wait("document.body.textContent.includes('The 3D model could not be opened.')");
+    await click("Close the 3D model");
+    failed = true;
+    await click("Open the 3D model");
+    await wait("document.body.textContent.includes('The 3D model could not be opened.')");
+    expect(network.filter(url => !url.startsWith(`http://127.0.0.1:${server.port}/`) && !url.startsWith("data:") && !url.startsWith("blob:"))).toEqual([]);
+    await click("Close the 3D model");
+    failed = false;
+    output = new Uint8Array([1, 2, 3]);
+    await click("Open the 3D model");
+    await wait("document.body.textContent.includes('The 3D model could not be opened.')");
+    await click("Close the 3D model");
+    output = glb();
+    await click("Open the 3D model");
+    await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
+    await click("Reset view");
+    await click("Close the 3D model");
+    let release!: () => void;
+    responseGate = new Promise<void>(resolve => { release = resolve; });
+    const count = requests.filter(path => path === "/api/runs/7/outputs/glb").length;
+    await click("Open the 3D model");
+    const deadline = Date.now() + 3000;
+    while (requests.filter(path => path === "/api/runs/7/outputs/glb").length === count && Date.now() < deadline) await Bun.sleep(10);
+    expect(requests.filter(path => path === "/api/runs/7/outputs/glb").length).toBe(count + 1);
+    await click("Close the 3D model");
+    release(); responseGate = undefined;
+    await click("Open the 3D model");
+    await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
+    expect(await evaluate("document.querySelectorAll('canvas').length")).toBe(1);
+    await click("Close the 3D model");
+    expect(await evaluate("document.querySelector('canvas') === null")).toBe(true);
+  } finally { releaseDocument?.(); socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }
+}, 30000);
