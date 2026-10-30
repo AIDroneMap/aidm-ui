@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Open an archived textured 3D model, including Draco-compressed geometry, on demand, with mouse, touch and keyboard controls. Evidence: `docs/testing/result-model.md`, the textured Chromium fixture and the run-page availability test. Closes #77.
+- Wait for result tile requests after a basemap failure. Evidence: the delayed request observation in `web/src/basemap/Basemap.browser.test.ts`. Closes #101.
 - Wait for sample results before deleting the project in both restart fixtures. Evidence: delayed archive responses in `server/sample/sample-job.test.ts`. Closes #99.
 
 - Add an optional raster basemap with a saved tile template, XYZ or TMS numbering, and plain-text attribution. It stays off until enabled and reports tile failures while the results remain visible. Evidence: settings and origin-policy tests plus the Chromium basemap fixture in `docs/testing/basemap.md`. Closes #76.
