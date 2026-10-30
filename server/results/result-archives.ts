@@ -70,11 +70,22 @@ export class ResultArchives {
     try {
       await mkdir(join(path, ".."), { recursive: true });
       // A crash after the rename can leave a complete file before the ready record.
-      let entries: ArchiveEntry[];
-      if (existsSync(path)) entries = await readArchive(path, this.controller.signal);
-      else {
+      let entries: ArchiveEntry[] | undefined;
+      if (existsSync(path)) {
+        try { entries = await readArchive(path, this.controller.signal); }
+        catch {
+          this.controller.signal.throwIfAborted();
+          await rm(path, { force: true });
+        }
+      }
+      if (entries === undefined) {
         await downloadArchive(part, this.deps.request(run), this.controller.signal);
-        entries = await readArchive(part, this.controller.signal);
+        try { entries = await readArchive(part, this.controller.signal); }
+        catch (error) {
+          this.controller.signal.throwIfAborted();
+          await rm(part, { force: true });
+          throw error;
+        }
         this.controller.signal.throwIfAborted();
         await rename(part, path);
       }

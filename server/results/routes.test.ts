@@ -130,3 +130,18 @@ test("fetching holds the project deletion gate and shutdown aborts the archive r
   await h.stop();
   expect(aborted).toBe(true);
 });
+
+test("retry replaces a damaged saved archive with a fresh download", async () => {
+  const { run, project, bytes } = await completedRun();
+  h.tracker.follow(run.id);
+  await eventually(async () => (await view(run.id)).resultsAvailable);
+  const stored = join(h.dataFolder, "projects", String(project.id), "runs", String(run.id), "results.zip");
+  await Bun.write(stored, bytes.slice(0, 20));
+  expect((await view(run.id)).results?.state).toBe("failed");
+  const before = fake.requests.filter(request => request.path.endsWith("/download/all.zip")).length;
+  expect((await fetch(`${h.base}/api/runs/${run.id}/results`, { method: "POST" })).status).toBe(202);
+  await eventually(async () => (await view(run.id)).resultsAvailable);
+  expect(fake.requests.filter(request => request.path.endsWith("/download/all.zip"))).toHaveLength(before + 1);
+  expect(new Uint8Array(await Bun.file(stored).arrayBuffer())).toEqual(bytes);
+  expect(await (await fetch(`${h.base}/api/runs/${run.id}/outputs/glb`)).text()).toBe("glb bytes");
+});
