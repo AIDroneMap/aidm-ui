@@ -51,7 +51,7 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     await evaluate("document.querySelector('section button').focus()");
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
     await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
-    await wait("document.querySelector('.maplibregl-canvas') && document.body.textContent.includes('Map center, latitude:')");
+    await wait("document.querySelector('.maplibregl-canvas') && document.body.textContent.includes('Map centre, latitude:')");
     await wait("performance.getEntriesByType('resource').some(entry => entry.name.includes('/tiles/'))");
     await wait("!document.querySelector('fieldset').disabled");
     expect(await evaluate("document.querySelectorAll('fieldset input').length")).toBe(2);
@@ -93,7 +93,7 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     await wait("document.querySelector('section [role=status]')?.textContent.includes('A map is not available')");
     release?.();
     await evaluate("new Promise(resolve => setTimeout(resolve, 100))");
-    expect(await evaluate("!document.body.textContent.includes('Map center, latitude:') && !document.querySelector('.maplibregl-canvas')")).toBe(true);
+    expect(await evaluate("!document.body.textContent.includes('Map centre, latitude:') && !document.querySelector('.maplibregl-canvas')")).toBe(true);
     await send("Page.reload");
     await wait("document.querySelector('section button')");
     expect(await evaluate("!document.querySelector('.maplibregl-canvas')")).toBe(true);
