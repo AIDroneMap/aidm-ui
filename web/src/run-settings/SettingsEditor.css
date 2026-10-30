@@ -1,0 +1,11 @@
+.settings-editor { display: grid; gap: var(--space-4); min-width: 0; }
+.settings-editor details { min-width: 0; }
+.settings-editor-row { border-top: 1px solid var(--color-border); padding: var(--space-3) 0; min-width: 0; overflow-wrap: anywhere; }
+.settings-editor-row-nested { margin-inline-start: var(--space-6); }
+.settings-editor-row p { margin: var(--space-2) 0; }
+.settings-editor-row small { color: var(--color-hint); }
+.settings-editor-row dd { margin: 0 0 var(--space-2); }
+.settings-editor-row input, .settings-editor-row select { max-width: 100%; }
+.settings-editor-error { color: var(--color-error-text); }
+.settings-editor-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.settings-editor :focus-visible { outline: var(--focus-ring); outline-offset: 2px; }

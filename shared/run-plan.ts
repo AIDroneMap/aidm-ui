@@ -14,7 +14,7 @@ export interface PresetPlan {
   outputs: RunOutput[];
 }
 
-export function planPreset(preset: PresetId, options: readonly ReconciledOption[]): PresetPlan {
+export function planPreset(preset: PresetId, options: readonly ReconciledOption[], edits: readonly { name: string; value: OptionValue }[] = []): PresetPlan {
   const supported = new Set(options.map((option) => option.name));
   const presetOptions = OPTION_CATALOGUE.flatMap((option) => {
     if (option.bin !== "shown") return [];
@@ -23,6 +23,7 @@ export function planPreset(preset: PresetId, options: readonly ReconciledOption[
   });
   const unsupportedPresetOptions = presetOptions.filter((option) => !supported.has(option.name));
   const overrides = new Map(presetOptions.filter((option) => supported.has(option.name)).map(({ name, value }) => [name, value]));
+  for (const edit of edits) if (supported.has(edit.name)) overrides.set(edit.name, edit.value);
   const effectiveOptions = options.map((option) => ({ name: option.name, value: overrides.get(option.name) ?? option.defaultValue }));
   const departures = options.flatMap((option) => {
     const value = overrides.get(option.name);

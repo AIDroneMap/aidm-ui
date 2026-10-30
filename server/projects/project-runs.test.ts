@@ -286,3 +286,75 @@ test("cancelling linked creation waits for its identity and cancels the submitte
     expect(api.tasks.size).toBe(0);
   } finally { release(); await source.stop(true); }
 });
+
+
+test("edited settings are reviewed, committed and bound to their exact revision", async () => {
+  await upload("photo.jpg");
+  const options = [{ name: "dsm", value: true }, { name: "orthophoto-resolution", value: 8 }];
+  const response = await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options });
+  expect(response.status).toBe(200);
+  const view = await response.json() as RunReviewView;
+  expect(view.outputs).toContain("dsm");
+  expect(view.options).toContainEqual(expect.objectContaining({ name: "dsm", value: true }));
+  const changed = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: view.preset, name: "Edited run", revision: view.revision, options: [{ name: "dsm", value: false }] });
+  expect(changed.status).toBe(409);
+  expect((await changed.json()).error.code).toBe("project_run.review_changed");
+  expect(api.tasks.size).toBe(0);
+  const started = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: view.preset, name: "Edited run", revision: view.revision, options });
+  expect(started.status).toBe(202);
+  await eventually(async () => api.tasks.size === 1 && [...api.tasks.values()][0]!.committed);
+  expect([...api.tasks.values()][0]!.options).toContainEqual({ name: "dsm", value: true });
+  expect([...api.tasks.values()][0]!.options).toContainEqual({ name: "orthophoto-resolution", value: 8 });
+});
+
+test("edited review exposes reconciled schema and refuses invalid or server-owned settings", async () => {
+  api.options.push({ name: "new-setting", type: "int", domain: "integer: 1 <= x <= 4", value: "2", help: "Engine-only help" });
+  const value = await (await review()).json() as RunReviewView;
+  expect(value.settings?.options).toContainEqual(expect.objectContaining({ name: "new-setting", unexplained: true, help: "Engine-only help" }));
+  expect(value.settings?.options.some(option => option.name === "tiles" || option.name === "no-gpu")).toBe(false);
+  expect(value.settings?.facts).toEqual({ bands: false, videos: false });
+  for (const options of [
+    [{ name: "no-gpu", value: false }],
+    [{ name: "orthophoto-resolution", value: -1 }],
+    [{ name: "new-setting", value: 5 }],
+    [{ name: "new-setting", value: "3" }],
+    [{ name: "dsm", value: true }, { name: "dsm", value: false }],
+  ]) {
+    const response = await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("option.invalid_value");
+    const started = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: "quick-map", name: "Bad", revision: value.revision, options });
+    expect(started.status).toBe(400);
+  }
+  expect(api.tasks.size).toBe(0);
+});
+
+test("the engine matcher warning is quoted only for hamming on a CPU-only local engine", async () => {
+  const matcher = api.options.find(option => option.name === "matcher-type")!;
+  matcher.domain = ["auto", "flann", "hamming"];
+  matcher.help = "Hamming uses the GPU according to this engine.";
+  const options = [{ name: "matcher-type", value: "hamming" }];
+  const edited = () => request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options });
+  expect(((await (await edited()).json()) as RunReviewView).settings?.matcherWarning).toBeNull();
+  const local = h.engineStore.addLocal({ name: "Local engine", token: api.token, packageKind: "container", installedVersion: "2.5.0" });
+  h.engineStore.update(local.id, { address: api.address }); engine = local.id;
+  h.settings.set("local.package", { packageVersion: "2.5.0", variant: "linux-amd64-gpu", runtime: "docker", container: { kind: "container", image: "example/engine", digest: "sha256:" + "a".repeat(64), size: 1, gpu: true } });
+  expect(((await (await edited()).json()) as RunReviewView).settings?.matcherWarning).toBeNull();
+  h.settings.set("local.forceCpu", true);
+  expect(((await (await edited()).json()) as RunReviewView).settings?.matcherWarning).toBe(matcher.help);
+  expect(((await (await review()).json()) as RunReviewView).settings?.matcherWarning).toBeNull();
+});
+
+test("edited review body is bounded and a changed engine domain is rechecked before start", async () => {
+  for (const options of [null, {}, [{ name: "dsm", value: {} }], [{ name: "dsm", value: true, extra: 1 }], Array.from({ length: 257 }, () => ({ name: "dsm", value: true }))]) {
+    expect((await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options })).status).toBe(400);
+  }
+  await upload("photo.jpg");
+  const options = [{ name: "orthophoto-resolution", value: 8 }];
+  const view = await (await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options })).json() as RunReviewView;
+  api.options.find(option => option.name === "orthophoto-resolution")!.domain = "float: 1 <= x <= 5";
+  const response = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: "quick-map", name: "Changed", revision: view.revision, options });
+  expect(response.status).toBe(400);
+  expect((await response.json()).error.code).toBe("option.invalid_value");
+  expect(api.tasks.size).toBe(0);
+});
