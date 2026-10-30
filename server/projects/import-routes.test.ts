@@ -146,7 +146,7 @@ test("the version 7 upgrade retains uploaded content, cached facts and flight ch
   let id: number, flightId: string;
   try {
     db.run("PRAGMA foreign_keys = ON"); applyMigrations(db, migrations.slice(0, 7));
-    id = new ProjectStore(db).create("Existing field", "Keep these notes").id;
+    id = (db.query("INSERT INTO projects (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").get("Existing field", "Keep these notes", "then", "then") as { id: number }).id;
     const bytes = detailedTiff(true), sha256 = createHash("sha256").update(bytes).digest("hex");
     const uploads = new UploadStore(db, data), photos = new PhotoStore(db, data);
     const session = uploads.create(id, { name: "a.tif", sha256, size: bytes.length });

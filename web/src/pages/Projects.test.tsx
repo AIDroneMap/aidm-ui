@@ -34,3 +34,12 @@ test("delete confirmation names what is removed and what stays", () => {
   expect(html).toContain("Keep project");
   expect(html).toContain("Delete project");
 });
+
+test("project shows archive sizes for each run and their total", () => {
+  const html = renderToStaticMarkup(<ProjectForm project={{ ...project, resultsBytes: 3072, resultArchives: [{ runId: 7, size: 1024 }, { runId: 8, size: 2048 }] }} name={project.name} notes={project.notes} onName={() => {}} onNotes={() => {}} onSave={() => {}} onAskDelete={() => {}} working={false} />);
+  expect(html).toContain("3 KiB");
+  expect(html).toContain("1 KiB");
+  expect(html).toContain("2 KiB");
+  expect(html).toContain("#/runs/7");
+  expect(html).toContain("#/runs/8");
+});

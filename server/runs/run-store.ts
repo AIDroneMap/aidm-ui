@@ -93,6 +93,20 @@ const FINISHED_STATES = `(${FINISHED_RUN_STATES.map((state) => `'${state}'`).joi
 export class RunStore {
   constructor(private readonly db: Database) {}
 
+  completed(): RunRecord[] {
+    return (this.db.query("SELECT * FROM runs WHERE state = 'completed' AND task_uuid IS NOT NULL").all() as RunRow[]).map(toRecord);
+  }
+
+  results<T>(id: number): T | null {
+    const row = this.db.query("SELECT details FROM run_results WHERE run_id = ?").get(id) as { details: string } | null;
+    return row === null ? null : JSON.parse(row.details) as T;
+  }
+
+  saveResults(id: number, details: unknown): void {
+    this.db.query("INSERT INTO run_results (run_id, details) VALUES (?, ?) ON CONFLICT (run_id) DO UPDATE SET details = excluded.details")
+      .run(id, JSON.stringify(details));
+  }
+
   /** The id of a built-in project, such as "sample". */
   builtinProjectId(builtin: string): number | null {
     const row = this.db.query("SELECT id FROM projects WHERE builtin = ?").get(builtin) as { id: number } | null;

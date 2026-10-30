@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fetch completed runs' archives into local project storage, serve outputs and tiles without disk extraction, show sizes, and delete results while retaining settings and logs. Evidence: results route, ZIP64, downloader and browser tests, plus the existing hosted task API acceptance test. See `docs/testing/results-archive.md`. Closes #64.
+
 - Share the run page and follow logic, show translated engine stages, and retain run metadata. Run store, sample job, stage and page tests cover the change.
 - Import a folder from a loopback browser, read photo facts in place and copy chosen files to the engine without changing the originals. Missing or changed sources offer relinking. Evidence: route tests for remote refusal, source snapshots, restarts and version 7 upgrades; copy tests for drift, duplicate names and mask choices; the folder browser fixture; and the imported-folder case in the hosted task API test. Closes #72.
 

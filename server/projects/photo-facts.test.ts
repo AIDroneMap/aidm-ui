@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { DATABASE_FILE } from "../db/database.ts";
 import { applyMigrations, migrations } from "../db/migrations.ts";
-import { ProjectStore } from "./project-store.ts";
 import { UploadStore } from "./upload-store.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -167,7 +166,7 @@ test("upgrading a version 6 project reads its existing photos without changing s
   let legacyOpen = true;
   try {
     applyMigrations(db, migrations.slice(0, 6));
-    const id = new ProjectStore(db).create("Field", "Keep these notes").id;
+    const id = (db.query("INSERT INTO projects (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").get("Field", "Keep these notes", "then", "then") as { id: number }).id;
     const store = new UploadStore(db, folder);
     const bytes = timedPhoto("2026:10:29 09:00:00");
     const sha256 = createHash("sha256").update(bytes).digest("hex");

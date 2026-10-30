@@ -266,16 +266,20 @@ test("the run follows the engine through queued, processing and completed, and o
   expect(processing.progress).toBe(37.5);
   expect((await send("GET", `/api/runs/${run.id}/results`)).status).toBe(409);
 
-  const results = new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const results = makeZip(["result.tif"], "results");
   fake.setTask(uuid, { statusCode: 40, processingTime: 90_000, progress: 100, results });
-  const completed = await waitRun(run.id, (candidate) => candidate.state === "completed");
+  const completed = await waitRun(run.id, (candidate) => candidate.state === "completed" && candidate.resultsAvailable);
   expect(completed).toMatchObject({ progress: 100, resultsAvailable: true, step: null });
+  const resultPath = `/task/${uuid}/download/all.zip`;
+  const engineDownloads = () => fake.requests.filter((request) => request.method === "GET" && request.path === resultPath).length;
+  expect(engineDownloads()).toBe(1);
 
   const download = await send("GET", `/api/runs/${run.id}/results`);
   expect(download.status).toBe(200);
   expect(download.headers.get("content-type")).toBe("application/zip");
-  expect(download.headers.get("content-disposition")).toBe('attachment; filename="sample-job-results.zip"');
-  expect(new Uint8Array(await download.arrayBuffer())).toEqual(results);
+  expect(download.headers.get("content-disposition")).toBe(`attachment; filename="run-${run.id}-results.zip"`);
+  expect([...new Uint8Array(await download.arrayBuffer())]).toEqual([...results]);
+  expect(engineDownloads()).toBe(1);
 });
 
 test("a finished run on a remote engine leaves one summary in aidm-ui's log, from the output it received", async () => {
@@ -350,10 +354,12 @@ test("a listener that joins late gets the lines saved so far", async () => {
 test("the engine's results are not offered when the engine says they are not ready", async () => {
   const { run, uuid } = await startAndQueue();
   fake.setTask(uuid, { statusCode: 40, progress: 100, results: null });
-  await waitRun(run.id, (candidate) => candidate.state === "completed");
+  const failed = await waitRun(run.id, (candidate) => candidate.state === "completed" && candidate.results?.state === "failed");
+  expect(failed.resultsAvailable).toBe(false);
+  expect(fake.requests.some((request) => request.path === `/task/${uuid}/download/all.zip`)).toBe(true);
   const response = await send("GET", `/api/runs/${run.id}/results`);
-  expect(response.status).toBe(502);
-  expect(await response.json()).toEqual({ error: { code: "engine.error", data: { message: "Asset not ready" } } });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: { code: "run.results_not_ready", data: {} } });
 });
 
 // Criterion: cancel during upload or processing leaves the engine ready.
@@ -395,7 +401,7 @@ test("cancelling during processing cancels the task and leaves the engine ready"
 
 test("a finished run cannot be cancelled and an unknown run is not found", async () => {
   const { run, uuid } = await startAndQueue();
-  fake.setTask(uuid, { statusCode: 40, results: new Uint8Array([1]) });
+  fake.setTask(uuid, { statusCode: 40, results: zipBytes });
   await waitRun(run.id, (candidate) => candidate.state === "completed");
   const again = await send("POST", `/api/runs/${run.id}/cancel`);
   expect(again.status).toBe(409);
@@ -625,8 +631,8 @@ test("after aidm-ui restarts it goes on following a processing run without repea
     await waitRun(run.id, (candidate) => candidate.progress === 55, second);
     expect((await getJson<RunLogView>(`/api/runs/${run.id}/log`, second)).lines).toEqual(["a", "b", "c"]);
 
-    fake.setTask(uuid, { statusCode: 40, progress: 100, results: new Uint8Array([9, 9]) });
-    const done = await waitRun(run.id, (candidate) => candidate.state === "completed", second);
+    fake.setTask(uuid, { statusCode: 40, progress: 100, results: zipBytes });
+    const done = await waitRun(run.id, (candidate) => candidate.state === "completed" && candidate.resultsAvailable, second);
     expect(done.resultsAvailable).toBe(true);
     expect((await getJson<SampleView>("/api/sample", second)).run?.id).toBe(run.id);
   } finally {
@@ -691,14 +697,13 @@ test("an engine that finishes while a cancel is on its way keeps its result", as
   const cancelling = send("POST", `/api/runs/${run.id}/cancel`);
   await eventually(async () => fake.requests.some((request) => request.path === "/task/cancel"));
 
-  fake.setTask(uuid, { statusCode: 40, progress: 100, results: new Uint8Array([1, 2, 3]) });
+  fake.setTask(uuid, { statusCode: 40, progress: 100, results: zipBytes });
   await waitRun(run.id, (candidate) => candidate.state === "completed");
   const answer = await cancelling;
   expect(answer.status).toBe(409);
   expect(await answer.json()).toEqual({ error: { code: "run.not_cancellable", data: {} } });
 
-  await Bun.sleep(100);
-  const final = await getJson<RunView>(`/api/runs/${run.id}`);
+  const final = await waitRun(run.id, (candidate) => candidate.resultsAvailable);
   expect(final).toMatchObject({ state: "completed", resultsAvailable: true, problem: null });
 });
 
@@ -734,7 +739,7 @@ test("a run whose engine does not answer to the cancel ends cancelled and is no 
 
   // The engine comes back and finishes the work, but this run has ended.
   await fake.restart();
-  fake.setTask(uuid, { statusCode: 40, results: new Uint8Array([1]) });
+  fake.setTask(uuid, { statusCode: 40, results: zipBytes });
   await Bun.sleep(200);
   expect(await getJson<RunView>(`/api/runs/${run.id}`)).toMatchObject({
     state: "cancelled",
@@ -837,7 +842,7 @@ test("a cancel that the engine does not take after the commit keeps the run foll
   // The run is not cancelled: it goes on being followed and ends with the engine's answer.
   const queued = await waitRun(run.id, (candidate) => candidate.state === "queued");
   expect(queued.problem).toBeNull();
-  fake.setTask(theTask(), { statusCode: 40, progress: 100, results: new Uint8Array([1]) });
+  fake.setTask(theTask(), { statusCode: 40, progress: 100, results: zipBytes });
   await waitRun(run.id, (candidate) => candidate.state === "completed");
 });
 
@@ -913,7 +918,7 @@ test("the engine's token is in no log, stream or line of the server's own log du
   } finally {
     await events.close();
   }
-  fake.setTask(uuid, { statusCode: 40, progress: 100, results: new Uint8Array([1]) });
+  fake.setTask(uuid, { statusCode: 40, progress: 100, results: zipBytes });
   await waitRun(run.id, (candidate) => candidate.state === "completed");
 
   seen.push(readFileSync(join(harness.dataFolder, "runs", String(run.id), "log.txt"), "utf8"));

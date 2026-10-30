@@ -144,6 +144,12 @@ export interface RunDownloadView {
   lastRetry: ApiError | null;
 }
 
+export interface RunResultsView {
+  state: "fetching" | "ready" | "failed" | "deleted";
+  archiveSize: number | null;
+  outputs: Array<{ name: string; size: number }>;
+}
+
 export interface RunView {
   id: number;
   name: string | null;
@@ -157,7 +163,7 @@ export interface RunView {
   engineLocal: boolean;
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
-  step: "download" | "upload" | null;
+  step: "download" | "upload" | "results" | null;
   download: RunDownloadView | null;
   upload: { done: number; total: number } | null;
   /** The engine's own progress, 0 to 100, while it processes. */
@@ -172,6 +178,7 @@ export interface RunView {
   restartedAtLine: number | null;
   /** True when the results archive can be downloaded. */
   resultsAvailable: boolean;
+  results?: RunResultsView;
   createdAt: string;
 }
 
@@ -505,6 +512,8 @@ export interface ForceCpuRequest {
 
 /** Project facts shown in the list and project page. */
 export interface ProjectView {
+  resultsBytes?: number;
+  resultArchives?: Array<{ runId: number; size: number }>;
   id: number;
   name: string;
   notes: string;

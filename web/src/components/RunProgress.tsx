@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../controls/Button.tsx";
 import { ApiFailure } from "../api.ts";
 import { DownloadBlock, interruptionText } from "./DownloadBlock.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
+import { Results } from "./Results.tsx";
 import { formatCount } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
 import { isFinished, linesWithRestart, type Stage } from "../runs.ts";
@@ -49,12 +50,12 @@ export interface RunProgressProps {
   cancelling: boolean;
   failure: ApiFailure | null;
   onCancel: () => void;
-  onAgain: () => void;
+  onAgain?: () => void;
 }
 
 /** A run in progress or finished: its state in words, its progress, its log and what the operator can do next. */
 export function RunProgress({
-  run,
+  run: incomingRun,
   stage,
   lines,
   lineCount,
@@ -65,13 +66,15 @@ export function RunProgress({
   onCancel,
   onAgain,
 }: RunProgressProps) {
+  const [run, setRun] = useState(incomingRun);
+  useEffect(() => { setRun(incomingRun); }, [incomingRun]);
   const finished = isFinished(run);
   const known = (RUN_STATES as readonly string[]).includes(run.state);
   return (
     <>
       {run.engineName !== null && <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName })}</p>}
       <p role="status" className="run-state">
-        {t(known ? `run.state.${run.state}` : "run.state.unknown")}
+        {t(run.step === "results" ? "run.results_fetching" : known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>
       {run.sample && <h2>{t("run.sample_name")}</h2>}
       {!run.sample && run.name && <h2>{run.name}</h2>}
@@ -124,13 +127,15 @@ export function RunProgress({
         )}
       />
 
+      {run.results && <Results run={run} onChange={setRun} />}
+
       <div className="actions">
-        {!finished && (
+        {!finished && run.state !== "completed" && (
           <Button type="button" className="secondary" disabled={cancelling} onClick={onCancel}>
             {cancelling ? t("run.cancelling") : t("run.cancel")}
           </Button>
         )}
-        {run.state === "completed" &&
+        {!run.results && run.state === "completed" && run.step !== "results" &&
           (run.resultsAvailable ? (
             <a href={`/api/runs/${run.id}/results`} download>
               {t("run.results_link")}
@@ -138,7 +143,7 @@ export function RunProgress({
           ) : (
             <span role="status">{t("run.results_preparing")}</span>
           ))}
-        {finished && (
+        {finished && onAgain && (
           <Button type="button" className="secondary" onClick={onAgain}>
             {t("sample.again")}
           </Button>

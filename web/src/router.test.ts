@@ -34,3 +34,8 @@ test("project addresses select the project page", () => {
   expect(routeFromHash("#/projects/42")).toBe("project");
   expect(routeFromHash("#/projects/0")).toBe("home");
 });
+
+test("run addresses select the run page", () => {
+  expect(routeFromHash("#/runs/42")).toBe("run");
+  for (const hash of ["#/runs/0", "#/runs/new", "#/runs/42/extra", "#/runs/01"]) expect(routeFromHash(hash)).toBe("home");
+});

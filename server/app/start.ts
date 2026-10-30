@@ -146,6 +146,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
     const imports = new ImportStore(db, dataFolder);
     const tracker = new RunTracker({
+    beginResultsWrite: id => projectDeletion.beginWrite(id),
       runs: runStore,
       engines: engineStore,
       dataFolder,
