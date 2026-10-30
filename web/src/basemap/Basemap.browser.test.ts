@@ -21,12 +21,16 @@ test("basemap is opt-in, uses saved numbering and attribution, and fails without
   const blue = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==", "base64");
   let failing = false, failOrtho = false, rejectSave = false, pageLoads = 0;
   const baseRequests: string[] = [], localRequests: string[] = [];
+  let holdResultObservations = false;
+  const heldResultRequests: string[] = [];
   const tiles = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     baseRequests.push(new URL(request.url).pathname);
     return new Response(failing ? null : blue, { status: failing ? 503 : 200, headers: { "access-control-allow-origin": "*", "content-type": "image/png", "cache-control": "no-store" } });
   } });
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
-    const path = new URL(request.url).pathname; localRequests.push(path);
+    const path = new URL(request.url).pathname;
+    if (holdResultObservations && path.includes("/tiles/")) heldResultRequests.push(path);
+    else localRequests.push(path);
     if (path === "/") { pageLoads++; return withSecurityHeaders(new Response('<link rel="stylesheet" href="/fixture.css"><div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } }), stored); }
     if (path === "/fixture.js" || path === "/fixture.css") return new Response(Bun.file(join(directory, path.slice(1))));
     if (path === "/map-worker.mjs") return new Response(Bun.file("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs"), { headers: { "content-type": "text/javascript" } });
@@ -118,10 +122,14 @@ test("basemap is opt-in, uses saved numbering and attribution, and fails without
     }
     failing = true;
     const localBeforeFailure = localRequests.filter(path => path.includes("/tiles/")).length;
+    holdResultObservations = true;
     await evaluate("document.querySelector('.maplibregl-canvas').scrollIntoView();document.querySelector('.maplibregl-canvas').focus()");
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: "+", code: "Equal", windowsVirtualKeyCode: 187, modifiers: 8 });
     await send("Input.dispatchKeyEvent", { type: "keyUp", key: "+", code: "Equal", windowsVirtualKeyCode: 187, modifiers: 8 });
     await wait(`Array.from(document.querySelectorAll('[role=alert]')).some(element=>element.textContent.includes(${JSON.stringify(template)}))`);
+    setTimeout(() => { holdResultObservations = false; localRequests.push(...heldResultRequests); }, 200);
+    const requestDeadline = Date.now() + 10000;
+    while (localRequests.filter(path => path.includes("/tiles/")).length <= localBeforeFailure && Date.now() < requestDeadline) await Bun.sleep(20);
     expect(localRequests.filter(path => path.includes("/tiles/")).length).toBeGreaterThan(localBeforeFailure);
     expect(await evaluate("document.querySelector('.maplibregl-canvas') !== null")).toBe(true);
     expect(await evaluate("!document.body.textContent.includes('Some map tiles could not be loaded')")).toBe(true);
