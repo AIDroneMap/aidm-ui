@@ -846,13 +846,20 @@ test("a restart the run did not see is found when the task's output is shorter t
 });
 
 test("a restart the run did not see is found when the task's processing time went down", async () => {
-  const h = start();
+  const held = gate();
+  let infoCalls = 0;
+  const h = start({ runClientFor: (endpoint) => new TaskClient(endpoint, { fetch: (async (input, init) => {
+    if (new URL(String(input)).pathname.endsWith("/info") && ++infoCalls === 2) await held.held;
+    return fetch(input, init);
+  }) as typeof fetch }) });
   await installAndWaitReady(h);
   const { runId, uuid } = runOnEngine(h, { output: ["old one", "old two", "old three"] });
   await eventually(async () => (await logView(h, runId)).lines.length === 3);
+  await eventually(async () => infoCalls === 2);
 
   // More lines than before, so the length alone would not show it.
   podman(h).engine(CONTAINER_NAME)?.setTask(uuid, { processingTime: 100, output: ["a", "b", "c", "d"] });
+  held.release();
   await eventually(async () => (await logView(h, runId)).lines.length === 7);
   expect(await logView(h, runId)).toMatchObject({ lines: ["old one", "old two", "old three", "a", "b", "c", "d"], restartedAtLine: 3 });
   expect(await runView(h, runId)).toMatchObject({ restarted: true, restartedAtLine: 3 });
