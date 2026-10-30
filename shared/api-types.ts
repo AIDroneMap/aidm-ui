@@ -69,6 +69,8 @@ export interface EngineInfoView {
   /** Tasks waiting or running on the engine. */
   queueCount: number | null;
   maxParallelTasks: number | null;
+  /** Undefined when unreported or invalid; null when the engine reports no limit. */
+  maxImages?: number | null;
 }
 
 export interface EngineView {

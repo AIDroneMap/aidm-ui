@@ -1,3 +1,5 @@
+import { ProjectRuns } from "../projects/project-runs.ts";
+import { RunInputs } from "../projects/run-inputs.ts";
 import { ImportStore } from "../projects/import-store.ts";
 import { PhotoStore } from "../photos/photo-store.ts";
 import { test } from "bun:test";
@@ -277,12 +279,15 @@ export function openHarness(
     log,
   });
 
+  const photos = new PhotoStore(db, dataFolder, imports);
+  const projectRuns = new ProjectRuns({ projects, projectDeletion, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     projects,
     projectDeletion,
     uploads: new UploadStore(db, dataFolder),
-    photos: new PhotoStore(db, dataFolder, imports),
+    photos,
+    projectRuns,
     imports,
     assets: options.assets ?? new Map(),
     settings,
@@ -347,6 +352,7 @@ export function openHarness(
       stopped = true;
       await listener?.stop();
       await updateChecks.stop();
+      await projectRuns.stop();
       await sample.stop();
       await tracker.stop();
       await localEngine.close();

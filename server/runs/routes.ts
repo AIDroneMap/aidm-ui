@@ -22,6 +22,8 @@ export function runRoutes(ctx: RouteContext): RouteTable {
       POST: async (req) => {
         const id = parseId(req.params.id ?? "");
         if (id === null) return errorResponse(404, "run.not_found");
+        const preparation = await ctx.projectRuns.cancel(id);
+        if (preparation) return preparation.ok ? Response.json(preparation.value) : errorResponse(preparation.status, preparation.error.code, preparation.error.data);
         const outcome = await ctx.sample.cancel(id);
         return outcome.ok ? Response.json(outcome.run) : errorResponse(outcome.status, outcome.error.code, outcome.error.data);
       },

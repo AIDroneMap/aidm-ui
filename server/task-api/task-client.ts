@@ -126,6 +126,7 @@ export class TaskClient {
         availableMemory: this.count(raw, "availableMemory"),
         queueCount: this.count(raw, "taskQueueCount"),
         maxParallelTasks: this.count(raw, "maxParallelTasks"),
+        maxImages: raw.maxImages === null ? null : typeof raw.maxImages === "number" && Number.isSafeInteger(raw.maxImages) && raw.maxImages >= 0 ? raw.maxImages : undefined,
       },
     };
   }

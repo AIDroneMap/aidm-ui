@@ -73,7 +73,7 @@ Edit, run the unit tests and open pull requests from your own worktree. Do not r
 
 ## Tests
 
-Unit tests: `bun run typecheck` and `bun test`. CI runs them on every pull request and on every push to `main` (`.github/workflows/ci.yml`, job "Typecheck and test"), and in the same workflow builds the four executables, smoke tests the Linux x64 one, and runs the real runtime tests (Podman and Docker with a tiny image) and the real task API test in test mode. A push to a branch with no pull request runs nothing; open the pull request to get the checks.
+Unit tests: `bun run typecheck` and `bun test`. CI runs them on every pull request and on every push to `main` (`.github/workflows/ci.yml`, job "Typecheck and test"), and in the same workflow builds the four executables, smoke tests the Linux x64 one, and runs the real runtime tests (Podman and Docker with a tiny image) and the real task API test in test mode, including project creation, photo upload, Quick map review and start, completion, archive and orthophoto downloads. A push to a branch with no pull request runs nothing; open the pull request to get the checks.
 Full test: the end-to-end run described in `docs/milestones/0001-first-mac-run.md`: install an engine from a manifest, run the sample job, verify the outputs, on a machine that has the engine runtime. It is not run by CI. Record the machine, the engine version and the manifest sequence in the pull request.
 
 **Test depth.** Every pull request declares its depth in the description, with one line of reasoning: `Test depth: unit` or `Test depth: full`. The author chooses; the reviewer checks the choice and may raise it, never lower it; a maintainer settles a disagreement. When in doubt, claim the higher one.

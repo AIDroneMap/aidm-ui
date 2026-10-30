@@ -1,3 +1,5 @@
+import { ProjectRuns } from "../projects/project-runs.ts";
+import { RunInputs } from "../projects/run-inputs.ts";
 import { ImportStore } from "../projects/import-store.ts";
 import { PhotoStore } from "../photos/photo-store.ts";
 import { mkdirSync, realpathSync } from "node:fs";
@@ -227,12 +229,15 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const updateChecks = new UpdateCheckScheduler({ settings, manifests, now: Date.now, log: log });
     let listener: Listener | undefined;
 
+    const photos = new PhotoStore(db, dataFolder, imports);
+    const projectRuns = new ProjectRuns({ projects, projectDeletion, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
     const routes = createRoutes({
       identity,
       projects,
       projectDeletion,
       uploads: new UploadStore(db, dataFolder),
-      photos: new PhotoStore(db, dataFolder, imports),
+      photos,
+      projectRuns,
       imports,
       assets: options.assets,
       settings,
@@ -291,6 +296,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
           // No request can arrive once the listener is down, and nothing may use the database after it closes.
           await running.stop();
           await updateChecks.stop();
+          await projectRuns.stop();
           await sample.stop();
           await tracker.stop();
           // Stops following the log. The engine keeps running when aidm-ui stops.
