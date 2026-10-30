@@ -21,10 +21,17 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
   let failed = false;
   let responseGate: Promise<void> | undefined;
   let decoderGate: Promise<void> | undefined;
+  let releaseDocument: (() => void) | undefined;
   const requests: string[] = [];
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
     const path = new URL(request.url).pathname; requests.push(path);
-    if (path === "/") return withSecurityHeaders(new Response('<div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } }));
+    if (path === "/") return withSecurityHeaders(new Response(new ReadableStream({ async start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode("<!doctype html><html><head>"));
+      await new Promise<void>(resolve => { releaseDocument = resolve; });
+      controller.enqueue(encoder.encode('</head><body><div id="root"></div><script type="module" src="/fixture.js"></script></body></html>'));
+      controller.close();
+    } }), { headers: { "content-type": "text/html" } }));
     if (path === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
     if (path === "/decoder/draco_wasm_wrapper.js" || path === "/decoder/draco_decoder.wasm") {
       if (decoderGate) await decoderGate;
@@ -81,7 +88,13 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
     const network: string[] = [];
     socket.addEventListener("message", event => { const message = JSON.parse(String(event.data)); if (message.method === "Network.requestWillBeSent") network.push(message.params.request.url); });
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
-    await wait("document.body.textContent.includes('Open the 3D model')");
+    expect(await evaluate("document.body === null")).toBe(true);
+    const readiness = wait("document.body && document.body.textContent.includes('Open the 3D model')").then(() => null, error => error);
+    await evaluate("true");
+    expect(releaseDocument).toBeDefined();
+    releaseDocument!();
+    const readinessError = await readiness;
+    if (readinessError) throw readinessError;
     expect(requests).not.toContain("/api/runs/7/outputs/glb");
     await click("Open the 3D model");
     await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
@@ -187,5 +200,5 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
     expect(await evaluate("document.querySelectorAll('canvas').length")).toBe(1);
     await click("Close the 3D model");
     expect(await evaluate("document.querySelector('canvas') === null")).toBe(true);
-  } finally { socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }
+  } finally { releaseDocument?.(); socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }
 }, 30000);
