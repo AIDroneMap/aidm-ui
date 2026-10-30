@@ -24,8 +24,8 @@ test("project switches sources without losing edits and ignores stale link reads
       return Response.json({ url: snapshot, size: null, facts: snapshot?.includes("second") ? facts : null, factsRunId: snapshot?.includes("second") ? 7 : null });
     }
     if (path.endsWith("/import")) return Response.json({ available: true, state: "none", path: null, acceptedCount: 0, skippedCount: 0, groundControlCount: 0, files: [], nextOffset: null });
-    if (path.endsWith("/photos")) return Response.json({ files: [], nextOffset: null });
-    if (path.endsWith("/photo-facts")) return Response.json({ photoCount: 0, photoBytes: 0, duplicates: 0, videoCount: 0, withoutGps: 0, cameras: [], bands: [], dateSpans: [], flights: [], flightCount: 0, unassignedCount: 0, pendingMetadata: 0, nextOffset: null });
+    if (path.endsWith("/photos")) { await Bun.sleep(1000); return Response.json({ files: [], nextOffset: null }); }
+    if (path.endsWith("/photo-facts")) { await Bun.sleep(1000); return Response.json({ photoCount: 0, photoBytes: 0, duplicates: 0, videoCount: 0, withoutGps: 0, cameras: [], bands: [], dateSpans: [], flights: [], flightCount: 0, unassignedCount: 0, pendingMetadata: 0, nextOffset: null }); }
     if (path === "/api/engines") return Response.json([{ id: 1, name: "Engine", enabled: true }]);
     if (path.endsWith("/run-review")) return Response.json({ project: { id: 1, name: "Survey" }, engine: { id: 1, name: "Engine", kind: "remote", info: {}, gpu: null, imageLimit: null, imageLimitReported: false }, preset: "quick-map", presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "link", photos: { included: null, excluded: null, total: null, bytes: null }, facts: null, options: [], outputs: [], alwaysProduced: [], revision: "revision", blocked: null });
     return new Response(null, { status: 404 });
@@ -44,7 +44,7 @@ test("project switches sources without losing edits and ignores stale link reads
     const type = async (selector: string, text: string) => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus(); document.querySelector(${JSON.stringify(selector)}).select()`); await send("Input.insertText", { text }); };
     const pressButton = async (text: string) => { await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(text)}).focus()`); await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); };
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1` });
-    await wait("document.querySelector('#link-url') && document.querySelector('#import-path')");
+    await wait("document.querySelector('#link-url') && document.querySelector('#import-path') && document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')");
     expect(await evaluate("document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')")).toBe(true);
     await type("#project-name", "Unsaved name"); await type("#project-notes", "Unsaved notes");
     await evaluate("window.holdLinkRead = true");
