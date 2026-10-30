@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wait for result tile requests after a basemap failure. Evidence: the delayed request observation in `web/src/basemap/Basemap.browser.test.ts`. Closes #101.
 - Add an optional raster basemap with a saved tile template, XYZ or TMS numbering, and plain-text attribution. It stays off until enabled and reports tile failures while the results remain visible. Evidence: settings and origin-policy tests plus the Chromium basemap fixture in `docs/testing/basemap.md`. Closes #76.
 
 - Wait for both project source panels before checking them. Evidence: delayed panel responses in `web/src/links/ProjectLink.browser.test.ts`. Closes #95.
