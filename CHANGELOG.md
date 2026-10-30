@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Use a basic credential store for temporary test browser profiles. Evidence: the controlled browser diagnostic in #103 and the browser startup tests. Closes #103.
 - Wait for result tile requests after a basemap failure. Evidence: the delayed request observation in `web/src/basemap/Basemap.browser.test.ts`. Closes #101.
 - Wait for sample results before deleting the project in both restart fixtures. Evidence: delayed archive responses in `server/sample/sample-job.test.ts`. Closes #99.
 

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export async function startBrowser(executable: string, dir: string, url: string, timeoutMs = 15000) {
-  const proc = Bun.spawn([executable, "--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--disable-background-networking", "--disable-crash-reporter", "--no-first-run", "--no-default-browser-check", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", `--user-data-dir=${dir}`, "--remote-debugging-port=0", url], { stdout: "ignore", stderr: "pipe" });
+  const proc = Bun.spawn([executable, "--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--disable-background-networking", "--disable-crash-reporter", "--no-first-run", "--no-default-browser-check", "--password-store=basic", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", `--user-data-dir=${dir}`, "--remote-debugging-port=0", url], { stdout: "ignore", stderr: "pipe" });
   let stderr = "";
   const drain = (async () => {
     const reader = proc.stderr.getReader();
