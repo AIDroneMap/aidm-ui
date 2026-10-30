@@ -1,4 +1,11 @@
 {
+  "model.open": "Open the 3D model",
+  "model.close": "Close the 3D model",
+  "model.loading": "Loading the 3D model...",
+  "model.error": "The 3D model could not be opened.",
+  "model.canvas": "3D model view",
+  "model.instructions": "Drag to orbit. Use the mouse wheel to zoom and right-drag to pan. Touch with one finger to orbit or two fingers to zoom and pan. With the view focused, use arrow keys to orbit, Shift and arrow keys to pan, and plus or minus to zoom.",
+  "model.reset": "Reset view",
   "option.invalid_value": "Check {name} in the run settings. Its value is not supported by this engine.",
   "project.not_found": "Project not found.",
   "project.name_required": "Enter a project name.",

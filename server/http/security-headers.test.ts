@@ -6,6 +6,8 @@ test("every response gets the security headers", () => {
   const csp = response.headers.get("content-security-policy") ?? "";
   expect(csp).toContain("default-src 'self'");
   expect(csp).toContain("img-src 'self' data: blob:");
+  expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+  expect(csp).toContain("worker-src 'self' blob:");
   expect(csp).toContain("frame-ancestors 'none'");
   expect(csp).toContain("form-action 'self'");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
