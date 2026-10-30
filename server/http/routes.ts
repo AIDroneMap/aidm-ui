@@ -57,16 +57,17 @@ function guarded(ctx: RouteContext, handler: RouteHandler): GuardedHandler {
   return async (req, server) => {
     // No address (it should not happen on a TCP listener) counts as not loopback.
     const client = { address: server.requestIP(req)?.address ?? "" };
+    const secure = (response: Response) => withSecurityHeaders(response, ctx.settings.get("map.basemap"));
     try {
       const refusal = await ctx.auth().authorize(req, client);
-      if (refusal !== null) return withSecurityHeaders(refusal);
+      if (refusal !== null) return secure(refusal);
       // Bun lets the largest body of any route through, so each route is held to its own.
       const declared = Number(req.headers.get("content-length"));
-      if (declared > bodyLimit) return withSecurityHeaders(errorResponse(413, "api.body_too_large"));
-      return withSecurityHeaders(await handler(req, { client, server }));
+      if (declared > bodyLimit) return secure(errorResponse(413, "api.body_too_large"));
+      return secure(await handler(req, { client, server }));
     } catch (error) {
       ctx.log(`Request ${req.method} ${new URL(req.url).pathname} failed: ${describeError(error)}`);
-      return withSecurityHeaders(errorResponse(500, "server.internal_error"));
+      return secure(errorResponse(500, "server.internal_error"));
     }
   };
 }

@@ -1,4 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { isBasemapSettings, type BasemapSettings } from "../../../shared/basemap.ts";
 import type { RunMapView } from "../../../shared/map.ts";
 import { t } from "../i18n/translate.ts";
 
@@ -25,6 +26,8 @@ export function MapPanel({ runId }: { runId: string }) {
   const [view, setView] = useState<RunMapView | null>(null);
   const [failed, setFailed] = useState(false);
   const [mapAttempt, setMapAttempt] = useState(0);
+  const [basemap, setBasemap] = useState<BasemapSettings | null>(null);
+  const [basemapFailed, setBasemapFailed] = useState(false);
 
   useEffect(() => {
     setOpen(false);
@@ -37,6 +40,11 @@ export function MapPanel({ runId }: { runId: string }) {
     const controller = new AbortController();
     setView(null);
     setFailed(false);
+    setBasemap(null); setBasemapFailed(false);
+    fetch("/api/settings/basemap", { credentials: "same-origin", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) })
+      .then(response => { if (!response.ok) throw new Error(); return response.json() as Promise<unknown>; })
+      .then(value => { if (!isBasemapSettings(value)) throw new Error(); if (!controller.signal.aborted) setBasemap(value.enabled ? value : null); })
+      .catch(() => { if (!controller.signal.aborted) setBasemapFailed(true); });
     fetch(`/api/runs/${encodeURIComponent(runId)}/map`, { credentials: "same-origin", signal: controller.signal })
       .then(response => { if (!response.ok) throw new Error(); return response.json() as Promise<RunMapView>; })
       .then(result => { if (!controller.signal.aborted) setView(result); })
@@ -47,9 +55,10 @@ export function MapPanel({ runId }: { runId: string }) {
   return <section aria-label={t("map.title")}>
     {!open && <button onClick={() => setOpen(true)}>{t("map.open")}</button>}
     {open && !view && !failed && <p role="status">{t("map.loading")}</p>}
+    {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><button onClick={() => setAttempt(value => value + 1)}>{t("basemap.retry")}</button></div>}
     {failed && <div role="alert"><p>{t("map.error")}</p><button onClick={() => setAttempt(value => value + 1)}>{t("map.retry")}</button></div>}
     {view?.state === "unavailable" && <p role="status">{t("map.unavailable")}</p>}
-    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
+    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
     {view?.state === "ready" && view.layers.length === 0 && <p role="status">{t("map.unavailable")}</p>}
   </section>;
 }

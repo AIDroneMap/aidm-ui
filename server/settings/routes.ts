@@ -1,4 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
+import { isBasemapSettings } from "../../shared/basemap.ts";
 import {
   PASSPHRASE_MAX_LENGTH,
   PASSPHRASE_MIN_LENGTH,
@@ -45,6 +46,19 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
   return {
     "/api/settings": {
       GET: () => Response.json(settingsView(ctx)),
+    },
+
+    "/api/settings/basemap": {
+      GET: () => Response.json(ctx.settings.get("map.basemap")),
+      PUT: async (req) => {
+        const parsed = await readJson(req);
+        if (!parsed.ok) return parsed.response.status === 400 ? errorResponse(400, "settings.basemap_invalid") : parsed.response;
+        if (!isBasemapSettings(parsed.body)) return errorResponse(400, "settings.basemap_invalid");
+        const { enabled, url, scheme, attribution } = parsed.body;
+        const value = { enabled, url, scheme, attribution };
+        ctx.settings.set("map.basemap", value);
+        return Response.json(value);
+      },
     },
 
     "/api/settings/port": {
