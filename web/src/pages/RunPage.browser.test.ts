@@ -9,7 +9,9 @@ import { findBrowserPage } from "../controls/browser-target.ts";
 test("project archive links open the requested run, including after a reload", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-run-page-"));
   const requests: string[] = [];
-  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "worker-url", setup(builder) {
+  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "viewer-assets", setup(builder) {
+    builder.onResolve({ filter: /draco_(wasm_wrapper\.js|decoder\.wasm)\?url$/ }, args => ({ path: args.path, namespace: "decoder-assets" }));
+    builder.onLoad({ filter: /.*/, namespace: "decoder-assets" }, args => ({ contents: `export default ${JSON.stringify(`/decoder/${args.path.includes("wrapper") ? "draco_wasm_wrapper.js" : "draco_decoder.wasm"}`)}`, loader: "js" }));
     builder.onResolve({ filter: /maplibre-gl-worker\.mjs\?url$/ }, () => ({ path: "worker-url", namespace: "fixture" }));
     builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: 'export default "/map-worker.mjs"', loader: "js" }));
   } }] });

@@ -8,19 +8,28 @@ import { findBrowserPage } from "../controls/browser-target.ts";
 
 import { withSecurityHeaders } from "../../../server/http/security-headers.ts";
 import { texturedGlb as glb } from "../../../test-support/textured-glb.ts";
+import { dracoGlb } from "../../../test-support/draco-glb.ts";
 
 test("opens a model on demand, handles interaction and rejects unsafe resources", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-model-page-"));
-  const build = await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], target: "browser" });
+  const build = await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "decoder-assets", setup(builder) {
+    builder.onResolve({ filter: /draco_(wasm_wrapper\.js|decoder\.wasm)\?url$/ }, args => ({ path: args.path, namespace: "decoder-assets" }));
+    builder.onLoad({ filter: /.*/, namespace: "decoder-assets" }, args => ({ contents: `export default ${JSON.stringify(`/decoder/${args.path.includes("wrapper") ? "draco_wasm_wrapper.js" : "draco_decoder.wasm"}`)}`, loader: "js" }));
+  } }] });
   expect(build.success).toBe(true);
   let output = glb();
   let failed = false;
   let responseGate: Promise<void> | undefined;
+  let decoderGate: Promise<void> | undefined;
   const requests: string[] = [];
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
     const path = new URL(request.url).pathname; requests.push(path);
-    if (path === "/") return withSecurityHeaders(new Response('<div id="root"></div><script src="/fixture.js"></script>', { headers: { "content-type": "text/html" } }));
+    if (path === "/") return withSecurityHeaders(new Response('<div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } }));
     if (path === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
+    if (path === "/decoder/draco_wasm_wrapper.js" || path === "/decoder/draco_decoder.wasm") {
+      if (decoderGate) await decoderGate;
+      return new Response(Bun.file(`node_modules/three/examples/jsm/libs/draco/gltf/${path.split("/").at(-1)}`));
+    }
     if (path === "/api/runs/7/outputs/glb") {
       if (responseGate) await responseGate;
       return failed ? new Response(null, { status: 500 }) : new Response(output);
@@ -40,6 +49,8 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
     const wait = async (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 10000; const check = async () => (await (${expression})) ? resolve(true) : Date.now() > end ? reject(new Error('condition timed out')) : setTimeout(check, 20); check(); })`);
     const click = (text: string) => evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === ${JSON.stringify(text)}).click()`);
     await send("Network.enable");
+    await send("Page.enable");
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => { const Original = window.Worker; const revoke = URL.revokeObjectURL.bind(URL); window.activeDecoderWorkers = 0; window.createdDecoderWorkers = 0; window.decoderWorkerUrls = new Set(); URL.revokeObjectURL = url => { window.decoderWorkerUrls.delete(url); revoke(url); }; window.Worker = class extends Original { constructor(...args) { super(...args); window.activeDecoderWorkers++; window.createdDecoderWorkers++; window.decoderWorkerUrls.add(String(args[0])); } terminate() { window.activeDecoderWorkers--; return super.terminate(); } }; })()` });
     const network: string[] = [];
     socket.addEventListener("message", event => { const message = JSON.parse(String(event.data)); if (message.method === "Network.requestWillBeSent") network.push(message.params.request.url); });
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
@@ -94,6 +105,21 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
     await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await Bun.sleep(150); expect(await image()).not.toBe(before);
     await click("Close the 3D model");
+    output = dracoGlb();
+    let releaseDecoder!: () => void;
+    decoderGate = new Promise<void>(resolve => { releaseDecoder = resolve; });
+    await click("Open the 3D model");
+    const decoderDeadline = Date.now() + 3000;
+    while (!requests.includes("/decoder/draco_decoder.wasm") && Date.now() < decoderDeadline) await Bun.sleep(10);
+    expect(requests).toContain("/decoder/draco_decoder.wasm");
+    await click("Close the 3D model");
+    releaseDecoder(); decoderGate = undefined;
+    await wait("window.createdDecoderWorkers > 0 && window.activeDecoderWorkers === 0 && window.decoderWorkerUrls.size === 0");
+    await click("Open the 3D model");
+    await wait("document.querySelector('canvas') && !document.querySelector('[role=status]')");
+    await wait(`(async () => { const image = new Image(); image.src = document.querySelector('canvas').toDataURL(); await image.decode(); const copy = document.createElement('canvas'); copy.width = image.width; copy.height = image.height; const context = copy.getContext('2d'); context.drawImage(image, 0, 0); const pixels = context.getImageData(0, 0, copy.width, copy.height).data; for (let i = 0; i < pixels.length; i += 4) if (Math.abs(pixels[i] - pixels[i + 1]) > 40 || Math.abs(pixels[i + 1] - pixels[i + 2]) > 40) return true; return false; })()`);
+    await click("Close the 3D model");
+    await wait("window.activeDecoderWorkers === 0 && window.decoderWorkerUrls.size === 0");
     expect(await evaluate("document.querySelector('canvas') === null")).toBe(true);
     output = glb();
     const pngStart = output.findIndex((byte, index) => byte === 137 && output[index + 1] === 80 && output[index + 2] === 78 && output[index + 3] === 71);

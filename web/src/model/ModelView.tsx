@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+import dracoJs from "three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?url";
+import dracoWasm from "three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { t } from "../i18n/translate.ts";
 
@@ -74,8 +77,33 @@ export default function ModelView({ runId }: { runId: string; size: number }) {
         const manager = new THREE.LoadingManager();
         let resourceFailed = false;
         manager.onError = () => { resourceFailed = true; };
-        manager.setURLModifier(url => { if (!url.startsWith("blob:") && !url.startsWith("data:")) throw new Error("External GLB resource"); return url; });
-        const loaded = await new GLTFLoader(manager).parseAsync(data, "");
+        const decoderUrls = new Set([new URL(dracoJs, location.href), new URL(dracoWasm, location.href)].map(url => {
+          if (url.origin !== location.origin) throw new Error("External decoder resource");
+          return url.href;
+        }));
+        manager.setURLModifier(url => { if (!url.startsWith("blob:") && !url.startsWith("data:") && !decoderUrls.has(new URL(url, location.href).href)) throw new Error("External GLB resource"); return url; });
+        const draco = new DRACOLoader(manager).setDecoderPath({ js: dracoJs, wasm: dracoWasm });
+        const decoder = draco as DRACOLoader & { decodeDracoFile: (...args: unknown[]) => Promise<unknown> };
+        const decode = decoder.decodeDracoFile.bind(decoder);
+        const pending = new Set<Promise<unknown>>();
+        let finished = false;
+        // Loading starts with a tracked decode so a failed parse cannot leave an unhandled preload.
+        draco.preload = () => draco;
+        decoder.decodeDracoFile = (...args) => {
+          if (finished) {
+            const onError = args[5];
+            if (typeof onError === "function") onError(new Error("Decoder closed"));
+            return Promise.resolve();
+          }
+          const task = decode(...args);
+          pending.add(task);
+          void task.then(() => pending.delete(task), () => pending.delete(task));
+          return task;
+        };
+        let loaded: Awaited<ReturnType<GLTFLoader["parseAsync"]>>;
+        try { loaded = await new GLTFLoader(manager).setDRACOLoader(draco).parseAsync(data, ""); }
+        // A failed parse can leave geometry work in flight. Release workers after it settles.
+        finally { finished = true; await Promise.allSettled(pending); draco.dispose(); }
         if (stopped) { for (const scene of loaded.scenes) disposeObject(scene); return; }
         models = loaded.scenes;
         if (resourceFailed) throw new Error("Model texture failed");

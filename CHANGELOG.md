@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Open an archived textured 3D model on demand, with mouse, touch and keyboard controls. Evidence: `docs/testing/result-model.md`, the textured Chromium fixture and the run-page availability test. Closes #77.
+- Open an archived textured 3D model, including Draco-compressed geometry, on demand, with mouse, touch and keyboard controls. Evidence: `docs/testing/result-model.md`, the textured Chromium fixture and the run-page availability test. Closes #77.
 
 - Wait for both project source panels before checking them. Evidence: delayed panel responses in `web/src/links/ProjectLink.browser.test.ts`. Closes #95.
 - Open retained orthophoto and elevation tiles on an offline map, with result coordinates, a scale bar and keyboard controls. Evidence: archive georeferencing and map-route tests, the real Chromium map fixture, and the existing hosted task API acceptance. See `docs/testing/result-map.md`. Closes #75.
