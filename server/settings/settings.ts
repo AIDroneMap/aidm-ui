@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { DEFAULT_BASEMAP, type BasemapSettings } from "../../shared/basemap.ts";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { UpdateCheck, VariantId } from "../../shared/api-types.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
@@ -71,6 +72,7 @@ export interface PendingSwitch {
 }
 
 export interface SettingValues {
+  "map.basemap": BasemapSettings;
   /** The port tried first on the next start; null means the default. */
   "server.port": number | null;
   "lan.enabled": boolean;
@@ -114,6 +116,7 @@ export interface SettingValues {
 }
 
 const DEFAULTS: SettingValues = {
+  "map.basemap": DEFAULT_BASEMAP,
   "server.port": null,
   "lan.enabled": false,
   "lan.passphraseHash": null,

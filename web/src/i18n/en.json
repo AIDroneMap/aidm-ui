@@ -783,5 +783,20 @@
   "link.source_present": "Remove the existing photo source before linking an archive.",
   "link.busy": "Wait for the current operation to finish before changing the link.",
   "run_start.way.link": "Photos come from a linked ZIP archive.",
-  "run_start.link_unknown": "The photo count and size are unknown. The engine checks its photo limit after downloading the archive."
+  "run_start.link_unknown": "The photo count and size are unknown. The engine checks its photo limit after downloading the archive.",
+  "basemap.title": "Basemap",
+  "basemap.help": "Optional raster tiles under the results. Enter an HTTP or HTTPS template with {z}, {x} and {y}, and its attribution. Saving reloads the page when the tile server changes or the basemap is turned on or off. Tiles load only while a map is open.",
+  "basemap.enable": "Use this basemap",
+  "basemap.url": "Tile address template",
+  "basemap.scheme": "Tile numbering",
+  "basemap.xyz": "XYZ",
+  "basemap.tms": "TMS",
+  "basemap.attribution": "Attribution",
+  "basemap.save": "Save basemap",
+  "basemap.loading": "Loading basemap settings...",
+  "basemap.saved": "Basemap settings saved.",
+  "basemap.retry": "Try again",
+  "basemap.failed": "The basemap could not be loaded: {url}. Check the address or reload the page. The results remain available.",
+  "basemap.settings_failed": "Basemap settings could not be loaded. The results remain available.",
+  "settings.basemap_invalid": "Enter an HTTP or HTTPS tile template with {z}, {x} and {y}. Choose XYZ or TMS numbering. Remove any username, password or fragment."
 }
