@@ -17,9 +17,17 @@ export class ProjectStore {
       ORDER BY lastChange DESC, p.id DESC`).all() as Project[];
     return rows.map((row) => ({
       ...row,
+      ...this.resultSizes(row.id),
       photoCount: row.builtin === "sample" ? this.sampleCount : row.photoCount,
       latestState: row.latestState === null || (RUN_STATES as readonly string[]).includes(row.latestState) ? row.latestState : "unknown",
     }));
+  }
+
+  private resultSizes(projectId: number): Pick<ProjectView, "resultsBytes" | "resultArchives"> {
+    const rows = this.db.query(`SELECT r.id AS runId, CAST(json_extract(a.details, '$.archiveSize') AS INTEGER) AS size
+      FROM runs r JOIN run_results a ON a.run_id = r.id
+      WHERE r.project_id = ? AND json_extract(a.details, '$.state') = 'ready' ORDER BY r.id`).all(projectId) as Array<{ runId: number; size: number }>;
+    return { resultsBytes: rows.reduce((sum, row) => sum + row.size, 0), resultArchives: rows };
   }
 
   sampleId(): number | null {

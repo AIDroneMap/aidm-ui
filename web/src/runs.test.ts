@@ -43,6 +43,12 @@ test("a completed, failed or cancelled run is finished", () => {
   expect(isFinished(run)).toBe(false);
 });
 
+test("a completed run fetching results remains live and its event is accepted", () => {
+  const fetching = { ...run, state: "completed" as const, step: "results" as const, results: { state: "fetching" as const, archiveSize: null, outputs: [] } };
+  expect(isFinished(fetching)).toBe(false);
+  expect(parseRunEvent(JSON.stringify(fetching))).toEqual(fetching);
+});
+
 test("log lines are appended in order", () => {
   const first = mergeLog(EMPTY_LOG, 0, ["a", "b"]);
   expect(mergeLog(first, 2, ["c"])).toEqual({ lines: ["a", "b", "c"], count: 3 });

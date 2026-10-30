@@ -1,0 +1,4 @@
+CREATE TABLE run_results (
+  run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+  details TEXT NOT NULL
+) STRICT;

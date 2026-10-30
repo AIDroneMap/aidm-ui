@@ -789,10 +789,11 @@ test("the sample job completes on the Mac path, from the first click on a Mac wi
   const [uuid] = [...engine.tasks.keys()] as [string];
   expect(engine.uploads.map((upload) => upload.fileName)).toEqual(["DJI_0001.JPG", "DJI_0002.JPG"]);
   engine.setTask(uuid, { statusCode: 20, processingTime: 2000, progress: 40 });
-  const results = new Uint8Array([80, 75, 3, 4, 9, 9, 9]);
+  const results = zip;
   engine.setTask(uuid, { statusCode: 40, processingTime: 9000, progress: 100, results });
   const read = async () => (await (await send(h, "GET", `/api/runs/${run.id}`)).json()) as RunView;
   await eventually(async () => (await read()).state === "completed");
+  await eventually(async () => (await read()).resultsAvailable);
   expect(await read()).toMatchObject({ engineName: "This computer", engineLocal: true });
   const download = await send(h, "GET", `/api/runs/${run.id}/results`);
   expect(new Uint8Array(await download.arrayBuffer())).toEqual(results);

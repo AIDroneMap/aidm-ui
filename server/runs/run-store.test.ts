@@ -172,7 +172,7 @@ test("version 6 uploads survive the run metadata migration", async () => {
   const old = new Database(":memory:", { strict: true });
   try {
     applyMigrations(old, migrations.slice(0, 6));
-    const projectId = new ProjectStore(old).create("Field", "Notes").id;
+    const projectId = (old.query("INSERT INTO projects (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").get("Field", "Notes", "then", "then") as { id: number }).id;
     const uploads = new UploadStore(old, folder);
     const bytes = "photo bytes";
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -180,7 +180,7 @@ test("version 6 uploads survive the run metadata migration", async () => {
     expect(await uploads.chunk(projectId, session.id, 0, sha256, new Response(bytes).body)).toBe("ok");
     expect(await uploads.complete(projectId, session.id)).toBe("ok");
     old.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')").run(projectId);
-    expect(applyMigrations(old, migrations)).toEqual([7, 8, 9]);
+    expect(applyMigrations(old, migrations)).toEqual([7, 8, 9, 10]);
     expect(uploads.list(projectId, 0, 100)).toEqual({ files: [{ name: "flight.jpg", size: bytes.length, sha256, kind: "photo" }], nextOffset: null });
     const files = join(folder, "projects", String(projectId), "files");
     expect(readFileSync(join(files, readdirSync(files)[0]!), "utf8")).toBe(bytes);
@@ -196,7 +196,7 @@ test("version 8 imported photos and flight choices survive the run metadata migr
   try {
     old.run("PRAGMA foreign_keys = ON");
     applyMigrations(old, migrations.slice(0, 8));
-    const projectId = new ProjectStore(old).create("Field", "Survey notes").id;
+    const projectId = (old.query("INSERT INTO projects (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").get("Field", "Survey notes", "then", "then") as { id: number }).id;
     const source = join(root, "photos");
     mkdirSync(source);
     const bytes = detailedTiff(true);
@@ -215,7 +215,7 @@ test("version 8 imported photos and flight choices survive the run metadata migr
     expect(cachedBefore[0]?.facts).not.toBeNull();
     expect(before.flights[0]!.excludedPhotoCount).toBe(1);
     old.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', 'created', 'then', 'then')").run(projectId);
-    expect(applyMigrations(old, migrations)).toEqual([9]);
+    expect(applyMigrations(old, migrations)).toEqual([9, 10]);
     expect(await imports.view(projectId, 0, 10)).toEqual(sourceBefore);
     expect(imports.photoRows(projectId)).toEqual(cachedBefore);
     expect(await photos.facts(projectId, 0, 10)).toEqual(before);

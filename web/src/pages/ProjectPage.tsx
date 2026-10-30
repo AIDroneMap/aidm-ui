@@ -6,6 +6,7 @@ import { Button } from "../controls/Button.tsx";
 import { Dialog } from "../controls/Dialog.tsx";
 import { TextField } from "../controls/TextField.tsx";
 import { t } from "../i18n/translate.ts";
+import { formatBytes } from "../format.ts";
 import { useProjectKey } from "../router.ts";
 import { projectName } from "./HomePage.tsx";
 import { UploadPanel } from "../upload/UploadPanel.tsx";
@@ -30,6 +31,9 @@ export function ProjectForm({ project, name, notes, working, onName, onNotes, on
     <a href="#/">{t("projects.back")}</a>
     <h1>{project === null ? t("projects.new") : projectName(project)}</h1>
     {sample && <><p>{t("projects.sample_help")}</p><p><a href="#/sample">{t("projects.sample_link")}</a></p></>}
+    {project?.resultsBytes !== undefined && <section><h2>{t("results.title")}</h2><p>{t("projects.results_total", { size: formatBytes(project.resultsBytes) })}</p>
+      <ul>{project.resultArchives?.map(archive => <li key={archive.runId}><a href={`#/runs/${archive.runId}`}>{t("projects.result_run", { id: archive.runId })}</a>{t("results.size_suffix", { size: formatBytes(archive.size) })}</li>)}</ul>
+    </section>}
     <form onSubmit={submit}>
       {!sample && <TextField id="project-name" label={t("projects.name")} value={name} onChange={event => onName(event.target.value)} required maxLength={200} />}
       <div className="field"><label htmlFor="project-notes">{t("projects.notes")}</label><textarea id="project-notes" value={notes} onChange={event => onNotes(event.target.value)} maxLength={100000} /></div>

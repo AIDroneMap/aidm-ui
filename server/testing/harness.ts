@@ -186,6 +186,7 @@ export function openHarness(
   const projectDeletion = new ProjectDeletion(projects, engineStore, dataFolder, log);
   const imports = new ImportStore(db, dataFolder);
   const tracker = new RunTracker({
+    beginResultsWrite: id => projectDeletion.beginWrite(id),
     runs,
     engines: engineStore,
     dataFolder,
