@@ -42,11 +42,38 @@ test("opens a model on demand, handles interaction and rejects unsafe resources"
     browser = await startBrowser(await browserPath(), directory, "about:blank");
     socket = new WebSocket((await findBrowserPage(Number(browser.port))).webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => { socket!.onopen = () => resolve(); socket!.onerror = () => reject(new Error("Browser connection failed")); });
-    let id = 0; const pending = new Map<number, (value: any) => void>();
-    socket.onmessage = event => { const message = JSON.parse(String(event.data)); if (message.id) { pending.get(message.id)?.(message); pending.delete(message.id); } };
-    const send = (method: string, params: object = {}) => new Promise<any>(resolve => { const next = ++id; pending.set(next, resolve); socket!.send(JSON.stringify({ id: next, method, params })); });
-    const evaluate = async (expression: string) => { const answer = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (answer.result.exceptionDetails) throw new Error(JSON.stringify(answer.result.exceptionDetails)); return answer.result.result.value; };
-    const wait = async (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 10000; const check = async () => (await (${expression})) ? resolve(true) : Date.now() > end ? reject(new Error('condition timed out')) : setTimeout(check, 20); check(); })`);
+    let id = 0;
+    let evaluating = "opening the browser";
+    const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+    socket.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      const entry = pending.get(message.id);
+      if (!entry) return;
+      clearTimeout(entry.timer); pending.delete(message.id);
+      if (message.error) entry.reject(new Error(message.error.message));
+      else entry.resolve(message);
+    };
+    socket.onclose = () => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error("Browser connection closed")); } pending.clear(); };
+    const send = (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+      const next = ++id;
+      const timer = setTimeout(() => { pending.delete(next); reject(new Error(`Browser command ${method} timed out while ${evaluating}. Requests: ${JSON.stringify(requests)}. ${browser?.diagnostics()}`)); }, 12000);
+      pending.set(next, { resolve, reject, timer });
+      socket!.send(JSON.stringify({ id: next, method, params }));
+    });
+    const evaluate = async (expression: string) => {
+      evaluating = expression.slice(0, 400);
+      const answer = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+      if (answer.result.exceptionDetails) throw new Error(JSON.stringify(answer.result.exceptionDetails));
+      return answer.result.result.value;
+    };
+    const wait = async (expression: string) => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (await evaluate(`(async () => Boolean(await (${expression})))()`)) return;
+        await Bun.sleep(20);
+      }
+      throw new Error(`Waiting for ${expression.slice(0, 400)}. Requests: ${JSON.stringify(requests)}. Page: ${await evaluate("document.body.innerText")} ${browser?.diagnostics()}`);
+    };
     const click = (text: string) => evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === ${JSON.stringify(text)}).click()`);
     await send("Network.enable");
     await send("Page.enable");
