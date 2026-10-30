@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open retained orthophoto and elevation tiles on an offline map, with result coordinates, a scale bar and keyboard controls. Evidence: archive georeferencing and map-route tests, the real Chromium map fixture, and the existing hosted task API acceptance. See `docs/testing/result-map.md`. Closes #75.
+
 - Review a project with one of six presets, check the chosen engine and photo limit, and start a run from uploaded photos or an imported folder. Evidence: preset, input, route and browser tests, plus the existing hosted task API run-flow acceptance. See `docs/testing/project-runs.md`. Closes #68.
 - Wait for each run state in the queued-restart lifecycle test. Evidence: the delayed task-info regression in `server/local-engine/lifecycle.test.ts`. Closes #90.
 - Wait for the photo-facts document before reading its body. Evidence: the delayed-document regression in `web/src/photos/PhotoFacts.browser.test.ts`. Closes #88.

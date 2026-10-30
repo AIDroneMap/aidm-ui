@@ -745,5 +745,19 @@
   "project_run.engine_unavailable": "Choose an enabled engine that is running.",
   "project_run.preset_unavailable": "This engine does not support the settings needed for this preset. Choose another preset or engine.",
   "project_run.photos_changed": "The project photos changed or cannot be read. Check the photo source and review the run again.",
-  "project_run.metadata_pending": "Reading photo details. The review will update when they are ready."
+  "project_run.metadata_pending": "Reading photo details. The review will update when they are ready.",
+  "map.title": "Map",
+  "map.open": "Open the map",
+  "map.loading": "Loading the map...",
+  "map.unavailable": "A map is not available for this run.",
+  "map.error": "Could not open the map. Try again.",
+  "map.retry": "Try again",
+  "map.tile_error": "Some map tiles could not be loaded. Try again.",
+  "map.layers": "Map layers",
+  "map.layer.orthophoto": "Orthophoto",
+  "map.layer.surface": "Surface model",
+  "map.layer.ground": "Ground model",
+  "map.canvas": "Result map. Use arrow keys to pan and plus or minus to zoom.",
+  "map.coordinates": "Map center, latitude: {latitude}, longitude: {longitude}",
+  "map.keyboard": "Use arrow keys to pan and plus or minus to zoom."
 }

@@ -9,7 +9,10 @@ import { findBrowserPage } from "../controls/browser-target.ts";
 test("project archive links open the requested run, including after a reload", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-run-page-"));
   const requests: string[] = [];
-  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser" });
+  const build = await Bun.build({ entrypoints: [new URL("./run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "worker-url", setup(builder) {
+    builder.onResolve({ filter: /maplibre-gl-worker\.mjs\?url$/ }, () => ({ path: "worker-url", namespace: "fixture" }));
+    builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: 'export default "/map-worker.mjs"', loader: "js" }));
+  } }] });
   expect(build.success).toBe(true);
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
     const path = new URL(request.url).pathname;

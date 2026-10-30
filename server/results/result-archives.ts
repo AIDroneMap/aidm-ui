@@ -1,6 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { RunMapView } from "../../shared/map.ts";
+import { readMapMetadata } from "./map-metadata.ts";
 import type { RunResultsView } from "../../shared/api-types.ts";
 import { downloadArchive } from "../downloads/downloader.ts";
 import type { RunRecord, RunStore } from "../runs/run-store.ts";
@@ -45,6 +47,22 @@ export class ResultArchives {
       const entry = saved.entries.find(entry => entry.name === output.path);
       return entry ? [{ name, size: entry.size }] : [];
     }) : [] };
+  }
+
+  /** Already validated members for internal readers, subject to the same saved-file check as downloads. */
+  indexedEntries(id: number): readonly ArchiveEntry[] | null {
+    if (this.view(id)?.state !== "ready") return null;
+    return this.deps.runs.results<SavedResults>(id)?.entries ?? null;
+  }
+
+  async map(run: RunRecord): Promise<RunMapView> {
+    const unavailable: RunMapView = { state: "unavailable", layers: [] };
+    const entries = this.indexedEntries(run.id);
+    if (!entries) return unavailable;
+    try {
+      const view = await readMapMetadata(this.path(run), entries);
+      return this.view(run.id)?.state === "ready" ? view : unavailable;
+    } catch { return unavailable; }
   }
 
   ensure(run: RunRecord, retry = false): boolean {
