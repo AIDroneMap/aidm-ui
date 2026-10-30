@@ -47,6 +47,12 @@ export class ResultArchives {
     }) : [] };
   }
 
+  /** Already validated members for internal readers, subject to the same saved-file check as downloads. */
+  indexedEntries(id: number): readonly ArchiveEntry[] | null {
+    if (this.view(id)?.state !== "ready") return null;
+    return this.deps.runs.results<SavedResults>(id)?.entries ?? null;
+  }
+
   ensure(run: RunRecord, retry = false): boolean {
     if (this.controller.signal.aborted || this.active.has(run.id) || run.state !== "completed" || run.taskUuid === null) return false;
     const saved = this.view(run.id);

@@ -69,7 +69,7 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
       }
       if (offset === 0) snapshot.current = value.revision;
       setReview(value); setLoading(false);
-      if (value.facts.pendingMetadata > 0) timer = setTimeout(() => setRefresh(value => value + 1), 300);
+      if (value.facts && value.facts.pendingMetadata > 0) timer = setTimeout(() => setRefresh(value => value + 1), 300);
     }, error => { if (current === generation.current) { setReview(null); setLoading(false); fail(error); } });
     return () => { generation.current++; clearTimeout(timer); };
   }, [open, projectId, engineId, preset, offset, refresh]);
@@ -115,11 +115,11 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
         <TextField id="run-name" label={t("run_start.name")} value={name} onChange={event => setName(event.target.value)} required maxLength={200} />
         <p>{t("run_start.selected_preset", { preset: t(`run_start.preset.${review.preset}`) })}</p>
         <h4>{t("run_start.photos")}</h4>
-        <p>{t("run_start.photo_counts", { included: review.photos.included, excluded: review.photos.excluded, total: review.photos.total, size: formatBytes(review.photos.bytes) })}</p>
+        {review.wayIn === "link" ? <p>{t("run_start.link_unknown")}</p> : review.photos.included !== null && review.photos.excluded !== null && review.photos.total !== null && review.photos.bytes !== null && <p>{t("run_start.photo_counts", { included: review.photos.included, excluded: review.photos.excluded, total: review.photos.total, size: formatBytes(review.photos.bytes) })}</p>}
         <p>{t(`run_start.way.${review.wayIn}`)}</p>
-        <ul>{review.facts.flights.map(flight => <li key={flight.id}>{t("run_start.flight", { camera: [flight.make, flight.model].filter(Boolean).join(" ") || t("photos.unknown_camera"), first: flight.first, last: flight.last, count: flight.photoCount, excluded: flight.excludedPhotoCount })}</li>)}</ul>
+        {review.facts && <><ul>{review.facts.flights.map(flight => <li key={flight.id}>{t("run_start.flight", { camera: [flight.make, flight.model].filter(Boolean).join(" ") || t("photos.unknown_camera"), first: flight.first, last: flight.last, count: flight.photoCount, excluded: flight.excludedPhotoCount })}</li>)}</ul>
         {offsets.length > 0 && <Button className="secondary" onClick={() => { setLoading(true); setOffset(offsets[offsets.length - 1]!); setOffsets(offsets.slice(0, -1)); }}>{t("upload.previous")}</Button>}
-        {review.facts.nextOffset !== null && <Button className="secondary" onClick={() => { setLoading(true); setOffsets([...offsets, offset]); setOffset(review.facts.nextOffset!); }}>{t("upload.next")}</Button>}
+        {review.facts.nextOffset !== null && <Button className="secondary" onClick={() => { setLoading(true); setOffsets([...offsets, offset]); setOffset(review.facts!.nextOffset!); }}>{t("upload.next")}</Button>}</>}
         <h4>{t("run_start.engine_facts", { name: review.engine.name })}</h4>
         <ul><li>{t("run_start.version", { value: info?.version ?? t("run_start.not_reported") })}</li>
           <li>{t("run_start.engine_version", { value: info?.engineVersion ?? t("run_start.not_reported") })}</li>

@@ -148,6 +148,23 @@ export class TaskClient {
     return { ok: true, value: { uuid } };
   }
 
+  /** The API submits a ZIP URL directly. It downloads the photos after returning the identity. */
+  async createLinkedTask(name: string, options: TaskOption[], zipurl: string): Promise<TaskApiResult<{ uuid: string }>> {
+    const reported = await this.options();
+    if (!reported.ok) return reported;
+    const invalid = validateOptions(options, reported.value);
+    if (invalid !== null) return { ok: false, failure: invalid };
+    const form = new FormData();
+    form.append("name", name);
+    form.append("options", JSON.stringify(options));
+    form.append("zipurl", zipurl);
+    const body = await this.requestObject("POST", "/task/new", { body: form });
+    if (!body.ok) return body;
+    const uuid = body.value.uuid;
+    if (typeof uuid !== "string" || uuid === "") return this.badResponse(`${this.endpoint.address}/task/new`, "The answer has no uuid.");
+    return { ok: true, value: { uuid } };
+  }
+
   async options(signal?: AbortSignal): Promise<TaskApiResult<EngineOption[]>> {
     const result = await this.request("GET", "/options", { signal });
     if (!result.ok) return result;

@@ -24,9 +24,9 @@ export interface RunReviewView {
   };
   preset: PresetId;
   presets: Array<{ id: PresetId; departures: ReviewOption[] }>;
-  wayIn: "upload" | "import";
-  photos: { included: number; excluded: number; total: number; bytes: number };
-  facts: ProjectPhotoFactsView;
+  wayIn: "upload" | "import" | "link";
+  photos: { included: number | null; excluded: number | null; total: number | null; bytes: number | null };
+  facts: ProjectPhotoFactsView | null;
   options: ReviewOption[];
   outputs: RunOutput[];
   alwaysProduced: Array<(typeof SERVER_OUTPUT_KEYS)[number]>;

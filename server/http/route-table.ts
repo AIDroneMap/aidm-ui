@@ -1,3 +1,4 @@
+import type { LinkStore } from "../projects/link-store.ts";
 import type { ProjectRuns } from "../projects/project-runs.ts";
 import type { ImportStore } from "../projects/import-store.ts";
 import { errorResponse } from "../../shared/api-error.ts";
@@ -38,6 +39,7 @@ export interface RouteContext {
   identity: InstanceIdentity;
   projects: ProjectStore;
   projectDeletion: ProjectDeletion;
+  links: LinkStore;
   uploads: UploadStore;
   photos: PhotoStore;
   imports: ImportStore;

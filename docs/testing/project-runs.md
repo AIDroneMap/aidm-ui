@@ -1,6 +1,6 @@
 # Project preset and start flow
 
-A project run uses the project's uploaded files or its imported folder. The browser asks the server for a review of the chosen preset and engine. The server reads the engine's current options and facts through the task API. It reconciles those options with the catalogue and validates the values it will submit.
+A project run uses the project's uploaded files, imported folder or linked ZIP address. [Linked sources](linked-photos.md) use single-step task creation and have unknown photo counts before the engine fetches them. The browser asks the server for a review of the chosen preset and engine. The server reads the engine's current options and facts through the task API. It reconciles those options with the catalogue and validates the values it will submit.
 
 The review revision covers the photo inventory, saved exclusions, preset, engine version, image limit and submitted settings. Start checks them again. An outdated revision is refused before task creation. The operator can reload the review and keep the edited run name.
 

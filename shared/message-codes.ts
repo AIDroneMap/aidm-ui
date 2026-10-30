@@ -2,6 +2,12 @@
 // each one into text through web/src/i18n/en.json; a test checks that every
 // code here has a translation.
 export const MESSAGE_CODES = [
+  "link.invalid_url",
+  "link.unreachable",
+  "link.not_zip",
+  "link.unknown_size",
+  "link.source_present",
+  "link.busy",
   "project_run.no_photos",
   "project_run.metadata_pending",
   "project_run.already_running",
