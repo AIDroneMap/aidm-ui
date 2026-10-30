@@ -13,9 +13,10 @@ test("paginates flights, selects with the keyboard, and ignores stale responses"
   let putBody = "";
   let releasePut: (() => void) | undefined;
   let release: (() => void) | undefined;
+  let releaseDocument: (() => void) | undefined;
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (url.pathname === "/") { response.end('<div id="root"></div><script type="module" src="/fixture.js"></script>'); return; }
+    if (url.pathname === "/") { response.writeHead(200, { "content-type": "text/html" }); response.write("<!doctype html><html><head>"); await new Promise<void>(resolve => { releaseDocument = resolve; }); response.end('</head><body><div id="root"></div><script type="module" src="/fixture.js"></script></body></html>'); return; }
     if (url.pathname === "/fixture.js") { response.setHeader("content-type", "text/javascript"); response.end(await readFile(join(directory, "fixture.js"))); return; }
     if (request.method === "PUT") { for await (const part of request) putBody += part; await new Promise<void>(resolve => { releasePut = resolve; }); response.writeHead(204); response.end(); return; }
     requests++;
@@ -43,8 +44,13 @@ test("paginates flights, selects with the keyboard, and ignores stale responses"
     const evaluate = async (expression: string) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
     const wait = (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 5000; const check = () => { if (${expression}) resolve(true); else if (Date.now() > end) reject(new Error('condition timed out')); else setTimeout(check, 20); }; check(); })`);
     await send("Page.navigate", { url: `http://127.0.0.1:${address.port}/` });
-    await Bun.sleep(300);
-    await wait("document.body.textContent.includes('No capture dates found.')");
+    expect(await evaluate("document.body === null")).toBe(true);
+    const readiness = wait("document.body && document.body.textContent.includes('No capture dates found.')").then(() => null, error => error);
+    await evaluate("true");
+    expect(releaseDocument).toBeDefined();
+    releaseDocument!();
+    const readinessError = await readiness;
+    if (readinessError) throw readinessError;
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Next').click()");
     await wait("document.body.textContent.includes('1 of 3 photos left out')");
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Leave all out').focus()");
@@ -73,6 +79,7 @@ test("paginates flights, selects with the keyboard, and ignores stale responses"
   } finally {
     releasePut?.();
     release?.();
+    releaseDocument?.();
     socket?.close();
     await browser?.stop();
     server.closeAllConnections();
