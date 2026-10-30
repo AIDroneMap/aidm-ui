@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add explanations for 63 catalogue options, six presets and 11 groups. Coverage tests check all five option texts, preset departures and orphaned keys in `web/src/i18n/coverage.test.ts`.
+- Add explanations for 63 catalogue options, six presets and 11 groups, including the engine-stated quality cost, GPS units and option interactions. Evidence: the maintainer review and pinned engine sources in `docs/notes/0066-catalogue-wording-evidence.md`, plus coverage tests for all five option texts, preset departures and orphaned keys in `web/src/i18n/coverage.test.ts`.
 - Use a basic credential store for temporary test browser profiles. Evidence: the controlled browser diagnostic in #103 and the browser startup tests. Closes #103.
 - Open an archived textured 3D model, including Draco-compressed geometry, on demand, with mouse, touch and keyboard controls. Evidence: `docs/testing/result-model.md`, the textured Chromium fixture and the run-page availability test. Closes #77.
 - Wait for result tile requests after a basemap failure. Evidence: the delayed request observation in `web/src/basemap/Basemap.browser.test.ts`. Closes #101.

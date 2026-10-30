@@ -1,6 +1,8 @@
 # Catalogue wording evidence
 
-Engine pin: `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. These are draft claims pending maintainer entry review.
+Engine pin: `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. The maintainer reviewed all 63 options, 11 groups and six presets on PR #83 at commit `a54c419`. The [recorded review](https://github.com/AIDroneMap/aidm-ui/pull/83#issuecomment-6524752670) approves the content and requests the omissions corrected here.
+
+The ground-model preset requests `dtm`. The engine turns on point classification when `dtm` is set, as shown in [modules/config.py:924](https://github.com/AIDroneMap/aidm/blob/68c643965349e7e0bb5e2a0595bcbeca645c70fe/modules/config.py#L924).
 
 | Option | Cost statement source | Consumer |
 | --- | --- | --- |
@@ -68,7 +70,8 @@ Engine pin: `68c643965349e7e0bb5e2a0595bcbeca645c70fe`. These are draft claims p
 | `video-limit` | [modules/config.py:776](https://github.com/AIDroneMap/aidm/blob/68c643965349e7e0bb5e2a0595bcbeca645c70fe/modules/config.py#L776) | [stages/dataset.py:140](https://github.com/AIDroneMap/aidm/blob/68c643965349e7e0bb5e2a0595bcbeca645c70fe/stages/dataset.py#L140) |
 | `video-resolution` | [modules/config.py:783](https://github.com/AIDroneMap/aidm/blob/68c643965349e7e0bb5e2a0595bcbeca645c70fe/modules/config.py#L783) | [stages/dataset.py:139](https://github.com/AIDroneMap/aidm/blob/68c643965349e7e0bb5e2a0595bcbeca645c70fe/stages/dataset.py#L139) |
 
-Uncertainties to list in the PR:
+Entries whose engine help leaves details unspecified, accepted in the maintainer review:
+
 - `pc-copc`: The engine declaration identifies COPC output but does not explain compatibility or access behavior.
 - `mesh-size`: The engine uses this as a maximum, but does not explain the resulting file size or detail trade-off.
 - `sfm-algorithm`: The engine does not explain the practical differences among all listed methods.
