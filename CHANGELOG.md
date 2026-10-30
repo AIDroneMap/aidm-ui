@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wait for the photo-facts document before reading its body. Evidence: the delayed-document regression in `web/src/photos/PhotoFacts.browser.test.ts`. Closes #88.
 - Fetch completed runs' archives into local project storage, serve outputs and tiles without disk extraction, show sizes, and delete results while retaining settings and logs. Evidence: results route, ZIP64, downloader and browser tests, plus the existing hosted task API acceptance test. See `docs/testing/results-archive.md`. Closes #64.
 
 - Share the run page and follow logic, show translated engine stages, and retain run metadata. Run store, sample job, stage and page tests cover the change.
