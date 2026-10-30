@@ -520,7 +520,7 @@ export interface ProjectView {
   name: string;
   notes: string;
   builtin: "sample" | null;
-  photoCount: number;
+  photoCount: number | null;
   runCount: number;
   latestState: RunState | null;
   /** Latest persisted metadata, source, or run update. */

@@ -1,3 +1,4 @@
+import { LinkStore } from "../projects/link-store.ts";
 import { ProjectRuns } from "../projects/project-runs.ts";
 import { RunInputs } from "../projects/run-inputs.ts";
 import { ImportStore } from "../projects/import-store.ts";
@@ -279,12 +280,14 @@ export function openHarness(
     log,
   });
 
+  const links = new LinkStore(db);
   const photos = new PhotoStore(db, dataFolder, imports);
-  const projectRuns = new ProjectRuns({ projects, projectDeletion, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
+  const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     projects,
     projectDeletion,
+    links,
     uploads: new UploadStore(db, dataFolder),
     photos,
     projectRuns,

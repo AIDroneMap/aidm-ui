@@ -1,3 +1,4 @@
+import type { LinkStore } from "./link-store.ts";
 import { createHash } from "node:crypto";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { RunView } from "../../shared/api-types.ts";
@@ -24,13 +25,15 @@ type Outcome<T> = { ok: true; value: T } | { ok: false; status: number; error: A
 function refuse(status: number, code: ApiError["code"], data: ApiError["data"] = {}): { ok: false; status: number; error: ApiError } {
   return { ok: false, status, error: { code, data } };
 }
-interface Reviewed { view: RunReviewView; inputs: RunInputSnapshot; options: TaskOption[]; client: TaskClient }
+type ReviewedInputs = RunInputSnapshot | { wayIn: "link"; revision: string; url: string };
+interface Reviewed { view: RunReviewView; inputs: ReviewedInputs; options: TaskOption[]; client: TaskClient }
 interface Preparing { abort: AbortController; done: Promise<void>; cancelFailure: ApiError | null }
 interface Dependencies {
   projects: ProjectStore;
   projectDeletion: ProjectDeletion;
   inputs: RunInputs;
   photos: PhotoStore;
+  links: LinkStore;
   engines: EngineStore;
   runs: RunStore;
   tracker: RunTracker;
@@ -61,11 +64,19 @@ export class ProjectRuns {
     if (!info.ok) return { ok: false, status: 502, error: problemFromFailure(info.failure) };
     if (!isSupportedVersion(info.value.version)) return refuse(409, "engine.unsupported_version", { version: info.value.version, minimum: MIN_TASK_API_VERSION });
     if (!reported.ok) return { ok: false, status: 502, error: problemFromFailure(reported.failure) };
-    let snapshot: RunInputSnapshot;
+    let snapshot: ReviewedInputs;
     let facts;
     try {
-      facts = await photos.facts(id, offset, 50);
-      snapshot = await inputs.snapshot(id);
+      if (this.deps.links.isBusy(id)) return refuse(409, "link.busy");
+      const url = this.deps.links.get(id);
+      if (url !== null) {
+        facts = null;
+        snapshot = { wayIn: "link", revision: this.deps.links.revision(id), url };
+      } else {
+        facts = await photos.facts(id, offset, 50);
+        snapshot = await inputs.snapshot(id);
+        if (this.deps.links.isBusy(id) || this.deps.links.has(id)) return refuse(409, "project_run.review_changed");
+      }
     } catch (error) {
       if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
       throw error;
@@ -85,9 +96,9 @@ export class ProjectRuns {
     if (engine.kind === "local" && reported.value.some(option => option.name === "no-gpu")) options.push({ name: "no-gpu", value: gpu !== true });
     const invalid = validateOptions(options, reported.value);
     let blocked: ApiError | null = null;
-    if (!snapshot.photoCount) blocked = { code: "project_run.no_photos", data: {} };
-    else if (facts.pendingMetadata > 0) blocked = { code: "project_run.metadata_pending", data: {} };
-    else if (info.value.maxImages != null && snapshot.photoCount > info.value.maxImages) blocked = { code: "project_run.image_limit", data: { count: snapshot.photoCount, limit: info.value.maxImages } };
+    if (snapshot.wayIn !== "link" && !snapshot.photoCount) blocked = { code: "project_run.no_photos", data: {} };
+    else if (facts && facts.pendingMetadata > 0) blocked = { code: "project_run.metadata_pending", data: {} };
+    else if (snapshot.wayIn !== "link" && info.value.maxImages != null && snapshot.photoCount > info.value.maxImages) blocked = { code: "project_run.image_limit", data: { count: snapshot.photoCount, limit: info.value.maxImages } };
     else if (plan.unsupportedPresetOptions.length || !outputFlags.includes("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
     else if (this.deps.runs.listUnfinished().some(run => run.projectId === id)) blocked = { code: "project_run.already_running", data: {} };
@@ -95,7 +106,7 @@ export class ProjectRuns {
     return { ok: true, value: { inputs: snapshot, client, options, view: {
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
       preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, supported).departures.map(detail) })),
-      wayIn: snapshot.wayIn, photos: { included: snapshot.photoCount, excluded: snapshot.excludedPhotoCount, total: snapshot.totalPhotoCount, bytes: snapshot.photoBytes },
+      wayIn: snapshot.wayIn, photos: snapshot.wayIn === "link" ? { included: null, excluded: null, total: null, bytes: null } : { included: snapshot.photoCount, excluded: snapshot.excludedPhotoCount, total: snapshot.totalPhotoCount, bytes: snapshot.photoBytes },
       facts, options: plan.departures.map(detail), outputs: plan.outputs, alwaysProduced: outputFlags, revision, blocked,
     } } };
   }
@@ -117,10 +128,12 @@ export class ProjectRuns {
       const { view } = reviewed.value;
       if (view.blocked) return { ok: false, status: 409, error: view.blocked };
       if (request.revision !== view.revision) return refuse(409, "project_run.review_changed");
+      if (this.deps.links.isBusy(id) || (reviewed.value.inputs.wayIn === "link" && this.deps.links.revision(id) !== reviewed.value.inputs.revision)) return refuse(409, "project_run.review_changed");
       const run = this.deps.runs.create({ projectId: id, engineId: request.engineId, name: request.name, preset: request.preset, wayIn: view.wayIn, options: reviewed.value.options });
+      if (view.wayIn === "link") this.deps.links.recordRun(id, run.id);
       const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
       this.preparing.set(run.id, preparing);
-      this.deps.tracker.update(run.id, { state: "uploading", step: "upload", upload: { done: 0, total: view.photos.included } });
+      this.deps.tracker.update(run.id, { state: view.wayIn === "link" ? "created" : "uploading", step: view.wayIn === "link" ? null : "upload", upload: view.photos.included === null ? null : { done: 0, total: view.photos.included } });
       preparing.done = this.prepare(id, run.id, request.name, reviewed.value, preparing).finally(() => {
         this.preparing.delete(run.id); this.starting.delete(id); release();
       });
@@ -140,17 +153,20 @@ export class ProjectRuns {
     try {
       signal.throwIfAborted();
       // Finish the bounded init request so cancellation can remove the task by its returned identity.
-      const created = await client.createTask(name, options);
+      const created = inputs.wayIn === "link" ? await client.createLinkedTask(name, options, inputs.url) : await client.createTask(name, options);
       if (!created.ok) { this.finish(id, signal.aborted ? "cancelled" : "failed", signal.aborted ? null : problemFromFailure(created.failure)); return; }
       uuid = created.value.uuid;
-      tracker.update(id, { taskUuid: uuid });
-      signal.throwIfAborted();
-      const copied = await this.deps.inputs.copyToTask(project, inputs, client, uuid, signal, (done, total) => tracker.update(id, { upload: { done, total } }));
-      if (!copied.ok) { this.finish(id, "failed", problemFromFailure(copied.failure)); return; }
-      signal.throwIfAborted();
-      const result = await client.commitTask(uuid, signal);
-      if (!result.ok) { this.finish(id, signal.aborted ? "cancelled" : "failed", signal.aborted ? null : problemFromFailure(result.failure)); return; }
-      committed = true;
+      committed = inputs.wayIn === "link";
+      tracker.update(id, { taskUuid: uuid, ...(inputs.wayIn === "link" ? { state: "queued" as const } : {}) });
+      if (inputs.wayIn !== "link") {
+        signal.throwIfAborted();
+        const copied = await this.deps.inputs.copyToTask(project, inputs, client, uuid, signal, (done, total) => tracker.update(id, { upload: { done, total } }));
+        if (!copied.ok) { this.finish(id, "failed", problemFromFailure(copied.failure)); return; }
+        signal.throwIfAborted();
+        const result = await client.commitTask(uuid, signal);
+        if (!result.ok) { this.finish(id, signal.aborted ? "cancelled" : "failed", signal.aborted ? null : problemFromFailure(result.failure)); return; }
+        committed = true;
+      }
       if (signal.aborted) {
         const cancelled = await client.cancelTask(uuid);
         if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(id, "cancelled", null); return; }

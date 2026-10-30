@@ -142,10 +142,10 @@ test("cancelling during task creation waits for its identity and removes it with
 test("review waits for bounded metadata preparation before showing the complete flight list", async () => {
   for (let index = 0; index < 33; index++) await upload(`photo-${index}.jpg`, Buffer.from(`synthetic photo ${index}`));
   const pending = await (await review()).json() as RunReviewView;
-  expect(pending.facts.pendingMetadata).toBeGreaterThan(0);
+  expect(pending.facts!.pendingMetadata).toBeGreaterThan(0);
   expect(pending.blocked?.code).toBe("project_run.metadata_pending");
   const complete = await (await review()).json() as RunReviewView;
-  expect(complete.facts.pendingMetadata).toBe(0);
+  expect(complete.facts!.pendingMetadata).toBe(0);
   expect(complete.blocked).toBeNull();
 });
 
@@ -173,11 +173,11 @@ test("imported runs honor flight exclusions and leave the original folder unchan
     const original = await folderSnapshot(folder);
     expect((await request("PUT", `/api/projects/${project}/import`, { path: folder })).status).toBe(200);
     const initial = await (await review()).json() as RunReviewView;
-    expect(initial.facts.flightCount).toBe(2);
-    expect((await request("PUT", `/api/projects/${project}/flights/${initial.facts.flights[0]!.id}`, { excluded: true })).status).toBe(204);
+    expect(initial.facts!.flightCount).toBe(2);
+    expect((await request("PUT", `/api/projects/${project}/flights/${initial.facts!.flights[0]!.id}`, { excluded: true })).status).toBe(204);
     const view = await (await review()).json() as RunReviewView;
     expect(view).toMatchObject({ wayIn: "import", photos: { included: 1, excluded: 1, total: 2 } });
-    expect(view.facts.flights[0]!.excludedPhotoCount).toBe(1);
+    expect(view.facts!.flights[0]!.excludedPhotoCount).toBe(1);
     const response = await start(view); expect(response.status).toBe(202);
     const run = await response.json() as RunView;
     await eventually(async () => [...api.tasks.values()].some(task => task.committed));
@@ -213,4 +213,76 @@ test("disabling the engine while Start checks its facts prevents task creation",
   h.engineStore.update(engine, { enabled: false });
   expect((await response).status).toBe(409);
   expect(api.tasks.size).toBe(0);
+});
+
+test("a checked ZIP link starts directly without a photo upload or commit", async () => {
+  const methods: string[] = [];
+  const source = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => {
+    methods.push(req.method);
+    return new Response(null, { headers: { "content-type": "application/zip", "content-length": "123456" } });
+  } });
+  try {
+    const url = `http://127.0.0.1:${source.port}/flight.zip?signature=a%2Bb`;
+    const checked = await request("PUT", `/api/projects/${project}/link`, { url });
+    expect(checked.status).toBe(200);
+    expect(await checked.json()).toMatchObject({ url, size: 123456, facts: null });
+    const view = await (await review()).json() as RunReviewView;
+    expect(view).toMatchObject({ wayIn: "link", facts: null, photos: { included: null, excluded: null, total: null, bytes: null }, blocked: null });
+    api.info.maxImages = 1;
+    const limited = await (await review()).json() as RunReviewView;
+    expect(limited.blocked).toBeNull();
+    const observed: Array<{ state: string; uuid: string | null }> = [];
+    const unsubscribe = h.tracker.subscribe(1, event => {
+      if (event.type !== "run") return;
+      const saved = h.runs.get(event.run.id)!;
+      observed.push({ state: saved.state, uuid: saved.taskUuid });
+    });
+    const started = await start(limited);
+    expect(started.status).toBe(202);
+    const run = await started.json() as RunView;
+    await eventually(async () => api.tasks.size === 1);
+    expect([...api.tasks.values()][0]).toMatchObject({ zipurl: url, committed: true, images: [] });
+    expect(api.requests.filter(req => req.method === "POST").map(req => req.path)).toEqual(["/task/new"]);
+    expect(h.runs.get(run.id)?.wayIn).toBe("link");
+    expect(observed.some(saved => saved.uuid !== null)).toBe(true);
+    expect(observed.filter(saved => saved.uuid !== null).every(saved => saved.state !== "created" && saved.state !== "uploading")).toBe(true);
+    unsubscribe();
+    expect(methods).toEqual(["HEAD"]);
+  } finally { await source.stop(true); }
+});
+
+test("cancelling linked creation waits for its identity and cancels the submitted task", async () => {
+  await h.stop();
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  let received = false;
+  const { TaskClient } = await import("../task-api/task-client.ts");
+  h = openHarness({ runClientFor: endpoint => new TaskClient(endpoint, { fetch: (async (input, init) => {
+    const response = await fetch(input, init);
+    if (new URL(String(input)).pathname === "/task/new") { received = true; await delayed; }
+    return response;
+  }) as typeof fetch }) });
+  project = h.ctx.projects.create("Linked", "").id;
+  engine = h.engineStore.addRemote({ name: "Chosen engine", address: api.address, token: api.token }).id;
+  const source = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { headers: { "content-type": "application/zip", "content-length": "123" } }) });
+  try {
+    const path = `/api/projects/${project}/link`;
+    expect((await request("PUT", path, { url: `http://127.0.0.1:${source.port}/photos.zip` })).status).toBe(200);
+    const run = await (await start(await (await review()).json() as RunReviewView)).json() as RunView;
+    expect(run.state).toBe("created");
+    await eventually(async () => received);
+    expect((await request("DELETE", path)).status).toBe(409);
+    expect((await request("DELETE", `/api/projects/${project}`)).status).toBe(409);
+    const cancelling = h.ctx.projectRuns.cancel(run.id);
+    release();
+    const result = await cancelling;
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("Cancellation failed");
+    expect(result.value.state).toBe("cancelled");
+    expect(h.runs.get(run.id)?.taskUuid).not.toBeNull();
+    expect(api.requests.filter(req => req.method === "POST").map(req => req.path)).toEqual(["/task/new", "/task/cancel"]);
+    expect(api.tasks.size).toBe(1);
+    expect((await request("DELETE", `/api/projects/${project}`)).status).toBe(204);
+    expect(api.tasks.size).toBe(0);
+  } finally { release(); await source.stop(true); }
 });

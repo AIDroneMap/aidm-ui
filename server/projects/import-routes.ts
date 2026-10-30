@@ -29,12 +29,14 @@ export function importRoutes(ctx: RouteContext): RouteTable {
         if (!isLoopbackAddress(rc.client.address)) return errorResponse(403, "import.local_only");
         const id = projectId(req.params.id ?? "");
         if (id instanceof Response) return id;
+        if (ctx.links.has(id) || ctx.links.isBusy(id)) return errorResponse(409, "link.source_present");
         const input = await readJson(req);
         if (!input.ok) return input.response;
         if (typeof input.body.path !== "string" || input.body.path.length === 0 || input.body.path.length > 32768 || input.body.path.includes("\0") || Object.keys(input.body).some(key => key !== "path")) return errorResponse(400, "api.invalid_body");
         const release = ctx.projectDeletion.beginWrite(id);
         if (release === null) return errorResponse(409, "project.deletion_busy");
         try {
+          if (ctx.links.has(id) || ctx.links.isBusy(id)) return errorResponse(409, "link.source_present");
           rc.server.timeout(req, 0);
           const result = await ctx.imports.select(id, input.body.path);
           if (result === "invalid_path") return errorResponse(400, "import.invalid_path");

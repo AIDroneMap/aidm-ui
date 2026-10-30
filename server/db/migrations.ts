@@ -13,6 +13,8 @@ import runMetadataSql from "./migrations/0009-run-metadata.sql" with { type: "te
 
 import runResultsSql from "./migrations/0010-run-results.sql" with { type: "text" };
 
+import projectLinksSql from "./migrations/0011-project-links.sql" with { type: "text" };
+
 export interface Migration {
   version: number;
   name: string;
@@ -32,6 +34,7 @@ export const migrations: Migration[] = [
   { version: 8, name: "folder-imports", sql: folderImportsSql },
   { version: 9, name: "run-metadata", sql: runMetadataSql },
   { version: 10, name: "run-results", sql: runResultsSql },
+  { version: 11, name: "project-links", sql: projectLinksSql },
 ];
 
 function storedVersion(db: Database): number {
