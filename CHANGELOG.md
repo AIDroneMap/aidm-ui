@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wait for both project source panels before checking them. Evidence: delayed panel responses in `web/src/links/ProjectLink.browser.test.ts`. Closes #95.
 - Open retained orthophoto and elevation tiles on an offline map, with result coordinates, a scale bar and keyboard controls. Evidence: archive georeferencing and map-route tests, the real Chromium map fixture, and the existing hosted task API acceptance. See `docs/testing/result-map.md`. Closes #75.
 - Projects can use a checked ZIP address that the engine fetches when a run starts. Photo details come from the retained results, without copying photos through the interface. Evidence: `docs/testing/linked-photos.md` and its route, archive and browser tests.
 
