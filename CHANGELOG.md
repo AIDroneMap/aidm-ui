@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Wait for sample results before deleting the project in both restart fixtures. Evidence: delayed archive responses in `server/sample/sample-job.test.ts`. Closes #99.
+
 - Add an optional raster basemap with a saved tile template, XYZ or TMS numbering, and plain-text attribution. It stays off until enabled and reports tile failures while the results remain visible. Evidence: settings and origin-policy tests plus the Chromium basemap fixture in `docs/testing/basemap.md`. Closes #76.
 
 - Wait for both project source panels before checking them. Evidence: delayed panel responses in `web/src/links/ProjectLink.browser.test.ts`. Closes #95.

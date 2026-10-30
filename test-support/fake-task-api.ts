@@ -78,6 +78,7 @@ export class FakeTaskApi {
   uploadDelayMs = 0;
   /** Milliseconds a cancel call waits before the engine acts on it, to make a cancel slow. */
   cancelDelayMs = 0;
+  resultsWait?: Promise<void>;
   private nextUuid = 1;
 
   private server: Bun.Server<undefined> | undefined;
@@ -182,6 +183,7 @@ export class FakeTaskApi {
       const task = this.tasks.get(path[2] as string);
       if (!task) return Response.json({ error: `${path[2]} not found` });
       if (path[4] !== "all.zip") return Response.json({ error: "Invalid asset" });
+      await this.resultsWait;
       if (task.results === null) return Response.json({ error: "Asset not ready" });
       return new Response(task.results as Uint8Array<ArrayBuffer>, {
         headers: { "content-type": "application/zip", "content-disposition": "attachment; filename=all.zip" },
