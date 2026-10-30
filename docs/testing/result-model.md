@@ -31,7 +31,7 @@ AIDM_REAL_TASK_API_MODEL_ACCEPTANCE=1 \
 bun test server/packages/real-task-api.test.ts
 ```
 
-The archive path and digest select an explicitly unreleased build. Its embedded version remains 2.6.1, so the source commit and package digest must accompany the result. The test digest and generated test signature do not assert publisher authenticity. `AIDM_REAL_TASK_API_MODEL_SCREENSHOT` optionally saves the rendered canvas.
+The archive path and digest select an explicitly unreleased build. The manifest keeps an HTTPS fixture address; the test-only native fetch maps it to a local file server. Production manifest validation and release downloads are unchanged. Its embedded version remains 2.6.1, so the source commit and package digest must accompany the result. The test digest and generated test signature do not assert publisher authenticity. `AIDM_REAL_TASK_API_MODEL_SCREENSHOT` optionally saves the rendered canvas.
 
 The existing hosted task API job continues to check the published 2.6.1 package. Its route-byte comparison cannot prove that the placeholder renders. The opt-in archive acceptance above fails for that package and must pass for the corrected source build. A future released-package pin belongs in a separate workflow change.
 

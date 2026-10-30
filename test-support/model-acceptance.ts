@@ -30,6 +30,7 @@ export async function assertArchivedModel(base: string, runId: number, { screens
   let socket: WebSocket | undefined;
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   const requests: string[] = [];
+  const events: string[] = [];
   let id = 0;
   let opened = false;
   let closeView: (() => Promise<unknown>) | undefined;
@@ -48,6 +49,7 @@ export async function assertArchivedModel(base: string, runId: number, { screens
     socket.onmessage = event => {
       const message = JSON.parse(String(event.data));
       if (message.method === "Network.requestWillBeSent") requests.push(message.params.request.url);
+      if (message.method === "Network.loadingFailed" || message.method === "Page.lifecycleEvent") events.push(JSON.stringify({ method: message.method, ...message.params }));
       const entry = pending.get(message.id);
       if (!entry) return;
       clearTimeout(entry.timer); pending.delete(message.id);
@@ -57,7 +59,7 @@ export async function assertArchivedModel(base: string, runId: number, { screens
     socket.onclose = () => rejectPending(new Error("Browser connection closed"));
     const send = (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
       const next = ++id;
-      const timer = setTimeout(() => { pending.delete(next); reject(new Error(`Browser command ${method} timed out`)); }, 12000);
+      const timer = setTimeout(() => { pending.delete(next); reject(new Error(`Browser command ${method} timed out. Requests: ${JSON.stringify(requests)}. Events: ${events.slice(-12).join(" ")}. ${browser?.diagnostics()}`)); }, 12000);
       pending.set(next, { resolve, reject, timer });
       try { socket!.send(JSON.stringify({ id: next, method, params })); }
       catch (error) { clearTimeout(timer); pending.delete(next); reject(error); }
@@ -70,6 +72,7 @@ export async function assertArchivedModel(base: string, runId: number, { screens
     closeView = () => evaluate(`(async () => { document.querySelector('button')?.click(); const deadline = Date.now() + 2000; while (document.querySelector('canvas') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20)); if (document.querySelector('canvas')) throw new Error('Model view did not close'); })()`);
     await send("Network.enable");
     await send("Page.enable");
+    await send("Page.setLifecycleEventsEnabled", { enabled: true });
     const navigation = await send("Page.navigate", { url: `${origin}/?runId=${encodeURIComponent(String(runId))}` });
     if (navigation.result.errorText) throw new Error(`Browser navigation failed: ${navigation.result.errorText}`);
     const deadline = Date.now() + 15000;

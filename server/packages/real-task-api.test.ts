@@ -128,6 +128,7 @@ real(
     const bytes = new Uint8Array(await Bun.file(zip).arrayBuffer());
     files.files.set("/dataset.zip", bytes);
 
+    let sourcePackageFetch: typeof fetch | undefined;
     let variant = { url: `${releaseUrl}/${archiveName}`, size: 0, sha256: "" };
     if (packagePath !== undefined) {
       if (!packageSha256 || !/^[0-9a-f]{64}$/.test(packageSha256)) throw new Error("A source-built package requires its expected SHA-256.");
@@ -140,7 +141,14 @@ real(
         if (new URL(request.url).pathname !== "/native.tar.gz") return new Response(null, { status: 404 });
         return new Response(file);
       } });
-      variant = { url: `http://127.0.0.1:${packageServer.port}/native.tar.gz`, size: file.size, sha256: packageSha256 };
+      variant = { url: "https://source-package.test/native.tar.gz", size: file.size, sha256: packageSha256 };
+      // Keep the manifest schema unchanged. Only this test's fetch maps the
+      // declared HTTPS address to the local source-built archive server.
+      sourcePackageFetch = ((input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url !== variant.url) throw new Error("Unexpected source-package request.");
+        return fetch(`http://127.0.0.1:${packageServer!.port}/native.tar.gz`, init);
+      }) as typeof fetch;
     } else {
       variant.size = await archiveSize();
       variant.sha256 = await publishedChecksum();
@@ -179,7 +187,7 @@ real(
       },
       manifest: { releasesUrl: files.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
       // The archive uses real HTTP and installation; the program runs in test mode.
-      native: { extraArgs: ["--test"] },
+      native: { extraArgs: ["--test"], fetch: sourcePackageFetch },
     });
     harness = h;
 
