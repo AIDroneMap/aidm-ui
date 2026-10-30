@@ -2,6 +2,15 @@
 // each one into text through web/src/i18n/en.json; a test checks that every
 // code here has a translation.
 export const MESSAGE_CODES = [
+  "project_run.no_photos",
+  "project_run.metadata_pending",
+  "project_run.already_running",
+  "project_run.image_limit",
+  "project_run.review_changed",
+  "project_run.engine_unavailable",
+  "project_run.preset_unavailable",
+  "project_run.photos_changed",
+
   "api.not_found",
   "api.method_not_allowed",
   "api.invalid_body",

@@ -1,3 +1,4 @@
+import { projectRunRoutes } from "../projects/run-routes.ts";
 import { importRoutes } from "../projects/import-routes.ts";
 import { errorResponse } from "../../shared/api-error.ts";
 import { authRoutes } from "../auth/routes.ts";
@@ -41,6 +42,7 @@ export function apiRoutes(ctx: RouteContext): RouteTable {
     ...runRoutes(ctx),
     ...projectRoutes(ctx),
     ...importRoutes(ctx),
+    ...projectRunRoutes(ctx),
   };
 }
 

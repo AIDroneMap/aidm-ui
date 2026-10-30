@@ -12,6 +12,7 @@ import { projectName } from "./HomePage.tsx";
 import { UploadPanel } from "../upload/UploadPanel.tsx";
 import { PhotoFacts } from "../photos/PhotoFacts.tsx";
 import { FolderImportPanel } from "../folders/FolderImportPanel.tsx";
+import { RunStart } from "../run-start/RunStart.tsx";
 import type { FolderImportView } from "../../../shared/api-types.ts";
 
 interface FormProps {
@@ -102,6 +103,7 @@ export function ProjectPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     {failure && <ErrorMessage failure={failure} />}
     {!loaded ? (!failure && <p>{t("projects.loading")}</p>) : <ProjectForm project={project} name={name} notes={notes} working={working} onName={setName} onNotes={setNotes} onSave={() => void save()} onAskDelete={() => setAsking(true)} />}
     <p role="status">{saved ? t("projects.saved") : null}</p>
+    {loaded && project !== null && project.builtin !== "sample" && <RunStart key={project.id} projectId={project.id} onAuthRequired={onAuthRequired} />}
     {loaded && project !== null && project.builtin !== "sample" && <><FolderImportPanel key={project.id} projectId={project.id} onSource={state => setSource({ id: project.id, state })} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} />{source?.id === project.id && source.state === "none" && <UploadPanel key={project.id} projectId={project.id} onChange={() => { refreshProject(project.id); setFactsRefresh(value => value + 1); }} onAuthRequired={onAuthRequired} />}{(source?.id !== project.id || source.state === null || source.state === "none" || source.state === "ready") && <><p role="status">{t("upload.arrived", { count: project.photoCount })}</p><PhotoFacts key={project.id} projectId={project.id} refresh={factsRefresh} onAuthRequired={onAuthRequired} /></>}</>}
     {asking && <Dialog ref={dialog} label={t("projects.delete_title")} onCancel={event => { event.preventDefault(); if (!working) setAsking(false); }}>
       <DeleteConfirmation working={working} onKeep={() => setAsking(false)} onDelete={() => void remove()} />

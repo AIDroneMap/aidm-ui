@@ -43,6 +43,7 @@ test("info reads the version, cores, memory and queue length", async () => {
       availableMemory: 59901734912,
       queueCount: 3,
       maxParallelTasks: 1,
+      maxImages: null,
     },
   });
 });

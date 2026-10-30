@@ -9,6 +9,7 @@ import { inflateRawSync } from "node:zlib";
 import { folderSnapshot } from "../../test-support/import-folder.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import type { ProjectView, RunView } from "../../shared/api-types.ts";
+import type { RunReviewView } from "../../shared/run-review.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
@@ -221,6 +222,53 @@ real(
     const projectAfter = await (await fetch(`${h.base}/api/projects/${run.projectId}`)).json() as ProjectView;
     expect(projectAfter.resultsBytes).toBe(0);
     expect(projectAfter.resultArchives).toEqual([]);
+
+    const projectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Uploaded field", notes: "" }) });
+    expect(projectResponse.status).toBe(201);
+    const uploadedProject = await projectResponse.json() as ProjectView;
+    for (let index = 0; index < 3; index++) {
+      const photo = `test image ${index}\n`.repeat(50);
+      const sha256 = new Bun.CryptoHasher("sha256").update(photo).digest("hex");
+      const upload = await fetch(`${h.base}/api/projects/${uploadedProject.id}/uploads`, {
+        method: "POST", body: JSON.stringify({ name: `photo-${index}.jpg`, size: Buffer.byteLength(photo), sha256 }),
+      });
+      expect(upload.status).toBe(201);
+      const session = await upload.json() as { id: string };
+      const path = `${h.base}/api/projects/${uploadedProject.id}/uploads/${session.id}`;
+      expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": sha256 }, body: photo })).status).toBe(204);
+      expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+    }
+    await eventually(async () => {
+      const facts = await (await fetch(`${h.base}/api/projects/${uploadedProject.id}/photo-facts`)).json() as { photoCount: number; pendingMetadata: number };
+      return facts.photoCount === 3 && facts.pendingMetadata === 0;
+    });
+    const reviewResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review?engineId=${engineId}&preset=quick-map&offset=0`);
+    expect(reviewResponse.status).toBe(200);
+    const review = await reviewResponse.json() as RunReviewView;
+    expect(review).toMatchObject({ project: { id: uploadedProject.id }, engine: { id: engineId }, preset: "quick-map", wayIn: "upload", photos: { included: 3, excluded: 0, total: 3 }, blocked: null });
+    expect(review.revision).toBeTruthy();
+    const startResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/runs`, {
+      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Quick map field", revision: review.revision }),
+    });
+    expect(startResponse.status).toBe(202);
+    const projectRun = await startResponse.json() as RunView;
+    expect(projectRun).toMatchObject({ projectId: uploadedProject.id, engineId, preset: "quick-map", name: "Quick map field", wayIn: "upload", sample: false });
+    let completed: RunView | undefined;
+    await eventually(async () => {
+      completed = await (await fetch(`${h.base}/api/runs/${projectRun.id}`)).json() as RunView;
+      return completed.resultsAvailable || completed.state === "failed" || completed.results?.state === "failed";
+    }, 240_000);
+    expect(completed).toMatchObject({ state: "completed", resultsAvailable: true, results: { state: "ready" } });
+    const projectArchiveResponse = await fetch(`${h.base}/api/runs/${projectRun.id}/results`);
+    expect(projectArchiveResponse.status).toBe(200);
+    const projectArchive = Buffer.from(await projectArchiveResponse.arrayBuffer());
+    expect(completed?.results?.archiveSize).toBe(projectArchive.length);
+    const orthophoto = archiveEntry(projectArchive, "odm_orthophoto/odm_orthophoto.tif");
+    expect(orthophoto.length).toBeGreaterThan(0);
+    expect(completed?.results?.outputs).toContainEqual({ name: "orthophoto", size: orthophoto.length });
+    const orthophotoResponse = await fetch(`${h.base}/api/runs/${projectRun.id}/outputs/orthophoto`);
+    expect(orthophotoResponse.status).toBe(200);
+    expect(new Uint8Array(await orthophotoResponse.arrayBuffer())).toEqual(new Uint8Array(orthophoto));
 
     const source = join(scratch, "imported-photos");
     await mkdir(source);

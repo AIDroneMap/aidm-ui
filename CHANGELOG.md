@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Review a project with one of six presets, check the chosen engine and photo limit, and start a run from uploaded photos or an imported folder. Evidence: preset, input, route and browser tests, plus the existing hosted task API run-flow acceptance. See `docs/testing/project-runs.md`. Closes #68.
+
 - Wait for the photo-facts document before reading its body. Evidence: the delayed-document regression in `web/src/photos/PhotoFacts.browser.test.ts`. Closes #88.
 - Fetch completed runs' archives into local project storage, serve outputs and tiles without disk extraction, show sizes, and delete results while retaining settings and logs. Evidence: results route, ZIP64, downloader and browser tests, plus the existing hosted task API acceptance test. See `docs/testing/results-archive.md`. Closes #64.
 
