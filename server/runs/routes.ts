@@ -77,6 +77,14 @@ export function runRoutes(ctx: RouteContext): RouteTable {
         return Response.json(tracker.view(run.id), { status: 202 });
       },
     },
+    "/api/runs/:id/map": {
+      GET: async (req) => {
+        const id = parseId(req.params.id ?? "");
+        const run = id === null ? null : tracker.record(id);
+        if (!run) return errorResponse(404, "run.not_found");
+        return Response.json(await tracker.results.map(run), { headers: { "Cache-Control": "no-store" } });
+      },
+    },
     "/api/runs/:id/outputs/:name": {
       GET: (req) => {
         const run = tracker.record(Number(req.params.id));

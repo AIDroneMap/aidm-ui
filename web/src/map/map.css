@@ -1,0 +1,3 @@
+.result-map { width: 100%; height: 400px; background: #e8e8e8; }
+.result-map .maplibregl-canvas:focus-visible { outline: 3px solid #005fcc; outline-offset: -3px; }
+.map-outside .maplibregl-ctrl-scale { display: none; }

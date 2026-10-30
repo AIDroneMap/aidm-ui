@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Open retained orthophoto and elevation tiles on an offline map, with result coordinates, a scale bar and keyboard controls. Evidence: archive georeferencing and map-route tests, the real Chromium map fixture, and the existing hosted task API acceptance. See `docs/testing/result-map.md`. Closes #75.
 - Projects can use a checked ZIP address that the engine fetches when a run starts. Photo details come from the retained results, without copying photos through the interface. Evidence: `docs/testing/linked-photos.md` and its route, archive and browser tests.
 
 - Review a project with one of six presets, check the chosen engine and photo limit, and start a run from uploaded photos or an imported folder. Evidence: preset, input, route and browser tests, plus the existing hosted task API run-flow acceptance. See `docs/testing/project-runs.md`. Closes #68.
