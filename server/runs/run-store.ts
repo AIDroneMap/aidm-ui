@@ -7,6 +7,10 @@ import type { TaskOption } from "../task-api/task-client.ts";
 export interface RunRecord {
   id: number;
   projectId: number;
+  name: string | null;
+  preset: string | null;
+  wayIn: "upload" | "import" | "link" | null;
+  sample: boolean;
   engineId: number | null;
   taskUuid: string | null;
   options: TaskOption[];
@@ -24,6 +28,10 @@ export interface RunRecord {
 interface RunRow {
   id: number;
   project_id: number;
+  name: string | null;
+  preset: string | null;
+  way_in: "upload" | "import" | "link" | null;
+  sample: number;
   engine_id: number | null;
   task_uuid: string | null;
   options: string;
@@ -62,6 +70,10 @@ function toRecord(row: RunRow): RunRecord {
   return {
     id: row.id,
     projectId: row.project_id,
+    name: row.name,
+    preset: row.preset,
+    wayIn: row.way_in,
+    sample: row.sample === 1,
     engineId: row.engine_id,
     taskUuid: row.task_uuid,
     options: parseJson<TaskOption[]>(row.options, []),
@@ -87,7 +99,7 @@ export class RunStore {
     return row?.id ?? null;
   }
 
-  create(run: { projectId: number; engineId: number; options: TaskOption[] }): RunRecord {
+  create(run: { projectId: number; engineId: number; options: TaskOption[]; name?: string | null; preset?: string | null; wayIn?: "upload" | "import" | "link" | null; sample?: boolean }): RunRecord {
     return this.db.transaction(() => {
       // Deleted runs keep their IDs reserved, including across server restarts.
       const { id } = this.db.query(`INSERT INTO settings (key, value)
@@ -97,10 +109,10 @@ export class RunStore {
       const now = new Date().toISOString();
       const row = this.db
         .query(
-          `INSERT INTO runs (id, project_id, engine_id, options, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'created', ?, ?) RETURNING *`,
+          `INSERT INTO runs (id, project_id, engine_id, options, state, created_at, updated_at, name, preset, way_in, sample)
+           VALUES (?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?) RETURNING *`,
         )
-        .get(id, run.projectId, run.engineId, JSON.stringify(run.options), now, now) as RunRow;
+        .get(id, run.projectId, run.engineId, JSON.stringify(run.options), now, now, run.name ?? null, run.preset ?? null, run.wayIn ?? null, run.sample ? 1 : 0) as RunRow;
       return toRecord(row);
     })();
   }

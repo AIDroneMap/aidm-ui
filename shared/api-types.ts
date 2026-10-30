@@ -146,6 +146,10 @@ export interface RunDownloadView {
 
 export interface RunView {
   id: number;
+  name: string | null;
+  preset: string | null;
+  wayIn: "upload" | "import" | "link" | null;
+  sample: boolean;
   projectId: number;
   engineId: number | null;
   engineName: string | null;

@@ -9,6 +9,7 @@ import projectUploadsSql from "./migrations/0006-project-uploads.sql" with { typ
 
 import photoFactsSql from "./migrations/0007-photo-facts.sql" with { type: "text" };
 import folderImportsSql from "./migrations/0008-folder-imports.sql" with { type: "text" };
+import runMetadataSql from "./migrations/0009-run-metadata.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -27,6 +28,7 @@ export const migrations: Migration[] = [
   { version: 6, name: "project-uploads", sql: projectUploadsSql },
   { version: 7, name: "photo-facts", sql: photoFactsSql },
   { version: 8, name: "folder-imports", sql: folderImportsSql },
+  { version: 9, name: "run-metadata", sql: runMetadataSql },
 ];
 
 function storedVersion(db: Database): number {

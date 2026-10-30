@@ -213,6 +213,10 @@ export class RunTracker {
     return {
       id: run.id,
       projectId: run.projectId,
+      name: run.name,
+      preset: run.preset,
+      wayIn: run.wayIn,
+      sample: run.sample,
       engineId: run.engineId,
       engineName: run.engineId === null ? null : (this.engines.get(run.engineId)?.name ?? null),
       engineLocal: run.engineId !== null && this.engines.get(run.engineId)?.kind === "local",

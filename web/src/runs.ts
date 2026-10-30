@@ -94,3 +94,42 @@ export function parseLogEvent(data: string): { lines: string[]; from: number } |
     return null;
   }
 }
+
+export const STAGES = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"] as const;
+
+export type Stage = (typeof STAGES)[number];
+
+export interface StageProgress {
+  stage: Stage | null;
+  line: number | null;
+  restartedAtLine: number | null;
+}
+
+export const EMPTY_STAGE_PROGRESS: StageProgress = { stage: null, line: null, restartedAtLine: null };
+
+/** Tracks stage lines by absolute position, independently of the displayed log window. */
+export function reduceStageProgress(
+  previous: StageProgress,
+  update: { from?: number; lines?: string[]; restartedAtLine?: number | null },
+): StageProgress {
+  let { stage, line, restartedAtLine } = previous;
+  const boundary = update.restartedAtLine;
+  if (boundary != null && (restartedAtLine === null || boundary > restartedAtLine)) {
+    restartedAtLine = boundary;
+    if (line === null || line < boundary) {
+      stage = null;
+      line = null;
+    }
+  }
+  if (update.from !== undefined && update.lines) {
+    for (let index = 0; index < update.lines.length; index++) {
+      const position = update.from + index;
+      if ((restartedAtLine !== null && position < restartedAtLine) || (line !== null && position <= line)) continue;
+      const match = /Running ([a-z0-9_]+) stage\b/.exec(update.lines[index]!);
+      if (!match) continue;
+      stage = (STAGES as readonly string[]).includes(match[1]!) ? match[1] as Stage : null;
+      line = position;
+    }
+  }
+  return { stage, line, restartedAtLine };
+}
