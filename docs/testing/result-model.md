@@ -15,10 +15,24 @@ The loader checks the GLB header and chunk lengths before parsing. It rejects ex
 
 The missing component and viewer tests failed before implementation. The texture-pixel assertion then exposed a content security policy failure. A damaged-image case exposed the loader's silent texture fallback. Both now pass with the corresponding fixes. The real sample then exposed missing Draco decoder configuration. The compressed-model regression failed before the decoder was configured and passes with the bundled decoder assets.
 
-## Test-mode fixture gap
+## Test-mode archive acceptance
 
-The task API `v2.6.1` test fixture at `tests/processing_results/odm_texturing/odm_textured_model_geo.glb` is the five bytes `glTF\n`, not a GLB 2 file. The existing hosted archive acceptance compares its route bytes but cannot prove that a viewer can open them. The viewer correctly rejects this placeholder.
+The task API fixture was corrected in merged commit `fbf452f26015027ef7f7593b4232c05a2e24d54f`, through AIDroneMap/aidm-api#68. Issue #67 remains open to record UI acceptance and the first released native package. The published `v2.6.1` package still contains the original five-byte `glTF` placeholder. The corrected source fixture is a self-contained textured GLB.
 
-AIDroneMap/aidm-api#67 tracks replacing the placeholder with a self-contained textured model and testing that the archive preserves it. Until a corrected approved fixture is available, issue #77's test-mode archive rendering criterion remains unverified. Synthetic rendering and a real-sample diagnostic are separate evidence and do not close that gap.
+`server/packages/real-task-api.test.ts` can install a source-built native package through the existing signed test-manifest path. It completes the sample in test mode, retains the archive, compares the GLB output route with the archive member, then opens the actual viewer on that same server. Chromium must render coloured texture pixels, request the single-output route, and make no external browser requests. The fixture uses the application's content security policy and bundled decoder files. It does not replace engine results or relax GLB validation.
+
+Run the existing entry point on a disposable runtime machine with:
+
+```sh
+AIDM_REAL_TASK_API_VERSION=2.6.1 \
+AIDM_REAL_TASK_API_ARCHIVE_PATH=/tmp/aidm-api-2.6.1-linux-x64.tar.gz \
+AIDM_REAL_TASK_API_ARCHIVE_SHA256=<expected-build-sha256> \
+AIDM_REAL_TASK_API_MODEL_ACCEPTANCE=1 \
+bun test server/packages/real-task-api.test.ts
+```
+
+The archive path and digest select an explicitly unreleased build. Its embedded version remains 2.6.1, so the source commit and package digest must accompany the result. The test digest and generated test signature do not assert publisher authenticity. `AIDM_REAL_TASK_API_MODEL_SCREENSHOT` optionally saves the rendered canvas.
+
+The existing hosted task API job continues to check the published 2.6.1 package. Its route-byte comparison cannot prove that the placeholder renders. The opt-in archive acceptance above fails for that package and must pass for the corrected source build. A future released-package pin belongs in a separate workflow change.
 
 Test depth: full. The viewer's browser tests run from source, and the full diagnostic opens a real engine-produced model after installing the signed package and completing the sample. No job preparation, signing or update behavior changes.

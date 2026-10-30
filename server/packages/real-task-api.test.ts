@@ -1,3 +1,4 @@
+import { modelAcceptanceAssets, assertArchivedModel } from "../../test-support/model-acceptance.ts";
 import { assertCatalogueDrift } from "../../test-support/catalogue-drift.ts";
 import type { ReconciledOption } from "../../shared/engine-options.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -21,6 +22,9 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 // nothing), through the native package. It runs only where
 // AIDM_REAL_TASK_API_VERSION names a release of AIDroneMap/aidm-api that
 // has a Linux x64 archive, such as "2.6.1". It skips everywhere else.
+// Before release, ARCHIVE_PATH and ARCHIVE_SHA256 select a source-built native
+// package on a disposable test machine. MODEL_ACCEPTANCE=1 also renders the
+// archived model through the actual server route in Chromium.
 //
 // The archive's SHA-256 comes from the release's own SHA256SUMS over HTTPS.
 // That proves only that the download is whole, not that the release is the
@@ -28,6 +32,11 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 // publishes one (AIDroneMap/aidm-api#25).
 const version = process.env.AIDM_REAL_TASK_API_VERSION;
 const SLOW = 300_000;
+// A locally built package can be exercised on a disposable test machine before release.
+// Its digest is an explicit test input, not a publisher signature.
+const packagePath = process.env.AIDM_REAL_TASK_API_ARCHIVE_PATH;
+const packageSha256 = process.env.AIDM_REAL_TASK_API_ARCHIVE_SHA256;
+const modelAcceptance = process.env.AIDM_REAL_TASK_API_MODEL_ACCEPTANCE === "1";
 
 const archiveName = `aidm-api-${version}-linux-x64.tar.gz`;
 const releaseUrl = `https://github.com/AIDroneMap/aidm-api/releases/download/v${version}`;
@@ -88,6 +97,7 @@ let scratch: string;
 let files: FakeFileServer;
 let signer: TestSigner;
 let harness: Harness | undefined;
+let packageServer: Bun.Server<undefined> | undefined;
 
 beforeAll(async () => {
   scratch = mkdtempSync(join(os.tmpdir(), "aidm-ui-real-"));
@@ -99,6 +109,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await harness?.stop();
   await files.stop();
+  packageServer?.stop(true);
   rmSync(scratch, { recursive: true, force: true });
 });
 
@@ -117,15 +128,31 @@ real(
     const bytes = new Uint8Array(await Bun.file(zip).arrayBuffer());
     files.files.set("/dataset.zip", bytes);
 
+    let variant = { url: `${releaseUrl}/${archiveName}`, size: 0, sha256: "" };
+    if (packagePath !== undefined) {
+      if (!packageSha256 || !/^[0-9a-f]{64}$/.test(packageSha256)) throw new Error("A source-built package requires its expected SHA-256.");
+      const file = Bun.file(packagePath);
+      if (!(await file.exists())) throw new Error("Source-built native package not found.");
+      const hasher = new Bun.CryptoHasher("sha256");
+      for await (const chunk of file.stream()) hasher.update(chunk);
+      expect(hasher.digest("hex")).toBe(packageSha256);
+      packageServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+        if (new URL(request.url).pathname !== "/native.tar.gz") return new Response(null, { status: 404 });
+        return new Response(file);
+      } });
+      variant = { url: `http://127.0.0.1:${packageServer.port}/native.tar.gz`, size: file.size, sha256: packageSha256 };
+    } else {
+      variant.size = await archiveSize();
+      variant.sha256 = await publishedChecksum();
+    }
+    const assets = modelAcceptance ? await modelAcceptanceAssets(join(scratch, "viewer")) : undefined;
     const manifest = sampleManifest({
       sequence: 2,
       packageVersion: version as string,
       variants: {
         "linux-amd64-cpu": {
           kind: "native",
-          url: `${releaseUrl}/${archiveName}`,
-          size: await archiveSize(),
-          sha256: await publishedChecksum(),
+          ...variant,
           gpu: false,
         },
       },
@@ -136,6 +163,7 @@ real(
     files.redirects.set("/releases/latest/download/manifest.json", `/releases/download/v${version}/manifest.json`);
 
     const h = openHarness({
+      assets,
       enginePollMs: 250,
       runPollMs: 250,
       runtimes: {},
@@ -150,7 +178,7 @@ real(
         fileName: "test-dataset.zip",
       },
       manifest: { releasesUrl: files.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
-      // The archive comes from GitHub with the real fetch; the program runs in test mode.
+      // The archive uses real HTTP and installation; the program runs in test mode.
       native: { extraArgs: ["--test"] },
     });
     harness = h;
@@ -198,6 +226,13 @@ real(
       const response = await fetch(`${h.base}/api/runs/${run.id}/${output.route}`);
       expect(response.status).toBe(200);
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(expected));
+    }
+    if (modelAcceptance) {
+      const rendered = await assertArchivedModel(h.base, run.id, { screenshotPath: process.env.AIDM_REAL_TASK_API_MODEL_SCREENSHOT });
+      expect(rendered.outputRequests).toBeGreaterThan(0);
+      expect(rendered.coloredPixels).toBeGreaterThan(0);
+      expect(rendered.externalRequests).toEqual([]);
+      console.info("Archived model rendered", JSON.stringify({ runId: run.id, ...rendered }));
     }
     const mapResponse = await fetch(`${h.base}/api/runs/${run.id}/map`);
     expect(mapResponse.status).toBe(200);
