@@ -24,6 +24,7 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     if (path === "/") return new Response('<link rel="stylesheet" href="/fixture.css"><div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'" } });
     if (path === "/fixture.js" || path === "/fixture.css") return new Response(Bun.file(join(directory, path.slice(1))));
     if (path === "/map-worker.mjs") return new Response(Bun.file("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs"), { headers: { "content-type": "text/javascript" } });
+    if (path === "/api/settings/basemap") return Response.json({ enabled: false, url: "", scheme: "xyz", attribution: "" });
     if (path === "/api/runs/9/map") await new Promise<void>(resolve => { release = resolve; markSlowRequest?.(); });
     if (path.endsWith("/map")) return Response.json(path.includes("/8/") ? { state: "unavailable", layers: [] } : { state: "ready", layers: [{ name: "orthophoto", bounds: [-40, -40, 40, 40], minZoom: 0, maxZoom: 8, scheme: "xyz" }, { name: "surface", bounds: [-40, -40, 40, 40], minZoom: 0, maxZoom: 8, scheme: "tms" }] });
     if (path.includes("/tiles/")) return new Response(png, { headers: { "content-type": "image/png" } });

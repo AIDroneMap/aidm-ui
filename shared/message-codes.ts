@@ -2,6 +2,7 @@
 // each one into text through web/src/i18n/en.json; a test checks that every
 // code here has a translation.
 export const MESSAGE_CODES = [
+  "settings.basemap_invalid",
   "link.invalid_url",
   "link.unreachable",
   "link.not_zip",

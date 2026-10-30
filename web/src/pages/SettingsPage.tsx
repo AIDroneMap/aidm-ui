@@ -1,3 +1,4 @@
+import { BasemapSettings } from "../basemap/BasemapSettings.tsx";
 import { Toggle } from "../controls/Toggle.tsx";
 import { Button } from "../controls/Button.tsx";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -487,7 +488,7 @@ export function SettingsPage({
     }
   };
 
-  return (
+  return (<>
     <SettingsForm
       settings={settings}
       failure={failure}
@@ -523,5 +524,6 @@ export function SettingsPage({
       onDatasetDelete={() => void changeDataset("delete", "deleted", () => api<SampleDatasetFileView>("DELETE", "/api/sample/dataset"))}
       onDatasetImport={(file) => void changeDataset("import", "imported", () => upload<SampleDatasetFileView>("/api/sample/dataset", file))}
     />
-  );
+    <BasemapSettings onAuthRequired={onAuthRequired} />
+  </>);
 }

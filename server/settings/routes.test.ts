@@ -1,5 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { networkInterfaces } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PASSPHRASE_MIN_LENGTH, type SettingsView } from "../../shared/api-types.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
@@ -13,6 +16,58 @@ afterEach(async () => {
 function put(h: Harness, path: string, body: unknown): Promise<Response> {
   return fetch(`${h.base}${path}`, { method: "PUT", body: JSON.stringify(body) });
 }
+
+test("basemap settings default to off", async () => {
+  harness = openHarness();
+  const response = await fetch(`${harness.base}/api/settings/basemap`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ enabled: false, url: "", scheme: "xyz", attribution: "" });
+});
+
+test("basemap settings round trip and survive reopening the database", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "aidm-basemap-"));
+  try {
+    harness = openHarness({ dataFolder: folder });
+    const value = { enabled: true, url: "https://tiles.example:8443/{z}/{x}/{y}?key=a%2Fb", scheme: "tms", attribution: "Map data" };
+    const response = await put(harness, "/api/settings/basemap", value);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(value);
+    await harness.stop();
+    harness = openHarness({ dataFolder: folder });
+    expect(await (await fetch(`${harness.base}/api/settings/basemap`)).json()).toEqual(value);
+    const disabled = { ...value, enabled: false };
+    expect(await (await put(harness, "/api/settings/basemap", disabled)).json()).toEqual(disabled);
+  } finally {
+    await harness?.stop();
+    harness = undefined;
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("invalid basemap settings are rejected without changing the saved value", async () => {
+  harness = openHarness();
+  const valid = { enabled: true, url: "http://tiles.example/{z}/{x}/{y}", scheme: "xyz", attribution: "" };
+  for (const value of [
+    { ...valid, url: "" }, { ...valid, url: "ftp://tiles.example/{z}/{x}/{y}" },
+    { ...valid, url: "https://tiles.example/{z}/{x}" }, { ...valid, url: "https://tiles.example/{z}/{x}/{y}/{foo}" },
+    { ...valid, url: "https://tiles.example/{z}/{x}/{y}/{" }, { ...valid, url: "https://@tiles.example/{z}/{x}/{y}" },
+    { ...valid, url: "https://{z}.example/{x}/{y}/{z}" }, { ...valid, url: "https://example:{z}/{x}/{y}/{z}" },
+    { ...valid, url: "https://*.example/{z}/{x}/{y}" }, { ...valid, url: "https://evil%3Bexample/{z}/{x}/{y}" },
+    { ...valid, url: "https://user:pass@tiles.example/{z}/{x}/{y}" }, { ...valid, url: "https://tiles.example/{z}/{x}/{y}#fragment" },
+    { ...valid, url: "https://tiles.example/{z}/{x}/{y}?a=hello world" }, { ...valid, url: "https://tiles.example/{z}/{x}/{y}\n" },
+    { ...valid, url: `https://tiles.example/{z}/{x}/{y}?${"a".repeat(4096)}` },
+    { ...valid, attribution: "a".repeat(513) }, { ...valid, scheme: "other" }, { ...valid, enabled: "true" },
+    { ...valid, enabled: false, url: "bad" }, {},
+  ]) {
+    const response = await put(harness, "/api/settings/basemap", value);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: { code: "settings.basemap_invalid", data: {} } });
+  }
+  expect(await (await fetch(`${harness.base}/api/settings/basemap`)).json()).toEqual({ enabled: false, url: "", scheme: "xyz", attribution: "" });
+  expect((await put(harness, "/api/settings/basemap", valid)).status).toBe(200);
+  const malformed = await fetch(`${harness.base}/api/settings/basemap`, { method: "PUT", body: "{" });
+  expect(await malformed.json()).toEqual({ error: { code: "settings.basemap_invalid", data: {} } });
+});
 
 test("settings show the stored port, the port in use and the local network addresses", async () => {
   harness = openHarness();

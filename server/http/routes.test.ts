@@ -78,3 +78,19 @@ test("every kind of response carries the security headers", async () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   }
 });
+
+test("saved enabled basemap permits only its origin in page and API policies", async () => {
+  const base = await open(true);
+  const value = { enabled: true, url: "https://tiles.example:8443/{z}/{x}/{y}?key=secret", scheme: "xyz", attribution: "" };
+  const saved = await fetch(`${base}/api/settings/basemap`, { method: "PUT", body: JSON.stringify(value) });
+  expect(saved.status).toBe(200);
+  for (const path of ["/", "/api/health", "/api/nope"]) {
+    const csp = (await fetch(`${base}${path}`)).headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("img-src 'self' data: blob: https://tiles.example:8443");
+    expect(csp).toContain("connect-src 'self' https://tiles.example:8443");
+    expect(csp).not.toContain("key=secret");
+    expect(csp).not.toContain("*");
+  }
+  await fetch(`${base}/api/settings/basemap`, { method: "PUT", body: JSON.stringify({ ...value, enabled: false }) });
+  expect((await fetch(`${base}/`)).headers.get("content-security-policy")).not.toContain("tiles.example");
+});
