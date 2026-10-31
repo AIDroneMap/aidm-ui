@@ -1,4 +1,5 @@
 import { errorResponse } from "../../shared/api-error.ts";
+import { SERVER_OUTPUT_KEYS } from "../../shared/run-plan.ts";
 import type { RouteContext, RouteTable } from "../http/route-table.ts";
 
 
@@ -11,12 +12,31 @@ export function runRoutes(ctx: RouteContext): RouteTable {
 
   return {
     "/api/runs/:id": {
+      DELETE: async req => {
+        const id = parseId(req.params.id ?? "");
+        if (id === null) return errorResponse(404, "run.not_found");
+        const result = await ctx.projectRuns.delete(id);
+        return result.ok ? new Response(null, { status: 204 }) : errorResponse(result.status, result.error.code, result.error.data);
+      },
       GET: (req) => {
         const id = parseId(req.params.id ?? "");
         const view = id === null ? null : tracker.view(id);
         return view === null ? errorResponse(404, "run.not_found") : Response.json(view);
       },
     },
+    "/api/runs/:id/retry": { POST: async req => {
+      const id = parseId(req.params.id ?? "");
+      if (id === null) return errorResponse(404, "run.not_found");
+      const result = await ctx.projectRuns.retry(id);
+      return result.ok ? Response.json(result.value, { status: 202 }) : errorResponse(result.status, result.error.code, result.error.data);
+    } },
+    "/api/runs/:id/settings": { GET: req => {
+      const id = parseId(req.params.id ?? "");
+      const run = id === null ? null : tracker.record(id);
+      if (!run) return errorResponse(404, "run.not_found");
+      const options = run.options.filter(option => ![...SERVER_OUTPUT_KEYS, "no-gpu"].includes(option.name) && (typeof option.value === "string" || typeof option.value === "boolean" || typeof option.value === "number" && Number.isFinite(option.value)));
+      return Response.json({ id: run.id, engineId: run.engineId, name: run.name, preset: run.preset, ...(run.presetName !== undefined ? { presetName: run.presetName } : {}), options });
+    } },
 
     "/api/runs/:id/cancel": {
       POST: async (req) => {

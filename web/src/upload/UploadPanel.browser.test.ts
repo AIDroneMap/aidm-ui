@@ -48,6 +48,7 @@ test("resumes after a connection cut and reload through the upload panel", async
       json({ id: path.endsWith("/2") ? 2 : 1, name: completed ? "Survey updated" : "Survey", notes: "Saved notes", builtin: path.endsWith("/2") ? "sample" : null, photoCount: completed ? 1 : 0, runCount: 0, latestState: null, lastChange: "2024-01-01T00:00:00Z" }); return;
     }
     if (path.endsWith("/link")) { json({ url: null, size: null, facts: null, factsRunId: null }); return; }
+    if (path.endsWith("/runs")) { json({ runs: [], nextOffset: null }); return; }
     if (path.endsWith("/import")) { json({ available: true, state: "none", path: null, acceptedCount: 0, skippedCount: 0, groundControlCount: 0, files: [], nextOffset: null }); return; }
     if (path.endsWith("/photos")) { json({ files: completed ? [{ name: "flight.jpg", size: bytes.length, sha256: digest, kind: "photo" }] : [], nextOffset: null }); return; }
     const session = () => ({ id, chunkSize: 1024 * 1024, received: [...chunks.keys()], complete: completed });

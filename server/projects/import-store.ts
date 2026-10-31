@@ -13,6 +13,7 @@ type State = "changed" | "missing";
 type Kind = "photo" | "mask" | "video";
 type Header = { path: string; generation: string; acceptedCount: number; skippedCount: number; groundControlCount: number };
 type Entry = { name: string; kind: string; size: number; signature: string; sha256: string | null };
+export interface SavedImport { path: string; entries: Entry[] }
 export class ImportUnavailable extends Error {
   constructor(public readonly state: State) { super(`Import ${state}`); }
 }
@@ -200,6 +201,48 @@ export class ImportStore {
     return first.name === entry.name && (entry.kind !== "photo" || first.excluded === 0);
   }
   // A drift failure leaves an uncommitted task. The caller must discard it and never commit it.
+  async capture(id: number): Promise<SavedImport> {
+    const h = this.header(id);
+    if (!h || this.busy.has(id)) throw new ImportUnavailable("changed");
+    await this.assertReady(id);
+    const rows = this.db.query("SELECT name,kind,size,signature,sha256 FROM project_import_entries WHERE project_id=? AND generation=? AND kind<>'directory' ORDER BY name").all(id, h.generation) as Entry[];
+    const selected = rows.filter(entry => (entry.kind === "photo" || entry.kind === "video") && this.chosenEntry(id, h.generation, entry));
+    const photoStems = new Set(selected.filter(entry => entry.kind === "photo").map(entry => entry.name.slice(0, -extname(entry.name).length)));
+    const allPhotoStems = new Set(rows.filter(entry => entry.kind === "photo").map(entry => entry.name.slice(0, -extname(entry.name).length)));
+    const entries = [...selected, ...rows.filter(entry => {
+      if (entry.kind !== "mask") return false;
+      const stem = entry.name.slice(0, -extname(entry.name).length - "_mask".length);
+      return !allPhotoStems.has(stem) || photoStems.has(stem);
+    })].sort((a, b) => a.name.localeCompare(b.name));
+    if (this.header(id)?.generation !== h.generation) throw new ImportUnavailable("changed");
+    return { path: h.path, entries };
+  }
+
+  async replay(saved: SavedImport, client: TaskClient, uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    try {
+      const data = await this.dataPath();
+      if (within(saved.path, data) || within(data, saved.path)) throw new ImportUnavailable("changed");
+      for (const entry of saved.entries) {
+        signal?.throwIfAborted();
+        await this.digest(saved.path, entry);
+        const path = await this.safePath(saved.path, entry.name);
+        const extension = extname(entry.name), stem = entry.name.slice(0, -extension.length);
+        const paired = entry.kind === "mask" ? stem.slice(0, -"_mask".length) : stem;
+        const name = createHash("sha256").update(paired).digest("hex") + (entry.kind === "mask" ? "_mask" : "") + extension;
+        const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+          if (signature(await file.stat({ bigint: true })) !== entry.signature) throw new ImportUnavailable("changed");
+          const result = await client.uploadImage(uuid, name, Bun.file(file.fd), signal);
+          if (signature(await file.stat({ bigint: true })) !== entry.signature) throw new ImportUnavailable("changed");
+          await this.digest(saved.path, entry);
+          if (!result.ok) return result;
+        } finally { await file.close(); }
+      }
+      for (const entry of saved.entries) { signal?.throwIfAborted(); await this.digest(saved.path, entry); }
+      return { ok: true, value: undefined };
+    } catch (error) { signal?.throwIfAborted(); throw unavailable(error); }
+  }
+
   async copyToTask(id: number, client: TaskClient, uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
     const h = this.header(id); if (!h) throw new ImportUnavailable("missing");
     if (this.busy.has(id)) throw new ImportUnavailable("changed");

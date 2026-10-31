@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
-import { ImportStore, ImportUnavailable } from "./import-store.ts";
+import { ImportStore, ImportUnavailable, type SavedImport } from "./import-store.ts";
 import type { TaskApiResult, TaskClient } from "../task-api/task-client.ts";
 
 export type RunInputSnapshot = {
@@ -20,6 +20,7 @@ export class RunInputsChanged extends Error {
 }
 
 type UploadEntry = { name: string; kind: string; sha256: string; size: number; storageId: string; excluded: number };
+export type SavedRunInputs = { snapshot: RunInputSnapshot } & ({ wayIn: "upload"; entries: UploadEntry[] } | { wayIn: "import"; imported: SavedImport });
 const success: TaskApiResult<void> = { ok: true, value: undefined };
 
 function abort(signal?: AbortSignal): void { signal?.throwIfAborted(); }
@@ -70,6 +71,24 @@ export class RunInputs {
     if ((await this.snapshot(id)).revision !== snapshot.revision) throw new RunInputsChanged();
   }
 
+  async capture(id: number, snapshot: RunInputSnapshot): Promise<SavedRunInputs> {
+    await this.check(id, snapshot);
+    const saved: SavedRunInputs = snapshot.wayIn === "import"
+      ? { wayIn: "import", snapshot, imported: await this.imports.capture(id) }
+      : { wayIn: "upload", snapshot, entries: this.chosen(this.uploads(id)) };
+    await this.check(id, snapshot);
+    return saved;
+  }
+
+  async replay(id: number, saved: SavedRunInputs, client: TaskClient, uuid: string, signal?: AbortSignal, onProgress?: (done: number, total: number) => void): Promise<TaskApiResult<void>> {
+    if (saved.wayIn === "import") {
+      const result = await this.imports.replay(saved.imported, client, uuid, signal);
+      if (result.ok) onProgress?.(saved.snapshot.photoCount, saved.snapshot.photoCount);
+      return result;
+    }
+    return this.copyUploads(id, saved.snapshot, saved.entries, client, uuid, signal, onProgress);
+  }
+
   private async verify(file: Awaited<ReturnType<typeof open>>, entry: UploadEntry, signal?: AbortSignal): Promise<void> {
     const info = await file.stat();
     if (!info.isFile() || info.size !== entry.size) throw new RunInputsChanged();
@@ -93,7 +112,10 @@ export class RunInputs {
       if (result.ok) onProgress?.(snapshot.photoCount, snapshot.photoCount);
       return result;
     }
-    const selected = this.chosen(this.uploads(id));
+    return this.copyUploads(id, snapshot, this.chosen(this.uploads(id)), client, uuid, signal, onProgress, () => this.check(id, snapshot));
+  }
+
+  private async copyUploads(id: number, snapshot: RunInputSnapshot, selected: UploadEntry[], client: TaskClient, uuid: string, signal?: AbortSignal, onProgress?: (done: number, total: number) => void, check: () => Promise<void> = async () => {}): Promise<TaskApiResult<void>> {
     const photos = selected.filter(entry => entry.kind === "photo");
     const named = new Map<string, UploadEntry>();
     for (const entry of selected) {
@@ -121,7 +143,7 @@ export class RunInputs {
         const current = await lstat(path);
         const opened = await file.stat();
         if (!current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino || await realpath(directory) !== directory) throw new RunInputsChanged();
-        await this.check(id, snapshot);
+        await check();
         if (!result.ok) return result;
         if (entry.kind === "photo") onProgress?.(++done, snapshot.photoCount);
       } catch (error) {
@@ -131,7 +153,7 @@ export class RunInputs {
         throw error;
       } finally { await file?.close(); }
     }
-    abort(signal); await this.check(id, snapshot);
+    abort(signal); await check();
     return success;
   }
 }

@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { lstat, realpath, rm } from "node:fs/promises";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
 import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
@@ -23,6 +24,7 @@ export type RunEvent = { type: "run"; run: RunView } | { type: "log"; lines: str
 
 /** What changes on a run: the saved fields, and the progress of the steps before the engine has the images, which is kept in memory only. */
 export interface RunUpdate extends RunPatch {
+  queueCount?: number | null;
   step?: RunView["step"];
   download?: RunView["download"];
   upload?: RunView["upload"];
@@ -43,6 +45,7 @@ export interface RunTrackerDeps {
 }
 
 interface Live {
+  queueCount: number | null;
   step: RunView["step"];
   download: RunView["download"];
   upload: RunView["upload"];
@@ -66,6 +69,7 @@ interface Following {
 
 /** Follows the tasks of runs on their engines, saves what they report, and tells whoever listens. */
 export class RunTracker {
+  recoverMissing: ((id: number) => Promise<boolean>) | undefined;
   readonly results: ResultArchives;
   private readonly runs: RunStore;
   private readonly engines: EngineStore;
@@ -113,7 +117,7 @@ export class RunTracker {
     if (this.started || this.stopped) return;
     this.started = true;
     for (const run of this.runs.listUnfinished()) {
-      if (run.state === "created" || run.state === "uploading") this.abandon(run);
+      if ((run.state === "created" || run.state === "uploading") && !run.restartPending) this.abandon(run);
       else this.follow(run.id);
     }
     for (const run of this.runs.completed()) this.results.ensure(run);
@@ -151,6 +155,24 @@ export class RunTracker {
   }
 
   record(runId: number): RunRecord | null { return this.runs.get(runId); }
+
+  pause(runId: number): void { this.following.delete(runId); }
+
+  async remove(run: RunRecord): Promise<void> {
+    this.pause(run.id);
+    for (const [root, path] of [
+      [join(this.dataFolder, "runs"), join(this.dataFolder, "runs", String(run.id))],
+      [join(this.dataFolder, "projects", String(run.projectId), "runs"), join(this.dataFolder, "projects", String(run.projectId), "runs", String(run.id))],
+    ]) {
+      try {
+        const info = await lstat(root!);
+        if (!info.isDirectory() || info.isSymbolicLink() || await realpath(root!) !== resolve(root!)) throw new Error("Invalid run folder");
+        await rm(path!, { recursive: true, force: true });
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    this.runs.remove(run.id);
+    this.live.delete(run.id); this.lineCounts.delete(run.id); this.listeners.delete(run.id);
+  }
 
   view(runId: number): RunView | null {
     const run = this.runs.get(runId);
@@ -190,8 +212,9 @@ export class RunTracker {
     if (this.stopped) return;
     const existing = this.runs.get(runId);
     if (existing !== null && isFinished(existing.state)) return;
-    const { step, download, upload, ...saved } = patch;
+    const { step, download, upload, queueCount, ...saved } = patch;
     const live = this.liveOf(runId);
+    if (queueCount !== undefined) live.queueCount = queueCount;
     if (step !== undefined) live.step = step;
     if (download !== undefined) live.download = download;
     if (upload !== undefined) live.upload = upload;
@@ -212,7 +235,7 @@ export class RunTracker {
   private liveOf(runId: number): Live {
     let live = this.live.get(runId);
     if (live === undefined) {
-      live = { step: null, download: null, upload: null };
+      live = { step: null, download: null, upload: null, queueCount: null };
       this.live.set(runId, live);
     }
     return live;
@@ -222,6 +245,7 @@ export class RunTracker {
     const live = this.live.get(run.id);
     const results = this.results.view(run.id);
     return {
+      ...(run.state === "queued" ? { queueCount: live?.queueCount ?? null } : {}),
       id: run.id,
       projectId: run.projectId,
       name: run.name,
@@ -350,7 +374,7 @@ export class RunTracker {
   private abandon(run: RunRecord): void {
     this.update(run.id, { state: "failed", problem: { code: "run.interrupted", data: {} } });
     const engine = run.engineId === null ? null : this.engines.get(run.engineId);
-    if (run.taskUuid !== null && engine !== null) {
+    if (run.taskUuid !== null && engine !== null && !run.taskRetired) {
       const uuid = run.taskUuid;
       const failed = () => this.logLine(`Run ${run.id}: the engine task could not be removed after the restart.`);
       void this.clientFor({ address: engine.address, token: engine.token })
@@ -396,11 +420,19 @@ export class RunTracker {
     const client = this.clientFor({ address: engine.address, token: engine.token });
     const info = await client.taskInfo(run.taskUuid);
     if (!info.ok) {
-      if (this.current(runId, following) !== null) this.pollFailed(runId, following, info.failure);
+      if (this.current(runId, following) !== null) await this.pollFailed(runId, following, info.failure);
       return;
     }
     if (this.current(runId, following) === null) return;
     const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
+    if (run.restartPending) {
+      if (isFinished(state)) {
+        this.update(runId, { state: "failed", restartPending: false, problem: { code: "run.restart_unconfirmed", data: {} } });
+        return;
+      }
+      if (state === "queued" || state === "processing") this.update(runId, { restartPending: false });
+    }
+    const queue = state === "queued" ? await client.info() : null;
     const processingTime = info.value.processingTime;
     if (processingTime !== null && processingTime >= 0) following.engineMs = processingTime;
     // The engine started the task over, and its log starts again too. The run's own state cannot tell:
@@ -440,7 +472,7 @@ export class RunTracker {
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
-      this.pollFailed(runId, following, output.failure);
+      await this.pollFailed(runId, following, output.failure);
       return;
     }
     const newLines = held > 0 ? output.value.slice(1) : output.value;
@@ -467,18 +499,22 @@ export class RunTracker {
     }
     const progress = info.value.progress;
     const message = info.value.errorMessage;
-    if (before.state !== state || before.progress !== progress || before.engineMessage !== message) {
-      this.update(runId, { state, progress, engineMessage: message });
+    const queueCount = queue?.ok ? queue.value.queueCount : null;
+    if (before.state !== state || before.progress !== progress || before.engineMessage !== message || this.live.get(runId)?.queueCount !== queueCount) {
+      this.update(runId, { state, progress, engineMessage: message, queueCount });
     }
   }
 
   /** One poll got no usable answer. A task the engine does not know ends the run; anything else is counted as unreachable. */
-  private pollFailed(runId: number, following: Following, failure?: TaskApiFailure): void {
-    if (failure !== undefined && isTaskNotFound(failure)) {
+  private async pollFailed(runId: number, following: Following, failure?: TaskApiFailure): Promise<void> {
+    const uuid = this.runs.get(runId)?.taskUuid;
+    if (failure !== undefined && uuid && isTaskNotFound(failure, uuid)) {
       // The engine answered, so it is reachable; it just does not have the task.
       following.failedPolls = 0;
       following.notFoundPolls++;
       if (following.notFoundPolls >= NOT_FOUND_POLLS_BEFORE_LOST) {
+        if (this.recoverMissing && await this.recoverMissing(runId)) return;
+        if (this.current(runId, following) === null) return;
         this.logLine(`Run ${runId}: the engine no longer knows the task.`);
         this.update(runId, { state: "failed", problem: { code: "run.engine_lost", data: {} } });
       }

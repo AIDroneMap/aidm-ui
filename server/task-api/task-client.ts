@@ -39,8 +39,8 @@ export type TaskApiResult<T> = { ok: true; value: T } | { ok: false; failure: Ta
  * `${uuid} not found`). The upload and commit routes say "Invalid uuid (not
  * found)" instead, which is a different answer and does not match.
  */
-export function isTaskNotFound(failure: TaskApiFailure): boolean {
-  return failure.kind === "engine_error" && /^\S+ not found$/.test(failure.message);
+export function isTaskNotFound(failure: TaskApiFailure, uuid?: string): boolean {
+  return failure.kind === "engine_error" && (uuid === undefined ? /^\S+ not found$/.test(failure.message) : failure.message === `${uuid} not found`);
 }
 
 export type EngineInfo = EngineInfoView;
@@ -244,6 +244,18 @@ export class TaskClient {
 
   async cancelTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
     return this.command("/task/cancel", uuid, signal);
+  }
+
+  async restartTask(uuid: string, options: TaskOption[], signal?: AbortSignal, beforeSend?: () => void): Promise<TaskApiResult<void>> {
+    const reported = await this.options(signal);
+    if (!reported.ok) return reported;
+    const invalid = validateOptions(options, reported.value);
+    if (invalid) return { ok: false, failure: invalid };
+    beforeSend?.();
+    const body = await this.requestObject("POST", "/task/restart", {
+      body: new URLSearchParams({ uuid, options: JSON.stringify(options) }), signal,
+    });
+    return body.ok ? this.expectSuccess(body.value, "/task/restart") : body;
   }
 
   async removeTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {

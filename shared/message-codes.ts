@@ -2,6 +2,9 @@
 // each one into text through web/src/i18n/en.json; a test checks that every
 // code here has a translation.
 export const MESSAGE_CODES = [
+  "run.restart_unconfirmed",
+  "run.action_unavailable",
+  "run.photos_unavailable",
   "preset.invalid_file",
   "preset.invalid_name",
   "preset.name_taken",

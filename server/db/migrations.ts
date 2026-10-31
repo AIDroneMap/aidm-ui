@@ -16,6 +16,7 @@ import runResultsSql from "./migrations/0010-run-results.sql" with { type: "text
 import projectLinksSql from "./migrations/0011-project-links.sql" with { type: "text" };
 
 import operatorPresetsSql from "./migrations/0012-operator-presets.sql" with { type: "text" };
+import runSourcesSql from "./migrations/0013-run-sources.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -38,6 +39,7 @@ export const migrations: Migration[] = [
   { version: 10, name: "run-results", sql: runResultsSql },
   { version: 11, name: "project-links", sql: projectLinksSql },
   { version: 12, name: "operator-presets", sql: operatorPresetsSql },
+  { version: 13, name: "run-sources", sql: runSourcesSql },
 ];
 
 function storedVersion(db: Database): number {

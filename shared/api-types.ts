@@ -153,6 +153,8 @@ export interface RunResultsView {
 }
 
 export interface RunView {
+  /** Engine-reported total of running and queued tasks, never a queue position. */
+  queueCount?: number | null;
   presetName?: string;
   id: number;
   name: string | null;
