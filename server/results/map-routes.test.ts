@@ -77,7 +77,7 @@ test("map uses archived raster bounds, detects TMS tiles and omits absent elevat
 test.each([false, true])("current XYZ layers use primary georeferencing with overviews %s", async overviews => {
   const image = Buffer.from(raster());
   if (overviews) {
-    image.writeUInt32LE(400, 10 + 7 * 12);
+    image.writeUInt32LE(400, 10 + image.readUInt16LE(8) * 12);
     image.writeUInt16LE(1, 400);
     image.writeUInt16LE(256, 402); image.writeUInt16LE(4, 404);
     image.writeUInt32LE(1, 406); image.writeUInt32LE(2, 410);
