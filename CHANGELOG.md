@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- List project runs, retry or change settings, recover missing engine tasks from recorded inputs, and delete individual runs. Queue text uses the engine's total of running and waiting runs. Evidence: `docs/testing/run-management.md`, upload-counting route tests, the production-route keyboard journey and the hosted native task API flow. Closes #71.
+
 - Save, rename and delete operator presets, and export or import a settings file with explicit dropped-option review. Evidence: `docs/testing/settings-files.md`, preset persistence tests and the real-route Chromium round trip.
 
 - Edit run options with searchable catalogue groups, explanations, preset resets, immediate validation and engine-change review. Evidence: `docs/testing/run-settings.md`, shared policy tests, project-run route tests and keyboard browser tests.

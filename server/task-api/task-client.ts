@@ -246,6 +246,17 @@ export class TaskClient {
     return this.command("/task/cancel", uuid, signal);
   }
 
+  async restartTask(uuid: string, options: TaskOption[], signal?: AbortSignal): Promise<TaskApiResult<void>> {
+    const reported = await this.options(signal);
+    if (!reported.ok) return reported;
+    const invalid = validateOptions(options, reported.value);
+    if (invalid) return { ok: false, failure: invalid };
+    const body = await this.requestObject("POST", "/task/restart", {
+      body: new URLSearchParams({ uuid, options: JSON.stringify(options) }), signal,
+    });
+    return body.ok ? this.expectSuccess(body.value, "/task/restart") : body;
+  }
+
   async removeTask(uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {
     return this.command("/task/remove", uuid, signal);
   }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { RunSeed } from "../../../shared/run-management.ts";
 import type { EngineView, RunView } from "../../../shared/api-types.ts";
 import { rebaseSettings, resolveSettings, type MovedSetting, type SettingsDraft } from "../../../shared/run-settings.ts";
 import type { ReconciledOption } from "../../../shared/engine-options.ts";
@@ -31,8 +32,9 @@ export function OptionList({ options }: { options: ReviewOption[] }) {
   })}</ul>;
 }
 
-export function RunStart({ projectId, onAuthRequired }: { projectId: number; onAuthRequired(): void }) {
-  const [open, setOpen] = useState(false);
+export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId: number; sourceRunId?: number; onAuthRequired(): void }) {
+  const [open, setOpen] = useState(sourceRunId !== undefined);
+  const seedEditing = useRef(sourceRunId !== undefined);
   const [draft, setDraft] = useState<SettingsDraft>({});
   const [applied, setApplied] = useState<Array<{ name: string; value: ReviewOption["value"] }>>([]);
   const [loaded, setLoaded] = useState<{ file: SettingsFile; id: number | null; baseline: SettingValue[] } | null>(null);
@@ -70,20 +72,24 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
   useEffect(() => {
     if (!open) return;
     let current = true;
-    api<EngineView[]>("GET", "/api/engines").then(value => {
+    Promise.all([api<EngineView[]>("GET", "/api/engines"), sourceRunId === undefined ? Promise.resolve(null) : api<RunSeed>("GET", `/api/runs/${sourceRunId}/settings`)]).then(([value, seed]) => {
       if (!current) return;
       const available = value.filter(engine => engine.enabled);
-      setEngines(available); setEngineId(available[0]?.id ?? null);
+      setEngines(available); setEngineId(available.find(engine => engine.id === seed?.engineId)?.id ?? available[0]?.id ?? null);
+      if (seed) {
+        chooseFile({ options: seed.options, preset: seed.presetName ?? t(`run_start.preset.${seed.preset ?? "custom"}`), engineVersion: null }, null);
+        setName(seed.name ?? ""); setStep("review");
+      }
     }, error => { if (current) fail(error); });
     return () => { current = false; };
-  }, [open, projectId]);
+  }, [open, projectId, sourceRunId]);
   useEffect(() => {
     if (!open || engineId === null) return;
     const current = ++generation.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoading(true); setFailure(null); setChanged(false);
-    const pending = applied.length || presetName !== undefined
-      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied, presetName })
+    const pending = sourceRunId !== undefined || applied.length || presetName !== undefined
+      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied, presetName, sourceRunId })
       : api<RunReviewView>("GET", `/api/projects/${projectId}/run-review?engineId=${engineId}&preset=${preset}&offset=${offset}`);
     pending.then(value => {
       if (current !== generation.current) return;
@@ -110,10 +116,11 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
       }
       if (offset === 0) snapshot.current = value.revision;
       setReview(value); setLoading(false);
+      if (seedEditing.current && value.settings) { seedEditing.current = false; setEditing(true); }
       if (value.facts && value.facts.pendingMetadata > 0) timer = setTimeout(() => setRefresh(value => value + 1), 300);
     }, error => { if (current === generation.current) { setReview(null); setLoading(false); fail(error); } });
     return () => { generation.current++; clearTimeout(timer); };
-  }, [open, projectId, engineId, preset, offset, refresh, settingsKey, presetName]);
+  }, [open, projectId, engineId, preset, offset, refresh, settingsKey, presetName, sourceRunId]);
   function changePreset(value: PresetId) {
     setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
     setLoading(true); setReview(null); setPreset(value); setOffset(0); setOffsets([]);
@@ -142,7 +149,7 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
     if (!review || loading || working || review.blocked || engineId === null) return;
     setWorking(true); setFailure(null);
     try {
-      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, presetName, name, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
+      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, presetName, sourceRunId, name, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
       window.location.hash = `#/runs/${run.id}`;
     } catch (error) { fail(error); } finally { setWorking(false); }
   }

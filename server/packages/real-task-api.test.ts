@@ -375,6 +375,35 @@ real(
     expect(orthophotoResponse.status).toBe(200);
     expect(new Uint8Array(await orthophotoResponse.arrayBuffer())).toEqual(new Uint8Array(orthophoto));
 
+    const originalTask = h.runs.get(projectRun.id)!.taskUuid!;
+    const repeatBody = { engineId, preset: "custom", sourceRunId: projectRun.id, options: [{ name: "orthophoto-resolution", value: 9 }] };
+    const repeatProject = async () => {
+      const response = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review`, { method: "POST", body: JSON.stringify(repeatBody) });
+      expect(response.status).toBe(200);
+      const review = await response.json() as RunReviewView;
+      const start = await fetch(`${h.base}/api/projects/${uploadedProject.id}/runs`, { method: "POST", body: JSON.stringify({ ...repeatBody, name: "Repeated field", revision: review.revision }) });
+      expect(start.status).toBe(202);
+      const run = await start.json() as RunView;
+      await eventually(async () => {
+        const view = await (await fetch(`${h.base}/api/runs/${run.id}`)).json() as RunView;
+        return view.resultsAvailable || view.state === "failed" || view.results?.state === "failed";
+      }, 240_000);
+      expect(h.tracker.view(run.id)).toMatchObject({ state: "completed", resultsAvailable: true });
+      return h.runs.get(run.id)!;
+    };
+    const repeated = await repeatProject();
+    expect(repeated.taskUuid).toBe(originalTask);
+    expect(repeated.options).toContainEqual({ name: "orthophoto-resolution", value: 9 });
+    expect(Buffer.from(await (await fetch(`${h.base}/api/runs/${projectRun.id}/results`)).arrayBuffer())).toEqual(projectArchive);
+    expect((await client.removeTask(originalTask)).ok).toBe(true);
+    const recreated = await repeatProject();
+    expect(recreated.taskUuid).not.toBe(originalTask);
+    const recreatedInfo = await client.taskInfo(recreated.taskUuid!);
+    expect(recreatedInfo.ok && recreatedInfo.value.imagesCount).toBe(3);
+    expect((await fetch(`${h.base}/api/runs/${recreated.id}`, { method: "DELETE" })).status).toBe(204);
+    const removed = await client.taskInfo(recreated.taskUuid!);
+    expect(removed.ok).toBe(false);
+
     const source = join(scratch, "imported-photos");
     await mkdir(source);
     for (let index = 0; index < 3; index++) await writeFile(join(source, `photo-${index}.jpg`), `synthetic imported image ${index}\n`, { mode: 0o444 });

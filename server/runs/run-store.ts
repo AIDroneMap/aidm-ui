@@ -5,6 +5,7 @@ import type { TaskOption } from "../task-api/task-client.ts";
 
 /** One row of the runs table. */
 export interface RunRecord {
+  taskRetired: boolean;
   presetName?: string;
   id: number;
   projectId: number;
@@ -27,6 +28,7 @@ export interface RunRecord {
 }
 
 interface RunRow {
+  task_retired: number;
   preset_name: string | null;
   id: number;
   project_id: number;
@@ -70,6 +72,7 @@ function parseJson<T>(text: string | null, fallback: T): T {
 
 function toRecord(row: RunRow): RunRecord {
   return {
+    taskRetired: row.task_retired === 1,
     id: row.id,
     projectId: row.project_id,
     name: row.name,
@@ -96,6 +99,20 @@ const FINISHED_STATES = `(${FINISHED_RUN_STATES.map((state) => `'${state}'`).joi
 export class RunStore {
   constructor(private readonly db: Database) {}
 
+  retireTask(engine: number, uuid: string, owner: number): void {
+    this.db.query("UPDATE runs SET task_retired = 1 WHERE engine_id = ? AND task_uuid = ? AND id <> ?").run(engine, uuid, owner);
+  }
+
+  taskRuns(engine: number, uuid: string): RunRecord[] {
+    return (this.db.query("SELECT * FROM runs WHERE engine_id = ? AND task_uuid = ?").all(engine, uuid) as RunRow[]).map(toRecord);
+  }
+
+  list(project: number, offset: number, limit: number): RunRecord[] {
+    return (this.db.query("SELECT * FROM runs WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").all(project, limit, offset) as RunRow[]).map(toRecord);
+  }
+
+  remove(id: number): void { this.db.query("DELETE FROM runs WHERE id = ?").run(id); }
+
   completed(): RunRecord[] {
     return (this.db.query("SELECT * FROM runs WHERE state = 'completed' AND task_uuid IS NOT NULL").all() as RunRow[]).map(toRecord);
   }
@@ -108,6 +125,15 @@ export class RunStore {
   saveResults(id: number, details: unknown): void {
     this.db.query("INSERT INTO run_results (run_id, details) VALUES (?, ?) ON CONFLICT (run_id) DO UPDATE SET details = excluded.details")
       .run(id, JSON.stringify(details));
+  }
+
+  source<T>(id: number): T | null {
+    const row = this.db.query("SELECT details FROM run_sources WHERE run_id = ?").get(id) as { details: string } | null;
+    return row ? JSON.parse(row.details) as T : null;
+  }
+
+  saveSource(id: number, source: unknown): void {
+    this.db.query("INSERT INTO run_sources (run_id, details) VALUES (?, ?)").run(id, JSON.stringify(source));
   }
 
   /** The id of a built-in project, such as "sample". */

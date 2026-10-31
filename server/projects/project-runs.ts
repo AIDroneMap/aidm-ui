@@ -12,20 +12,22 @@ import { problemFromFailure } from "../engines/problems.ts";
 import { reconcileOptions } from "../options/reconcile.ts";
 import { validateOptions } from "../options/validate.ts";
 import type { PhotoStore } from "../photos/photo-store.ts";
-import type { RunStore } from "../runs/run-store.ts";
+import type { RunRecord, RunStore } from "../runs/run-store.ts";
+import { isFinished } from "../runs/run-state.ts";
 import type { RunTracker } from "../runs/run-tracker.ts";
 import { isNativePackage, type Settings } from "../settings/settings.ts";
 import { isTaskNotFound, TaskClient, type EngineEndpoint, type TaskOption } from "../task-api/task-client.ts";
 import { ImportUnavailable } from "./import-store.ts";
 import type { ProjectDeletion } from "./project-deletion.ts";
 import type { ProjectStore } from "./project-store.ts";
-import { RunInputs, RunInputsChanged, type RunInputSnapshot } from "./run-inputs.ts";
+import { RunInputs, RunInputsChanged, type RunInputSnapshot, type SavedRunInputs } from "./run-inputs.ts";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; status: number; error: ApiError };
 function refuse(status: number, code: ApiError["code"], data: ApiError["data"] = {}): { ok: false; status: number; error: ApiError } {
   return { ok: false, status, error: { code, data } };
 }
 type ReviewedInputs = RunInputSnapshot | { wayIn: "link"; revision: string; url: string };
+type SavedSource = SavedRunInputs | { wayIn: "link"; url: string; revision: string };
 interface Reviewed { view: RunReviewView; inputs: ReviewedInputs; options: TaskOption[]; client: TaskClient }
 interface Preparing { abort: AbortController; done: Promise<void>; cancelFailure: ApiError | null }
 interface Dependencies {
@@ -45,13 +47,16 @@ interface Dependencies {
 /** Reviews the server's inputs and settings, then prepares one task from that snapshot. */
 export class ProjectRuns {
   private readonly preparing = new Map<number, Preparing>();
-  private readonly starting = new Set<number>();
+  private readonly starting = new Set<string>();
+  private readonly deleting = new Set<number>();
+  private readonly sourcesInUse = new Map<number, number>();
   private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
   constructor(private readonly deps: Dependencies) {
     this.clientFor = deps.clientFor ?? (endpoint => new TaskClient(endpoint, { log: deps.log }));
+    deps.tracker.recoverMissing = id => this.recover(id);
   }
 
-  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string): Promise<Outcome<Reviewed>> {
+  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number): Promise<Outcome<Reviewed>> {
     const { projects, engines, inputs, photos, settings } = this.deps;
     if (id === projects.sampleId()) return refuse(409, "project.sample_photos_forbidden");
     const project = projects.get(id);
@@ -64,18 +69,28 @@ export class ProjectRuns {
     if (!info.ok) return { ok: false, status: 502, error: problemFromFailure(info.failure) };
     if (!isSupportedVersion(info.value.version)) return refuse(409, "engine.unsupported_version", { version: info.value.version, minimum: MIN_TASK_API_VERSION });
     if (!reported.ok) return { ok: false, status: 502, error: problemFromFailure(reported.failure) };
+    const original = sourceRunId === undefined ? null : this.deps.runs.get(sourceRunId);
+    if (sourceRunId !== undefined && (!original || original.projectId !== id)) return refuse(404, "run.not_found");
+    if (original && (!isFinished(original.state) || original.sample)) return refuse(409, "run.action_unavailable");
+    const source = original ? this.deps.runs.source<SavedSource>(original.id) : null;
+    if (original && !source) return refuse(409, "run.photos_unavailable");
     let snapshot: ReviewedInputs;
     let facts;
     try {
-      if (this.deps.links.isBusy(id)) return refuse(409, "link.busy");
-      const url = this.deps.links.get(id);
-      if (url !== null) {
+      if (source) {
+        snapshot = source.wayIn === "link" ? source : source.snapshot;
         facts = null;
-        snapshot = { wayIn: "link", revision: this.deps.links.revision(id), url };
       } else {
-        facts = await photos.facts(id, offset, 50);
-        snapshot = await inputs.snapshot(id);
-        if (this.deps.links.isBusy(id) || this.deps.links.has(id)) return refuse(409, "project_run.review_changed");
+        if (this.deps.links.isBusy(id)) return refuse(409, "link.busy");
+        const url = this.deps.links.get(id);
+        if (url !== null) {
+          facts = null;
+          snapshot = { wayIn: "link", revision: this.deps.links.revision(id), url };
+        } else {
+          facts = await photos.facts(id, offset, 50);
+          snapshot = await inputs.snapshot(id);
+          if (this.deps.links.isBusy(id) || this.deps.links.has(id)) return refuse(409, "project_run.review_changed");
+        }
       }
     } catch (error) {
       if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
@@ -104,8 +119,9 @@ export class ProjectRuns {
     else if (snapshot.wayIn !== "link" && info.value.maxImages != null && snapshot.photoCount > info.value.maxImages) blocked = { code: "project_run.image_limit", data: { count: snapshot.photoCount, limit: info.value.maxImages } };
     else if (plan.unsupportedPresetOptions.length || !outputFlags.includes("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
-    else if (this.deps.runs.listUnfinished().some(run => run.projectId === id)) blocked = { code: "project_run.already_running", data: {} };
-    const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
+    else if (this.deps.runs.listUnfinished().some(run => run.projectId === id && run.engineId === engineId)) blocked = { code: "project_run.already_running", data: {} };
+    if (original?.state === "completed" && !["ready", "deleted"].includes(this.deps.tracker.results.view(original.id)?.state ?? "")) blocked = { code: "run.results_not_ready", data: {} };
+    const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, sourceRunId, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
     return { ok: true, value: { inputs: snapshot, client, options, view: {
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
       ...(presetName !== undefined ? { presetName } : {}),
@@ -119,40 +135,148 @@ export class ProjectRuns {
     } } };
   }
 
-  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string): Promise<Outcome<RunReviewView>> {
-    const result = await this.inspect(id, engine, preset, offset, edits, presetName);
+  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number): Promise<Outcome<RunReviewView>> {
+    const result = await this.inspect(id, engine, preset, offset, edits, presetName, sourceRunId);
     return result.ok ? { ok: true, value: result.value.view } : result;
   }
 
+  async retry(id: number): Promise<Outcome<RunView>> {
+    const { runs, engines } = this.deps;
+    const original = runs.get(id);
+    if (!original) return refuse(404, "run.not_found");
+    if (original.sample || !["failed", "cancelled"].includes(original.state)) return refuse(409, "run.action_unavailable");
+    const engine = original.engineId === null ? null : engines.get(original.engineId);
+    if (!engine?.enabled || !engine.address) return refuse(409, "project_run.engine_unavailable");
+    return this.repeat(original, engine.id, original.options, original.name ?? "", original.preset, original.presetName);
+  }
+
+  private async recover(id: number): Promise<boolean> {
+    const { runs, tracker, engines } = this.deps;
+    const run = runs.get(id), source = runs.source<SavedSource>(id);
+    if (!run || isFinished(run.state) || !source || this.preparing.has(id) || this.deleting.has(id)) return false;
+    const engine = run.engineId === null ? null : engines.get(run.engineId);
+    if (!engine?.enabled) return false;
+    const key = `${run.projectId}:${engine.id}`;
+    if (this.starting.has(key)) return false;
+    const release = this.deps.projectDeletion.beginWrite(run.projectId);
+    if (!release) return false;
+    this.starting.add(key); tracker.pause(id);
+    const boundary = tracker.log(id, Number.MAX_SAFE_INTEGER).next;
+    tracker.update(id, { state: source.wayIn === "link" ? "created" : "uploading", taskUuid: null, restarted: true, restartedAtLine: boundary, progress: null });
+    const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
+    this.preparing.set(id, preparing);
+    const client = this.clientFor(engine);
+    preparing.done = this.prepare(run.projectId, id, run.name ?? "", { client, options: run.options, inputs: source.wayIn === "link" ? source : source.snapshot, saved: source.wayIn === "link" ? undefined : source }, preparing)
+      .finally(() => { this.preparing.delete(id); this.starting.delete(key); release(); });
+    return true;
+  }
+
+  private repeat(original: RunRecord, engineId: number, options: TaskOption[], name: string, preset: string | null, presetName?: string): Outcome<RunView> {
+    const { runs, tracker, engines } = this.deps;
+    const key = `${original.projectId}:${engineId}`;
+    if (this.deleting.has(original.id)) return refuse(409, "run.action_unavailable");
+    if (this.starting.has(key) || runs.listUnfinished().some(run => run.projectId === original.projectId && run.engineId === engineId)) return refuse(409, "project_run.already_running");
+    const release = this.deps.projectDeletion.beginWrite(original.projectId);
+    if (!release) return refuse(409, "project.deletion_busy");
+    const unblocks: Array<() => void> = [];
+    if (original.engineId === engineId && original.taskUuid) {
+      for (const previous of runs.taskRuns(engineId, original.taskUuid)) {
+        const unblock = tracker.results.beginRemoval(previous.id);
+        if (!unblock) { for (const done of unblocks) done(); release(); return refuse(409, "run.results_not_ready"); }
+        unblocks.push(unblock);
+      }
+    }
+    this.starting.add(key);
+    this.sourcesInUse.set(original.id, (this.sourcesInUse.get(original.id) ?? 0) + 1);
+    const source = runs.source<SavedSource>(original.id);
+    const run = runs.create({ projectId: original.projectId, engineId, name, preset, presetName, wayIn: original.wayIn, options });
+    if (source) {
+      runs.saveSource(run.id, source);
+      if (source.wayIn === "link") this.deps.links.recordSource(original.projectId, run.id, source.url);
+    }
+    const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
+    this.preparing.set(run.id, preparing);
+    const client = this.clientFor(engines.get(engineId)!);
+    preparing.done = (async () => {
+      try {
+        if (original.engineId === engineId && original.taskUuid !== null) {
+          tracker.update(run.id, { taskUuid: original.taskUuid });
+          const restarted = await client.restartTask(original.taskUuid, options);
+          if (restarted.ok) {
+            runs.retireTask(engineId, original.taskUuid, run.id);
+            tracker.update(run.id, { taskUuid: original.taskUuid });
+            if (preparing.abort.signal.aborted) {
+              const cancelled = await client.cancelTask(original.taskUuid);
+              if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(run.id, "cancelled", null); return; }
+              preparing.cancelFailure = problemFromFailure(cancelled.failure);
+            }
+            this.preparing.delete(run.id);
+            tracker.update(run.id, { state: "queued" }); tracker.follow(run.id); return;
+          }
+          if (restarted.failure.kind === "unreachable" || restarted.failure.kind === "bad_response") {
+            runs.retireTask(engineId, original.taskUuid, run.id);
+            this.preparing.delete(run.id);
+            tracker.update(run.id, { state: "engine_unreachable" }); tracker.follow(run.id); return;
+          }
+          if (!isTaskNotFound(restarted.failure)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
+        }
+        if (!source) { this.finish(run.id, "failed", { code: "run.photos_unavailable", data: {} }); return; }
+        tracker.update(run.id, { state: source.wayIn === "link" ? "created" : "uploading", step: source.wayIn === "link" ? null : "upload" });
+        await this.prepare(original.projectId, run.id, name, { client, options, inputs: source.wayIn === "link" ? source : source.snapshot, saved: source.wayIn === "link" ? undefined : source }, preparing);
+      } catch {
+        this.finish(run.id, preparing.abort.signal.aborted ? "cancelled" : "failed", { code: "run.upload_failed", data: {} });
+      }
+    })().finally(() => {
+      this.preparing.delete(run.id); this.starting.delete(key);
+      const count = (this.sourcesInUse.get(original.id) ?? 1) - 1;
+      if (count) this.sourcesInUse.set(original.id, count); else this.sourcesInUse.delete(original.id);
+      for (const unblock of unblocks) unblock(); release();
+    });
+    return { ok: true, value: tracker.view(run.id)! };
+  }
+
   async start(id: number, request: ProjectRunRequest): Promise<Outcome<RunView>> {
-    if (this.starting.has(id)) return refuse(409, "project_run.already_running");
+    const key = `${id}:${request.engineId}`;
+    if (this.starting.has(key)) return refuse(409, "project_run.already_running");
     const release = this.deps.projectDeletion.beginWrite(id);
     if (!release) return refuse(409, "project.deletion_busy");
-    this.starting.add(id);
+    this.starting.add(key);
     let handedOver = false;
+    let ownsStarting = true;
     try {
-      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options, request.presetName);
+      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options, request.presetName, request.sourceRunId);
       if (!reviewed.ok) return reviewed;
       const { view } = reviewed.value;
       if (view.blocked) return { ok: false, status: 409, error: view.blocked };
       if (request.revision !== view.revision) return refuse(409, "project_run.review_changed");
-      if (this.deps.links.isBusy(id) || (reviewed.value.inputs.wayIn === "link" && this.deps.links.revision(id) !== reviewed.value.inputs.revision)) return refuse(409, "project_run.review_changed");
+      if (request.sourceRunId === undefined && (this.deps.links.isBusy(id) || (reviewed.value.inputs.wayIn === "link" && this.deps.links.revision(id) !== reviewed.value.inputs.revision))) return refuse(409, "project_run.review_changed");
+      if (request.sourceRunId !== undefined) {
+        this.starting.delete(key);
+        ownsStarting = false;
+        const original = this.deps.runs.get(request.sourceRunId);
+        if (!original) return refuse(404, "run.not_found");
+        return this.repeat(original, request.engineId, reviewed.value.options, request.name, request.preset, request.presetName);
+      }
+      let source: SavedSource;
+      try { source = reviewed.value.inputs.wayIn === "link" ? reviewed.value.inputs : await this.deps.inputs.capture(id, reviewed.value.inputs); }
+      catch (error) { if (error instanceof RunInputsChanged || error instanceof ImportUnavailable) return refuse(409, "project_run.photos_changed"); throw error; }
       const run = this.deps.runs.create({ projectId: id, engineId: request.engineId, name: request.name, preset: request.preset, presetName: request.presetName, wayIn: view.wayIn, options: reviewed.value.options });
+      this.deps.runs.saveSource(run.id, source);
       if (view.wayIn === "link") this.deps.links.recordRun(id, run.id);
       const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
       this.preparing.set(run.id, preparing);
       this.deps.tracker.update(run.id, { state: view.wayIn === "link" ? "created" : "uploading", step: view.wayIn === "link" ? null : "upload", upload: view.photos.included === null ? null : { done: 0, total: view.photos.included } });
       preparing.done = this.prepare(id, run.id, request.name, reviewed.value, preparing).finally(() => {
-        this.preparing.delete(run.id); this.starting.delete(id); release();
+        this.preparing.delete(run.id); this.starting.delete(key); release();
       });
       handedOver = true;
       return { ok: true, value: this.deps.tracker.view(run.id)! };
     } finally {
-      if (!handedOver) { this.starting.delete(id); release(); }
+      if (!handedOver) { if (ownsStarting) this.starting.delete(key); release(); }
     }
   }
 
-  private async prepare(project: number, id: number, name: string, reviewed: Reviewed, preparing: Preparing): Promise<void> {
+  private async prepare(project: number, id: number, name: string, reviewed: Pick<Reviewed, "client" | "options" | "inputs"> & { saved?: SavedRunInputs }, preparing: Preparing): Promise<void> {
     const { tracker } = this.deps;
     const { client, options, inputs } = reviewed;
     const { signal } = preparing.abort;
@@ -168,7 +292,10 @@ export class ProjectRuns {
       tracker.update(id, { taskUuid: uuid, ...(inputs.wayIn === "link" ? { state: "queued" as const } : {}) });
       if (inputs.wayIn !== "link") {
         signal.throwIfAborted();
-        const copied = await this.deps.inputs.copyToTask(project, inputs, client, uuid, signal, (done, total) => tracker.update(id, { upload: { done, total } }));
+        const progress = (done: number, total: number) => tracker.update(id, { upload: { done, total } });
+        const copied = reviewed.saved
+          ? await this.deps.inputs.replay(project, reviewed.saved, client, uuid, signal, progress)
+          : await this.deps.inputs.copyToTask(project, inputs, client, uuid, signal, progress);
         if (!copied.ok) { this.finish(id, "failed", problemFromFailure(copied.failure)); return; }
         signal.throwIfAborted();
         const result = await client.commitTask(uuid, signal);
@@ -210,5 +337,34 @@ export class ProjectRuns {
     const all = [...this.preparing.values()];
     for (const preparing of all) preparing.abort.abort();
     await Promise.all(all.map(preparing => preparing.done));
+  }
+
+  list(project: number, offset: number): { runs: RunView[]; nextOffset: number | null } {
+    const rows = this.deps.runs.list(project, offset, 51);
+    return { runs: rows.slice(0, 50).map(run => this.deps.tracker.view(run.id)!), nextOffset: rows.length > 50 ? offset + 50 : null };
+  }
+
+  async delete(id: number): Promise<Outcome<void>> {
+    const { runs, tracker, engines } = this.deps;
+    const run = runs.get(id);
+    if (!run) return refuse(404, "run.not_found");
+    const key = `${run.projectId}:${run.engineId}`;
+    if (this.starting.has(key) || this.sourcesInUse.has(id) || this.deleting.has(id) || this.preparing.has(id) || run.state === "created" || run.state === "uploading" || runs.listUnfinished().some(other => other.id !== id && other.engineId === run.engineId && other.taskUuid !== null && other.taskUuid === run.taskUuid)) return refuse(409, "run.action_unavailable");
+    const release = this.deps.projectDeletion.beginWrite(run.projectId);
+    if (!release) return refuse(409, "project.deletion_busy");
+    const unblock = tracker.results.beginRemoval(id);
+    if (!unblock) { release(); return refuse(409, "run.action_unavailable"); }
+    this.deleting.add(id); this.starting.add(key); tracker.pause(id);
+    try {
+      if (run.taskUuid && !run.taskRetired) {
+        const engine = run.engineId === null ? null : engines.get(run.engineId);
+        if (!engine) return refuse(409, "project.deletion_engine_missing");
+        const removed = await this.clientFor(engine).removeTask(run.taskUuid);
+        if (!removed.ok && !isTaskNotFound(removed.failure)) return refuse(502, "project.deletion_incomplete");
+      }
+      await tracker.remove(run);
+      return { ok: true, value: undefined };
+    } catch { return refuse(502, "project.deletion_incomplete"); }
+    finally { this.deleting.delete(id); this.starting.delete(key); unblock(); release(); if (runs.get(id)) tracker.follow(id); }
   }
 }

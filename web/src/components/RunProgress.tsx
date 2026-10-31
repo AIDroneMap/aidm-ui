@@ -76,6 +76,7 @@ export function RunProgress({
       <p role="status" className="run-state">
         {t(run.step === "results" ? "run.results_fetching" : known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>
+      {run.state === "queued" && run.queueCount != null && <p>{t("run_manage.waiting", { count: run.queueCount })}</p>}
       {run.sample && <h2>{t("run.sample_name")}</h2>}
       {!run.sample && run.name && <h2>{run.name}</h2>}
       {stage && <section><h3>{t(`run.stage.${stage}.name`)}</h3><p>{t(`run.stage.${stage}.description`)}</p></section>}

@@ -73,7 +73,12 @@ export class LinkStore {
   }
 
   recordRun(projectId: number, runId: number): void {
-    const revision = this.revision(projectId);
+    const url = this.get(projectId);
+    if (url) this.recordSource(projectId, runId, url);
+  }
+
+  recordSource(projectId: number, runId: number, url: string): void {
+    const revision = createHash("sha256").update(url).digest("hex");
     if (!revision) return;
     this.db.query("INSERT INTO run_link_sources (run_id, source_hash) SELECT id, ? FROM runs WHERE id = ? AND project_id = ? ON CONFLICT(run_id) DO UPDATE SET source_hash = excluded.source_hash").run(revision, runId, projectId);
   }

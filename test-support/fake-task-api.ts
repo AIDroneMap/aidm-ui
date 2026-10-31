@@ -160,6 +160,17 @@ export class FakeTaskApi {
     if (req.method === "POST" && (url.pathname === "/task/new/init" || url.pathname === "/task/new")) return this.init(req);
     if (req.method === "POST" && url.pathname === "/task/cancel") return this.command(req, "cancel");
     if (req.method === "POST" && url.pathname === "/task/remove") return this.command(req, "remove");
+    if (req.method === "POST" && url.pathname === "/task/restart") {
+      const form = await req.formData();
+      const uuid = String(form.get("uuid"));
+      const task = this.tasks.get(uuid);
+      if (!task) return Response.json({ error: `${uuid} not found` });
+      if (task.statusCode === 10 || task.statusCode === 20) return Response.json({ error: "Task is already running" });
+      task.options = JSON.parse(String(form.get("options")));
+      Object.assign(task, { statusCode: 10, progress: 0, processingTime: -1, errorMessage: null, output: [], results: null });
+      this.onCommit?.(task);
+      return Response.json({ success: true });
+    }
 
     const path = url.pathname.split("/");
     if (req.method === "POST" && path.length === 5 && path[1] === "task" && path[2] === "new" && path[3] === "upload") {
@@ -207,6 +218,7 @@ export class FakeTaskApi {
         pathname === "/task/new/init" ||
         pathname === "/task/cancel" ||
         pathname === "/task/remove" ||
+        pathname === "/task/restart" ||
         (path.length === 5 && path[1] === "task" && path[2] === "new" && (path[3] === "upload" || path[3] === "commit"))
       );
     }

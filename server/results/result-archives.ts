@@ -23,6 +23,7 @@ interface SavedResults { state: RunResultsView["state"]; archiveSize: number | n
 /** Owns the local archive. Engine completion and local availability are separate facts. */
 export class ResultArchives {
   private readonly active = new Map<number, Promise<void>>();
+  private readonly blocked = new Set<number>();
   private readonly controller = new AbortController();
   constructor(private readonly deps: {
     runs: RunStore; folder: string; request: (run: RunRecord) => DownloadRequest;
@@ -66,7 +67,7 @@ export class ResultArchives {
   }
 
   ensure(run: RunRecord, retry = false): boolean {
-    if (this.controller.signal.aborted || this.active.has(run.id) || run.state !== "completed" || run.taskUuid === null) return false;
+    if (this.controller.signal.aborted || this.blocked.has(run.id) || run.taskRetired || this.active.has(run.id) || run.state !== "completed" || run.taskUuid === null) return false;
     const saved = this.view(run.id);
     if (saved && !(saved.state === "fetching" || (retry && saved.state === "failed"))) return false;
     const release = this.deps.beginWrite(run.projectId);
@@ -80,6 +81,12 @@ export class ResultArchives {
   private save(id: number, value: SavedResults): void {
     this.deps.runs.saveResults(id, value);
     this.deps.changed(id);
+  }
+
+  beginRemoval(id: number): (() => void) | null {
+    if (this.active.has(id) || this.blocked.has(id)) return null;
+    this.blocked.add(id);
+    return () => { this.blocked.delete(id); };
   }
 
   private async fetch(run: RunRecord): Promise<void> {
