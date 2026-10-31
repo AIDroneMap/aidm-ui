@@ -358,3 +358,18 @@ test("edited review body is bounded and a changed engine domain is rechecked bef
   expect((await response.json()).error.code).toBe("option.invalid_value");
   expect(api.tasks.size).toBe(0);
 });
+
+test("a named preset is bound to review and retained independently of the built-in baseline", async () => {
+  await upload("photo.jpg");
+  const options = [{ name: "orthophoto-resolution", value: 8 }];
+  const body = { engineId: engine, preset: "custom", presetName: "Vineyard", options };
+  const response = await request("POST", `/api/projects/${project}/run-review`, body);
+  expect(response.status).toBe(200);
+  const view = await response.json() as RunReviewView;
+  expect(view).toMatchObject({ preset: "custom", presetName: "Vineyard" });
+  const changed = await request("POST", `/api/projects/${project}/runs`, { ...body, presetName: "Another name", name: "Flight", revision: view.revision });
+  expect(changed.status).toBe(409);
+  const started = await request("POST", `/api/projects/${project}/runs`, { ...body, name: "Flight", revision: view.revision });
+  expect(started.status).toBe(202);
+  expect(await started.json()).toMatchObject({ preset: "custom", presetName: "Vineyard" });
+});

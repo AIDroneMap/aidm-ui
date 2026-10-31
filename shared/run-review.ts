@@ -14,6 +14,7 @@ export interface ReviewOption {
 }
 
 export interface RunReviewView {
+  presetName?: string;
   project: { id: number; name: string };
   engine: {
     id: number;
@@ -38,6 +39,7 @@ export interface RunReviewView {
 }
 
 export interface ProjectRunRequest {
+  presetName?: string;
   engineId: number;
   preset: PresetId;
   name: string;

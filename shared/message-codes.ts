@@ -2,6 +2,10 @@
 // each one into text through web/src/i18n/en.json; a test checks that every
 // code here has a translation.
 export const MESSAGE_CODES = [
+  "preset.invalid_file",
+  "preset.invalid_name",
+  "preset.name_taken",
+  "preset.not_found",
   "settings.basemap_invalid",
   "link.invalid_url",
   "link.unreachable",

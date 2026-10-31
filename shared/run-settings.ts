@@ -26,8 +26,8 @@ function meets(dependency: OptionDependency, values: Record<string, OptionValue>
   return dependency.alternatives.some((alternative) => meets(alternative, values, facts));
 }
 
-export function resolveSettings(options: readonly ReconciledOption[], preset: PresetId, draft: SettingsDraft, facts: SettingsFacts) {
-  const baseline = Object.fromEntries(planPreset(preset, options).effectiveOptions.map(({ name, value }) => [name, value])) as Record<string, OptionValue>;
+export function resolveSettings(options: readonly ReconciledOption[], preset: PresetId, draft: SettingsDraft, facts: SettingsFacts, baselineOptions: readonly { name: string; value: OptionValue }[] = []) {
+  const baseline = Object.fromEntries(planPreset(preset, options, baselineOptions).effectiveOptions.map(({ name, value }) => [name, value])) as Record<string, OptionValue>;
   const values: Record<string, OptionValue> = Object.create(null);
   const errors: Record<string, "type" | "domain"> = Object.create(null);
   const disabled: Record<string, readonly OptionDependency[]> = Object.create(null);
@@ -49,8 +49,8 @@ export function resolveSettings(options: readonly ReconciledOption[], preset: Pr
   return { baseline, values, overrides, errors, disabled };
 }
 
-export function rebaseSettings(previous: readonly ReconciledOption[], next: readonly ReconciledOption[], preset: PresetId, draft: SettingsDraft, facts: SettingsFacts): { draft: SettingsDraft; moved: MovedSetting[] } {
-  const oldValues = resolveSettings(previous, preset, draft, facts).values;
+export function rebaseSettings(previous: readonly ReconciledOption[], next: readonly ReconciledOption[], preset: PresetId, draft: SettingsDraft, facts: SettingsFacts, baselines: { previous?: readonly { name: string; value: OptionValue }[]; next?: readonly { name: string; value: OptionValue }[] } = {}): { draft: SettingsDraft; moved: MovedSetting[] } {
+  const oldValues = resolveSettings(previous, preset, draft, facts, baselines.previous).values;
   const nextByName = new Map(next.map((option) => [option.name, option]));
   const previousByName = new Map(previous.map((option) => [option.name, option]));
   const rebased: SettingsDraft = Object.create(null);
@@ -58,7 +58,7 @@ export function rebaseSettings(previous: readonly ReconciledOption[], next: read
     const option = nextByName.get(name);
     if (option && validateOptionValue(option.type, option.domain, parseValue(option, value)) === null) rebased[name] = value;
   }
-  const newValues = resolveSettings(next, preset, rebased, facts).values;
+  const newValues = resolveSettings(next, preset, rebased, facts, baselines.next).values;
   const moved: MovedSetting[] = [];
   for (const name of new Set([...previousByName.keys(), ...nextByName.keys(), ...Object.keys(draft)])) {
     const beforeOption = previousByName.get(name);

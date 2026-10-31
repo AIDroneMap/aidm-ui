@@ -1,6 +1,6 @@
 # Run settings
 
-Issue #69 adds an options editor to the project run flow. Edits stay in the active run draft. They are stored with the run when it starts. Saving reusable settings files belongs to #70.
+Issue #69 adds an options editor to the project run flow. Edits stay in the active run draft. They are stored with the run when it starts. Saved operator presets and settings files are described in [settings-files.md](settings-files.md).
 
 The editor uses the selected engine's reconciled option types, domains and defaults. Known options use the reviewed catalogue text. New engine options appear in the unexplained group with the engine's help. Hidden options and server-owned output settings remain outside the editor.
 

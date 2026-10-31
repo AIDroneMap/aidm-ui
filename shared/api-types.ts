@@ -153,6 +153,7 @@ export interface RunResultsView {
 }
 
 export interface RunView {
+  presetName?: string;
   id: number;
   name: string | null;
   preset: string | null;

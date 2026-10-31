@@ -1,3 +1,4 @@
+import { presetRoutes } from "../presets/routes.ts";
 import { linkRoutes } from "../projects/link-routes.ts";
 import { projectRunRoutes } from "../projects/run-routes.ts";
 import { importRoutes } from "../projects/import-routes.ts";
@@ -33,6 +34,7 @@ function healthRoutes(ctx: RouteContext): RouteTable {
 export function apiRoutes(ctx: RouteContext): RouteTable {
   return {
     ...healthRoutes(ctx),
+    ...presetRoutes(ctx),
     ...settingsRoutes(ctx),
     ...authRoutes(ctx),
     ...engineRoutes(ctx),

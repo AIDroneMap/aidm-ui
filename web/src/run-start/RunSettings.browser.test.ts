@@ -26,6 +26,7 @@ test("edited settings survive review and are reconciled before changing engines"
       const asset = build.outputs.find(asset => asset.path.endsWith(url.pathname.endsWith(".css") ? ".css" : ".js"));
       return asset ? new Response(asset) : new Response(null, { status: 404 });
     }
+    if (url.pathname === "/api/presets") return Response.json({ presets: [], nextOffset: null });
     if (url.pathname === "/api/engines") return Response.json([{ id: 1, name: "Local", enabled: true }, { id: 2, name: "Remote", enabled: true }]);
     if (url.pathname.endsWith("/run-review")) {
       const body = request.method === "POST" ? await request.json() as any : null;

@@ -342,12 +342,19 @@ real(
     expect(review).toMatchObject({ project: { id: uploadedProject.id }, engine: { id: engineId }, preset: "quick-map", wayIn: "upload", photos: { included: 3, excluded: 0, total: 3 }, blocked: null });
     expect(review.revision).toBeTruthy();
     expect(review.options).toContainEqual(expect.objectContaining({ name: "orthophoto-resolution", value: 8 }));
+    const presetResponse = await fetch(`${h.base}/api/presets`, { method: "POST", body: JSON.stringify({ options: editedSettings, preset: "Field settings", engineVersion: review.engine.info.engineVersion ?? null }) });
+    expect(presetResponse.status).toBe(201);
+    const savedPreset = await presetResponse.json() as import("../../shared/settings-file.ts").SavedPreset;
+    expect(await (await fetch(`${h.base}/api/presets/${savedPreset.id}`)).json()).toEqual(savedPreset);
+    const namedReviewResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review`, { method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", presetName: savedPreset.preset, options: savedPreset.options }) });
+    expect(namedReviewResponse.status).toBe(200);
+    const namedReview = await namedReviewResponse.json() as RunReviewView;
     const startResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/runs`, {
-      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Quick map field", revision: review.revision, options: editedSettings }),
+      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", presetName: savedPreset.preset, name: "Quick map field", revision: namedReview.revision, options: savedPreset.options }),
     });
     expect(startResponse.status).toBe(202);
     const projectRun = await startResponse.json() as RunView;
-    expect(projectRun).toMatchObject({ projectId: uploadedProject.id, engineId, preset: "quick-map", name: "Quick map field", wayIn: "upload", sample: false });
+    expect(projectRun).toMatchObject({ projectId: uploadedProject.id, engineId, preset: "quick-map", presetName: "Field settings", name: "Quick map field", wayIn: "upload", sample: false });
     expect(h.runs.get(projectRun.id)?.options).toContainEqual({ name: "orthophoto-resolution", value: 8 });
     let completed: RunView | undefined;
     await eventually(async () => {
@@ -355,6 +362,8 @@ real(
       return completed.resultsAvailable || completed.state === "failed" || completed.results?.state === "failed";
     }, 240_000);
     expect(completed).toMatchObject({ state: "completed", resultsAvailable: true, results: { state: "ready" } });
+    expect((await fetch(`${h.base}/api/presets/${savedPreset.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await (await fetch(`${h.base}/api/runs/${projectRun.id}`)).json()).presetName).toBe("Field settings");
     const projectArchiveResponse = await fetch(`${h.base}/api/runs/${projectRun.id}/results`);
     expect(projectArchiveResponse.status).toBe(200);
     const projectArchive = Buffer.from(await projectArchiveResponse.arrayBuffer());

@@ -1,3 +1,4 @@
+import { PresetStore } from "../presets/preset-store.ts";
 import { LinkStore } from "../projects/link-store.ts";
 import { ProjectRuns } from "../projects/project-runs.ts";
 import { RunInputs } from "../projects/run-inputs.ts";
@@ -235,6 +236,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
     const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
     const routes = createRoutes({
       identity,
+      presets: new PresetStore(db),
       projects,
       projectDeletion,
       links,
