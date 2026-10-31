@@ -95,7 +95,9 @@ export async function readGeoreference(path: string, entry: ArchiveEntry): Promi
     if (count === 0 || count > MAX_TAGS) return null;
     const itemSize = big ? 20 : 12;
     const directory = await read(ifd + countSize, count * itemSize + (big ? 8 : 4));
-    if ((big ? u64(directory, count * itemSize) : u32(directory, count * itemSize)) !== 0) return null;
+    const nextIfd = big ? u64(directory, count * itemSize) : u32(directory, count * itemSize);
+    // Read the primary image only. Cloud-optimized TIFFs also hold overview directories.
+    if (nextIfd !== 0 && (nextIfd < (big ? 16 : 8) || nextIfd > entry.size - countSize || nextIfd >= ifd && nextIfd < ifd + countSize + directory.length)) return null;
     const wanted = new Set([256, 257, 33550, 33922, 34264, 34735]);
     const tags = new Map<number, { type: number; count: number; data: Buffer }>();
     for (let index = 0; index < count; index++) {
