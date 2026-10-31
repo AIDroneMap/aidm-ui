@@ -161,3 +161,49 @@ test("a local import start uses the restarted container address and its read-onl
   expect(runtime.engine(CONTAINER_NAME)!.uploads).toHaveLength(0);
   expect([...runtime.engine(CONTAINER_NAME)!.tasks.values()][0]?.imagesPath).toBe(importedPath(folder));
 });
+
+test("retry refuses changed originals before restarting an in-place task", async () => {
+  const api = new FakeTaskApi({ info: { imagesPath: true } }); await api.start(); cleanup.push(() => api.stop());
+  const h = openHarness(); cleanup.push(() => h.stop());
+  const folder = await mkdtemp(join(tmpdir(), "aidm-retry-originals-")); cleanup.push(() => rm(folder, { recursive: true, force: true }));
+  const file = join(folder, "one.jpg"); await writeFile(file, "reviewed original");
+  const project = h.ctx.projects.create("Field", "").id;
+  const engine = h.engineStore.addRemote({ name: "Same machine", address: api.address, token: api.token }).id;
+  await fetch(`${h.base}/api/projects/${project}/import`, { method: "PUT", body: JSON.stringify({ path: folder }) });
+  const review = await (await fetch(`${h.base}/api/projects/${project}/run-review?engineId=${engine}&preset=quick-map`)).json();
+  const run = await (await fetch(`${h.base}/api/projects/${project}/runs`, { method: "POST", body: JSON.stringify({ engineId: engine, preset: "quick-map", name: "Field", revision: review.revision }) })).json();
+  await eventually(async () => [...api.tasks.values()].some(task => task.committed));
+  const uuid = [...api.tasks.keys()][0]!;
+  api.setTask(uuid, { statusCode: 30 }); await eventually(async () => h.runs.get(run.id)?.state === "failed");
+  await writeFile(file, "changed original");
+  const retry = await fetch(`${h.base}/api/runs/${run.id}/retry`, { method: "POST" });
+  expect(retry.status).toBe(409);
+  expect((await retry.json()).error.code).toBe("project_run.photos_changed");
+  expect(api.requests.some(call => call.path === "/task/restart")).toBe(false);
+});
+
+test.each(["in-place", "copy"] as const)("changing %s input mode creates a task instead of reusing the old mode", async initialMode => {
+  const api = new FakeTaskApi({ info: { imagesPath: true } }); await api.start(); cleanup.push(() => api.stop());
+  const h = openHarness(); cleanup.push(() => h.stop());
+  const folder = await mkdtemp(join(tmpdir(), "aidm-repeat-mode-")); cleanup.push(() => rm(folder, { recursive: true, force: true }));
+  await writeFile(join(folder, "one.jpg"), "reviewed original");
+  const project = h.ctx.projects.create("Field", "").id;
+  const engine = h.engineStore.addRemote({ name: "Same machine", address: api.address, token: api.token }).id;
+  await fetch(`${h.base}/api/projects/${project}/import`, { method: "PUT", body: JSON.stringify({ path: folder }) });
+  const choice = { engineId: engine, preset: "quick-map", importMode: initialMode };
+  const review = await (await fetch(`${h.base}/api/projects/${project}/run-review`, { method: "POST", body: JSON.stringify(choice) })).json();
+  const run = await (await fetch(`${h.base}/api/projects/${project}/runs`, { method: "POST", body: JSON.stringify({ ...choice, name: "Field", revision: review.revision }) })).json();
+  await eventually(async () => [...api.tasks.values()].some(task => task.committed));
+  const uuid = [...api.tasks.keys()][0]!;
+  api.setTask(uuid, { statusCode: 30 }); await eventually(async () => h.runs.get(run.id)?.state === "failed");
+  const changed = { engineId: engine, preset: "quick-map", sourceRunId: run.id, importMode: initialMode === "in-place" ? "copy" : "in-place" };
+  const again = await (await fetch(`${h.base}/api/projects/${project}/run-review`, { method: "POST", body: JSON.stringify(changed) })).json();
+  expect((await fetch(`${h.base}/api/projects/${project}/runs`, { method: "POST", body: JSON.stringify({ ...changed, name: "Changed mode", revision: again.revision }) })).status).toBe(202);
+  await eventually(async () => h.runs.listUnfinished().some(run => run.taskUuid !== null));
+  expect(api.tasks.size).toBe(2);
+  const task = [...api.tasks.values()].find(task => task.uuid !== uuid)!;
+  expect(task.imagesPath).toBe(initialMode === "in-place" ? undefined : folder);
+  expect(api.requests.some(call => call.path === "/task/restart")).toBe(false);
+  await eventually(async () => task.committed);
+  expect(api.uploads).toHaveLength(1);
+});

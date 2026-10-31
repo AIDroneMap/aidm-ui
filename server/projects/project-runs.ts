@@ -211,6 +211,16 @@ export class ProjectRuns {
     let handedOver = false;
     try {
       const client = this.clientFor(engines.get(engineId)!);
+      const source = runs.source<SavedSource>(original.id);
+      const changedImportMode = source?.wayIn === "import" && importMode !== undefined && importMode !== (source.importMode ?? "copy");
+      const reuseTask = original.engineId === engineId && original.taskUuid !== null && !changedImportMode;
+      if (reuseTask && source?.wayIn === "import" && source.importMode === "in-place") {
+        try { await this.deps.inputs.verifyInPlace(source); }
+        catch (error) {
+          if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
+          throw error;
+        }
+      }
       if (original.engineId === engineId && original.taskUuid) {
         const previousRuns = runs.taskRuns(engineId, original.taskUuid);
         for (const previous of previousRuns) {
@@ -224,7 +234,6 @@ export class ProjectRuns {
         }
       }
       this.sourcesInUse.set(original.id, (this.sourcesInUse.get(original.id) ?? 0) + 1);
-      const source = runs.source<SavedSource>(original.id);
       const run = runs.create({ projectId: original.projectId, engineId, name, preset, presetName, wayIn: original.wayIn, options });
       if (source) {
         if (source.wayIn !== "link" && importMode !== undefined) source.importMode = importMode;
@@ -235,7 +244,7 @@ export class ProjectRuns {
       this.preparing.set(run.id, preparing);
       preparing.done = (async () => {
         try {
-          if (original.engineId === engineId && original.taskUuid !== null) {
+          if (reuseTask && original.taskUuid !== null) {
             runs.referenceTask(run.id, original.taskUuid);
             let submitted = false;
             const restarted = await client.restartTask(original.taskUuid, options, undefined, () => {

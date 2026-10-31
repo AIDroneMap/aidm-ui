@@ -14,7 +14,7 @@ Native packages need no mount or per-folder restart. For API 2.7.0 and later, th
 
 ## Input checks and retained runs
 
-The server checks the original file identities and hashes before task creation and again before commit. A changed source leaves an uncommitted task that is removed. No image upload is sent in place. Restart reuses the task's links. Missing-task recreation uses the saved input record and original import mode. Switching to another engine reconciles the choice again.
+The server checks the original file identities and hashes before task creation and again before commit. A changed source leaves an uncommitted task that is removed. No image upload is sent in place. Restart rechecks the originals before reusing the task's links. Changing the import mode creates a new task so the run uses the reviewed mode. Missing-task recreation uses the saved input record and original import mode. Switching to another engine reconciles the choice again.
 
 Creating or removing a hard link changes a file's ctime even when its bytes, permissions, size and modification time are unchanged. Import validation accepts a ctime-only change only after checking the file identity and full content hash. A write followed by a restored modification time still fails the hash check. Directory changes, replaced files and changed modification times remain failures.
 
