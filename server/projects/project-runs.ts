@@ -203,10 +203,15 @@ export class ProjectRuns {
     preparing.done = (async () => {
       try {
         if (original.engineId === engineId && original.taskUuid !== null) {
-          tracker.update(run.id, { taskUuid: original.taskUuid });
-          const restarted = await client.restartTask(original.taskUuid, options);
+          runs.referenceTask(run.id, original.taskUuid);
+          let submitted = false;
+          const restarted = await client.restartTask(original.taskUuid, options, undefined, () => {
+            preparing.abort.signal.throwIfAborted();
+            runs.claimTask(run.id, engineId, original.taskUuid!);
+            submitted = true;
+            tracker.update(run.id, {});
+          });
           if (restarted.ok) {
-            runs.retireTask(engineId, original.taskUuid, run.id);
             tracker.update(run.id, { taskUuid: original.taskUuid });
             if (preparing.abort.signal.aborted) {
               const cancelled = await client.cancelTask(original.taskUuid);
@@ -214,10 +219,10 @@ export class ProjectRuns {
               preparing.cancelFailure = problemFromFailure(cancelled.failure);
             }
             this.preparing.delete(run.id);
-            tracker.update(run.id, { state: "queued" }); tracker.follow(run.id); return;
+            tracker.update(run.id, { state: "queued", restartPending: false }); tracker.follow(run.id); return;
           }
+          if (!submitted) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
           if (restarted.failure.kind === "unreachable" || restarted.failure.kind === "bad_response") {
-            runs.retireTask(engineId, original.taskUuid, run.id);
             if (preparing.abort.signal.aborted) {
               const cancelled = await client.cancelTask(original.taskUuid);
               if (cancelled.ok || isTaskNotFound(cancelled.failure, original.taskUuid)) { this.finish(run.id, "cancelled", null); return; }
@@ -229,10 +234,10 @@ export class ProjectRuns {
           if (!isTaskNotFound(restarted.failure, original.taskUuid)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
         }
         if (!source) { this.finish(run.id, "failed", { code: "run.photos_unavailable", data: {} }); return; }
-        tracker.update(run.id, { state: source.wayIn === "link" ? "created" : "uploading", step: source.wayIn === "link" ? null : "upload" });
+        tracker.update(run.id, { state: source.wayIn === "link" ? "created" : "uploading", step: source.wayIn === "link" ? null : "upload", restartPending: false });
         await this.prepare(original.projectId, run.id, name, { client, options, inputs: source.wayIn === "link" ? source : source.snapshot, saved: source.wayIn === "link" ? undefined : source }, preparing);
       } catch {
-        this.finish(run.id, preparing.abort.signal.aborted ? "cancelled" : "failed", { code: "run.upload_failed", data: {} });
+        this.finish(run.id, preparing.abort.signal.aborted ? "cancelled" : "failed", preparing.abort.signal.aborted ? null : { code: "run.upload_failed", data: {} });
       }
     })().finally(() => {
       this.preparing.delete(run.id); this.starting.delete(key);
@@ -330,7 +335,7 @@ export class ProjectRuns {
   }
 
   private finish(id: number, state: "failed" | "cancelled", problem: ApiError | null): void {
-    this.deps.tracker.update(id, { state, problem, step: null, upload: null });
+    this.deps.tracker.update(id, { state, problem, step: null, upload: null, restartPending: false });
   }
 
   async cancel(id: number): Promise<Outcome<RunView> | null> {

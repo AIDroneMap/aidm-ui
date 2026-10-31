@@ -117,7 +117,7 @@ export class RunTracker {
     if (this.started || this.stopped) return;
     this.started = true;
     for (const run of this.runs.listUnfinished()) {
-      if (run.state === "created" || run.state === "uploading") this.abandon(run);
+      if ((run.state === "created" || run.state === "uploading") && !run.restartPending) this.abandon(run);
       else this.follow(run.id);
     }
     for (const run of this.runs.completed()) this.results.ensure(run);
@@ -374,7 +374,7 @@ export class RunTracker {
   private abandon(run: RunRecord): void {
     this.update(run.id, { state: "failed", problem: { code: "run.interrupted", data: {} } });
     const engine = run.engineId === null ? null : this.engines.get(run.engineId);
-    if (run.taskUuid !== null && engine !== null) {
+    if (run.taskUuid !== null && engine !== null && !run.taskRetired) {
       const uuid = run.taskUuid;
       const failed = () => this.logLine(`Run ${run.id}: the engine task could not be removed after the restart.`);
       void this.clientFor({ address: engine.address, token: engine.token })

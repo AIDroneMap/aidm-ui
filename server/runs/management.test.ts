@@ -316,3 +316,20 @@ test("a completed run whose task and uncached archive are missing can recreate i
   expect(h.runs.get(run.id)?.taskUuid).not.toBe(original.taskUuid);
   expect(api.uploads).toHaveLength(2);
 });
+
+test("an application restart keeps the engine task of an unconfirmed restart", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "aidm-pending-restart-"));
+  try {
+    await h.stop(); h = openHarness({ dataFolder: folder, runPollMs: 10 });
+    project = h.ctx.projects.create("Field", "").id; engine = h.engineStore.addRemote({ name: "Engine", address: api.address, token: api.token }).id;
+    const original = await initial(); api.setTask(original.taskUuid!, { statusCode: 30 });
+    await eventually(async () => h.runs.get(original.id)?.state === "failed");
+    const pending = h.runs.create({ projectId: project, engineId: engine, options: original.options });
+    h.runs.claimTask(pending.id, engine, original.taskUuid!);
+    await h.stop(); h = openHarness({ dataFolder: folder, runPollMs: 10 });
+    await eventually(async () => h.runs.get(pending.id)?.state === "failed");
+    expect(h.runs.get(pending.id)?.problem?.code).toBe("run.restart_unconfirmed");
+    expect(api.tasks.has(original.taskUuid!)).toBe(true);
+    expect(api.requests.some(request => request.path === "/task/remove")).toBe(false);
+  } finally { await h.stop(); await rm(folder, { recursive: true, force: true }); }
+});

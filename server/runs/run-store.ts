@@ -107,6 +107,18 @@ export class RunStore {
     this.db.query("UPDATE runs SET task_retired = 1 WHERE engine_id = ? AND task_uuid = ? AND id <> ?").run(engine, uuid, owner);
   }
 
+  claimTask(id: number, engine: number, uuid: string): void {
+    this.db.transaction(() => {
+      this.retireTask(engine, uuid, id);
+      this.db.query("UPDATE runs SET task_retired = 0 WHERE id = ?").run(id);
+      this.update(id, { taskUuid: uuid, restartPending: true });
+    })();
+  }
+
+  referenceTask(id: number, uuid: string): void {
+    this.db.query("UPDATE runs SET task_uuid = ?, task_retired = 1 WHERE id = ?").run(uuid, id);
+  }
+
   taskRuns(engine: number, uuid: string): RunRecord[] {
     return (this.db.query("SELECT * FROM runs WHERE engine_id = ? AND task_uuid = ?").all(engine, uuid) as RunRow[]).map(toRecord);
   }
