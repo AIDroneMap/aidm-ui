@@ -87,7 +87,7 @@ test("resumes after a connection cut and reload through the upload panel", async
   let browser: Awaited<ReturnType<typeof startBrowser>> | undefined;
   let socket: WebSocket | undefined;
   try {
-    const page = await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], outdir: directory, naming: "fixture.js", target: "browser" });
+    const page = await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], outdir: directory, naming: "fixture.[ext]", target: "browser" });
     const worker = await Bun.build({ entrypoints: [new URL("./hash-worker.ts", import.meta.url).pathname], outdir: directory, naming: "hash-worker.ts", target: "browser" });
     expect(page.success && worker.success).toBe(true);
     browser = await startBrowser(await browserPath(), profile, "about:blank");

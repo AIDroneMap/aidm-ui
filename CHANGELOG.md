@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Edit run options with searchable catalogue groups, explanations, preset resets, immediate validation and engine-change review. Evidence: `docs/testing/run-settings.md`, shared policy tests, project-run route tests and keyboard browser tests.
 - Keep the processing-time restart fixture's task update between polls. Evidence: the controlled poll interleaving in `server/local-engine/lifecycle.test.ts`. Closes #105.
 - Add explanations for 63 catalogue options, six presets and 11 groups, including the engine-stated quality cost, GPS units and option interactions. Evidence: the maintainer review and pinned engine sources in `docs/notes/0066-catalogue-wording-evidence.md`, plus coverage tests for all five option texts, preset departures and orphaned keys in `web/src/i18n/coverage.test.ts`.
 - Use a basic credential store for temporary test browser profiles. Evidence: the controlled browser diagnostic in #103 and the browser startup tests. Closes #103.

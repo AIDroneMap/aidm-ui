@@ -333,17 +333,22 @@ real(
       const facts = await (await fetch(`${h.base}/api/projects/${uploadedProject.id}/photo-facts`)).json() as { photoCount: number; pendingMetadata: number };
       return facts.photoCount === 3 && facts.pendingMetadata === 0;
     });
-    const reviewResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review?engineId=${engineId}&preset=quick-map&offset=0`);
+    const editedSettings = [{ name: "orthophoto-resolution", value: 8 }];
+    const reviewResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review`, {
+      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", options: editedSettings }),
+    });
     expect(reviewResponse.status).toBe(200);
     const review = await reviewResponse.json() as RunReviewView;
     expect(review).toMatchObject({ project: { id: uploadedProject.id }, engine: { id: engineId }, preset: "quick-map", wayIn: "upload", photos: { included: 3, excluded: 0, total: 3 }, blocked: null });
     expect(review.revision).toBeTruthy();
+    expect(review.options).toContainEqual(expect.objectContaining({ name: "orthophoto-resolution", value: 8 }));
     const startResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/runs`, {
-      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Quick map field", revision: review.revision }),
+      method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Quick map field", revision: review.revision, options: editedSettings }),
     });
     expect(startResponse.status).toBe(202);
     const projectRun = await startResponse.json() as RunView;
     expect(projectRun).toMatchObject({ projectId: uploadedProject.id, engineId, preset: "quick-map", name: "Quick map field", wayIn: "upload", sample: false });
+    expect(h.runs.get(projectRun.id)?.options).toContainEqual({ name: "orthophoto-resolution", value: 8 });
     let completed: RunView | undefined;
     await eventually(async () => {
       completed = await (await fetch(`${h.base}/api/runs/${projectRun.id}`)).json() as RunView;

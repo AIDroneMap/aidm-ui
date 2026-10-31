@@ -1,3 +1,5 @@
+import type { ReconciledOption } from "./engine-options.ts";
+import type { SettingsFacts } from "./run-settings.ts";
 import type { ApiError } from "./api-error.ts";
 import type { EngineInfoView, ProjectPhotoFactsView } from "./api-types.ts";
 import type { OptionValue, PresetId } from "./option-catalogue.ts";
@@ -32,6 +34,7 @@ export interface RunReviewView {
   alwaysProduced: Array<(typeof SERVER_OUTPUT_KEYS)[number]>;
   revision: string;
   blocked: ApiError | null;
+  settings?: { options: ReconciledOption[]; facts: SettingsFacts; matcherWarning: string | null };
 }
 
 export interface ProjectRunRequest {
@@ -39,4 +42,5 @@ export interface ProjectRunRequest {
   preset: PresetId;
   name: string;
   revision: string;
+  options?: Array<{ name: string; value: OptionValue }>;
 }

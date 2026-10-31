@@ -36,7 +36,7 @@ test("folder availability, relinking and stale page responses", async () => {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("No server address");
   let browser: Awaited<ReturnType<typeof startBrowser>> | undefined; let socket: WebSocket | undefined;
   try {
-    expect((await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], outdir: dir, naming: "fixture.js", target: "browser" })).success).toBe(true);
+    expect((await Bun.build({ entrypoints: [new URL("./browser-fixture.tsx", import.meta.url).pathname], outdir: dir, naming: "fixture.[ext]", target: "browser" })).success).toBe(true);
     browser = await startBrowser(await browserPath(), join(dir, "profile"), "about:blank");
     socket = new WebSocket((await findBrowserPage(Number(browser.port))).webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => { socket!.onopen = () => resolve(); socket!.onerror = () => reject(new Error("Browser connection failed")); });
