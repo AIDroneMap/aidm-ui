@@ -2,7 +2,7 @@
 
 Issue #71 adds a paged, newest-first run list with each run's name, engine, preset, state and date. Retry creates another run with the original submitted options. Run again opens those values in the settings editor, selects the original engine where available, and returns through the review. A same-engine repeat uses `POST /task/restart` with the replacement options and no photo upload. A different engine receives a new task.
 
-Each attempt has its own run identity, options, log and archive. Before reusing a completed engine task, the original archive must be saved or explicitly deleted. A reused task belongs to the new attempt. Older runs retain their cached archives, but cannot download a newer attempt's results into their own history. Deleting an older run leaves a newer run's task alone. Deletion is refused while that task is active or a related operation is preparing it.
+Each attempt has its own run identity, options, log and archive. Before reusing an engine task, every completed attempt sharing it must have its archive saved or explicitly deleted. This also applies when Retry or Run again starts from an older failed attempt. A confirmed missing task can still be recreated because its previous results are already unavailable. A reused task belongs to the new attempt. Older runs retain their cached archives, but cannot download a newer attempt's results into their own history. Deleting an older run leaves a newer run's task alone. Deletion is refused while that task is active or a related operation is preparing it.
 
 ## Recovery inputs
 

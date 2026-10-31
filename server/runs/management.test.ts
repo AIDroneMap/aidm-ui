@@ -53,6 +53,69 @@ test("retry restarts the same task without uploads and retains the original opti
   expect(h.runs.get(original.id)?.state).toBe("failed");
 });
 
+test.each(["retry", "again"] as const)("%s from an older attempt protects the completed task owner's unsaved archive", async action => {
+  const original = await initial();
+  api.setTask(original.taskUuid!, { statusCode: 30 });
+  await eventually(async () => h.runs.get(original.id)?.state === "failed");
+  const retry = await (await send("POST", `/api/runs/${original.id}/retry`)).json() as RunView;
+  await eventually(async () => h.runs.get(retry.id)?.state === "queued");
+  api.setTask(original.taskUuid!, { statusCode: 40, results: null, output: ["Completed retry"] });
+  await eventually(async () => h.tracker.view(retry.id)?.results?.state === "failed");
+  const restarts = api.requests.filter(request => request.path === "/task/restart").length;
+  const body = { engineId: engine, preset: "custom", sourceRunId: original.id };
+  const repeat = async () => {
+    if (action === "retry") return send("POST", `/api/runs/${original.id}/retry`);
+    const review = await (await send("POST", `/api/projects/${project}/run-review`, body)).json() as RunReviewView;
+    return send("POST", `/api/projects/${project}/runs`, { ...body, name: "Older attempt", revision: review.revision });
+  };
+  const blockedReview = await (await send("POST", `/api/projects/${project}/run-review`, body)).json() as RunReviewView;
+  expect(blockedReview.blocked?.code).toBe("run.results_not_ready");
+  const response = await repeat();
+  expect(response.status).toBe(409);
+  expect((await response.json()).error.code).toBe("run.results_not_ready");
+  expect(api.requests.filter(request => request.path === "/task/restart")).toHaveLength(restarts);
+  expect(h.runs.get(retry.id)?.taskRetired).toBe(false);
+  expect(api.tasks.get(original.taskUuid!)?.statusCode).toBe(40);
+  expect(h.runs.list(project, 0, 20)).toHaveLength(2);
+
+  const fixture = join(h.dataFolder, "completed-retry.zip");
+  writeStoredZip(fixture, [{ name: "odm_report/report.pdf", data: Buffer.from("completed retry report") }]);
+  const archive = await readFile(fixture);
+  api.setTask(original.taskUuid!, { results: archive });
+  expect((await send("POST", `/api/runs/${retry.id}/results`)).status).toBe(202);
+  await eventually(async () => h.tracker.view(retry.id)?.resultsAvailable === true);
+  const allowed = await repeat();
+  expect(allowed.status).toBe(202);
+  const next = await allowed.json() as RunView;
+  await eventually(async () => h.runs.get(next.id)?.state === "queued");
+  expect(h.runs.get(retry.id)?.taskRetired).toBe(true);
+  expect(Buffer.from(await (await send("GET", `/api/runs/${retry.id}/results`)).arrayBuffer())).toEqual(archive);
+  expect(h.tracker.log(retry.id, 0).lines).toEqual(["Completed retry"]);
+  expect(api.uploads).toHaveLength(1);
+});
+
+test.each(["deleted", "missing"] as const)("an older retry can continue when the completed owner's archive is %s", async disposition => {
+  const original = await initial();
+  api.setTask(original.taskUuid!, { statusCode: 30 });
+  await eventually(async () => h.runs.get(original.id)?.state === "failed");
+  const retry = await (await send("POST", `/api/runs/${original.id}/retry`)).json() as RunView;
+  await eventually(async () => h.runs.get(retry.id)?.state === "queued");
+  api.setTask(original.taskUuid!, { statusCode: 40, results: null });
+  await eventually(async () => h.tracker.view(retry.id)?.results?.state === "failed");
+  if (disposition === "deleted") {
+    expect((await send("DELETE", `/api/runs/${retry.id}/results`)).status).toBe(200);
+  } else {
+    api.tasks.delete(original.taskUuid!);
+  }
+  const response = await send("POST", `/api/runs/${original.id}/retry`);
+  expect(response.status).toBe(202);
+  const next = await response.json() as RunView;
+  await eventually(async () => h.runs.get(next.id)?.state === "queued");
+  expect(api.uploads).toHaveLength(disposition === "deleted" ? 1 : 2);
+  expect(h.runs.get(next.id)?.taskUuid === original.taskUuid).toBe(disposition === "deleted");
+  expect(h.runs.get(retry.id)?.state).toBe("completed");
+});
+
 test("a missing task is recreated from the original uploads after the project changes", async () => {
   const original = await initial();
   api.setTask(original.taskUuid!, { statusCode: 30 });
