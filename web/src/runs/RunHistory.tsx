@@ -8,7 +8,7 @@ import { t } from "../i18n/translate.ts";
 
 export function RunRows({ runs }: { runs: RunView[] }) {
   return <ul>{runs.map(run => <li key={run.id}>
-    <a href={`#/runs/${run.id}`}>{run.name ?? t("run.title", { id: run.id })}</a>
+    <a href={`#/runs/${run.id}`}>{run.sample ? t("run.sample_name") : run.name || t("run.title", { id: run.id })}</a>
     <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName ?? t("run_start.not_reported") })}</p>
     <p>{t("run_start.selected_preset", { preset: run.presetName ?? (run.preset ? t(`run_start.preset.${run.preset}`) : t("run_start.not_reported")) })}</p>
     <p>{t(`run.state.${run.state}`)}</p>

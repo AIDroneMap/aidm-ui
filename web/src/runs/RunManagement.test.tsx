@@ -17,3 +17,9 @@ test("run rows expose name, engine, saved preset, state and date without raw mar
   const html = renderToStaticMarkup(<RunRows runs={[run]} />);
   for (const value of ["Field &lt;north&gt;", "Engine A", "Vineyard", "Failed", "#/runs/12", "2026-10-31T12:00:00.000Z"]) expect(html).toContain(value);
 });
+
+test("sample and unnamed historical runs keep readable link names", () => {
+  const html = renderToStaticMarkup(<RunRows runs={[{ ...run, sample: true, name: "run.sample_name" }, { ...run, id: 13, name: "" }]} />);
+  expect(html).not.toContain("run.sample_name");
+  expect(html).toContain("Run 13");
+});
