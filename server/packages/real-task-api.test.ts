@@ -1,3 +1,4 @@
+import { compareVersions } from "../engines/versions.ts";
 import { modelAcceptanceAssets, assertArchivedModel } from "../../test-support/model-acceptance.ts";
 import { assertCatalogueDrift } from "../../test-support/catalogue-drift.ts";
 import type { ReconciledOption } from "../../shared/engine-options.ts";
@@ -437,6 +438,7 @@ real(
         expect(await folderSnapshot(source)).toEqual(before);
       } finally { await client.removeTask(created.value.uuid); }
       const info = await client.info();
+      if (compareVersions(version as string, "2.7.0") >= 0) expect(info.ok && info.value.imagesPath).toBe(true);
       if (info.ok && info.value.imagesPath === true) {
         const review = await (await fetch(`${h.base}/api/projects/${project.id}/run-review?engineId=${engineId}&preset=quick-map`)).json() as RunReviewView;
         expect(review.importMode).toMatchObject({ available: true, selected: "in-place", restartRequired: false });
@@ -454,6 +456,7 @@ real(
         expect((await fetch(`${h.base}/api/runs/${run.id}`, { method: "DELETE" })).status).toBe(204);
         const removed = await folderSnapshot(source);
         expect(removed.map(({ changed, ...entry }) => entry)).toEqual(before.map(({ changed, ...entry }) => entry));
+        console.log("In-place import acceptance passed", { photos: 3, uploads: 0, originalsPreserved: true });
       }
     } finally { await chmod(source, 0o700); }
   },
