@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { EngineView, RunView } from "../../../shared/api-types.ts";
 import { rebaseSettings, resolveSettings, type MovedSetting, type SettingsDraft } from "../../../shared/run-settings.ts";
 import type { ReconciledOption } from "../../../shared/engine-options.ts";
+import { PresetLibrary } from "../run-settings/PresetLibrary.tsx";
+import { reconcileSettingsFile, type SettingsFile, type SettingValue, type DroppedSetting } from "../../../shared/settings-file.ts";
+import { planPreset } from "../../../shared/run-plan.ts";
 import { SettingsEditor } from "../run-settings/SettingsEditor.tsx";
 import { PRESET_IDS, type PresetId } from "../../../shared/option-catalogue.ts";
 import type { ReviewOption, RunReviewView } from "../../../shared/run-review.ts";
@@ -32,10 +35,14 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<SettingsDraft>({});
   const [applied, setApplied] = useState<Array<{ name: string; value: ReviewOption["value"] }>>([]);
+  const [loaded, setLoaded] = useState<{ file: SettingsFile; id: number | null; baseline: SettingValue[] } | null>(null);
+  const [dropped, setDropped] = useState<DroppedSetting[]>([]);
+  const pendingFile = useRef<{ file: SettingsFile; id: number | null } | null>(null);
+  const presetName = loaded?.file.preset;
   const [editing, setEditing] = useState(false);
   const [moved, setMoved] = useState<MovedSetting[]>([]);
   const editorBefore = useRef<SettingsDraft>({});
-  const switching = useRef<{ options: ReconciledOption[]; draft: SettingsDraft } | null>(null);
+  const switching = useRef<{ options: ReconciledOption[]; draft: SettingsDraft; baseline?: SettingValue[] } | null>(null);
   const settingsKey = JSON.stringify(applied);
   const [engines, setEngines] = useState<EngineView[]>([]);
   const [engineId, setEngineId] = useState<number | null>(null);
@@ -58,7 +65,7 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
     if (problem.code === "auth.passphrase_required") auth.current(); else setFailure(problem);
   }
   useEffect(() => {
-    setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null;
+    setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
   }, [projectId]);
   useEffect(() => {
     if (!open) return;
@@ -75,19 +82,30 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
     const current = ++generation.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoading(true); setFailure(null); setChanged(false);
-    const pending = applied.length
-      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied })
+    const pending = applied.length || presetName !== undefined
+      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied, presetName })
       : api<RunReviewView>("GET", `/api/projects/${projectId}/run-review?engineId=${engineId}&preset=${preset}&offset=${offset}`);
     pending.then(value => {
       if (current !== generation.current) return;
       if (offset !== 0 && value.revision !== snapshot.current) {
         setReview(null); setChanged(true); setLoading(false); return;
       }
+      if (pendingFile.current && value.settings) {
+        const selected = pendingFile.current; pendingFile.current = null;
+        const restored = reconcileSettingsFile(selected.file, value.settings.options);
+        setLoaded({ ...selected, baseline: restored.values }); setDropped(restored.dropped); setDraft({});
+        const resolved = resolveSettings(value.settings.options, preset, {}, value.settings.facts, restored.values);
+        const edits = Object.entries(resolved.values).map(([name, value]) => ({ name, value }));
+        if (edits.length) { setApplied(edits); return; }
+      }
       if (switching.current && value.settings) {
         const previous = switching.current; switching.current = null;
-        const rebased = rebaseSettings(previous.options, value.settings.options, preset, previous.draft, value.settings.facts);
+        const baseline = loaded ? reconcileSettingsFile(loaded.file, value.settings.options) : null;
+        if (loaded && baseline) { setLoaded({ ...loaded, baseline: baseline.values }); setDropped(baseline.dropped); }
+        const rebased = rebaseSettings(previous.options, value.settings.options, preset, previous.draft, value.settings.facts, { previous: previous.baseline, next: baseline?.values });
         setDraft(rebased.draft); setMoved(rebased.moved);
-        const edits = resolveSettings(value.settings.options, preset, rebased.draft, value.settings.facts).overrides;
+        const resolved = resolveSettings(value.settings.options, preset, rebased.draft, value.settings.facts, baseline?.values);
+        const edits = loaded ? Object.entries(resolved.values).map(([name, value]) => ({ name, value })) : resolved.overrides;
         if (edits.length) { setApplied(edits); return; }
       }
       if (offset === 0) snapshot.current = value.revision;
@@ -95,13 +113,13 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
       if (value.facts && value.facts.pendingMetadata > 0) timer = setTimeout(() => setRefresh(value => value + 1), 300);
     }, error => { if (current === generation.current) { setReview(null); setLoading(false); fail(error); } });
     return () => { generation.current++; clearTimeout(timer); };
-  }, [open, projectId, engineId, preset, offset, refresh, settingsKey]);
+  }, [open, projectId, engineId, preset, offset, refresh, settingsKey, presetName]);
   function changePreset(value: PresetId) {
-    setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null;
+    setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
     setLoading(true); setReview(null); setPreset(value); setOffset(0); setOffsets([]);
   }
   function changeEngine(value: number) {
-    if (review?.settings) switching.current = { options: review.settings.options, draft };
+    if (review?.settings) switching.current = { options: review.settings.options, draft, baseline: loaded?.baseline };
     setApplied([]); setMoved([]); setLoading(true); setReview(null); setEngineId(value); setOffset(0); setOffsets([]);
   }
   function reloadReview() {
@@ -111,24 +129,34 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
   function editSettings() { editorBefore.current = draft; setEditing(true); }
   function applySettings() {
     if (!review?.settings) return;
-    const resolved = resolveSettings(review.settings.options, preset, draft, review.settings.facts);
+    const resolved = resolveSettings(review.settings.options, preset, draft, review.settings.facts, loaded?.baseline);
     if (Object.keys(resolved.errors).length) return;
-    setApplied(resolved.overrides); setEditing(false); setOffset(0); setOffsets([]); next();
+    setApplied(loaded ? Object.entries(resolved.values).map(([name, value]) => ({ name, value })) : resolved.overrides); setEditing(false); setOffset(0); setOffsets([]); next();
     setLoading(true); setRefresh(value => value + 1);
   }
   function next() {
-    if (!name.trim()) setName(t("run_start.default_name", { preset: t(`run_start.preset.${preset}`), date: new Intl.DateTimeFormat().format(new Date()) }));
+    if (!name.trim()) setName(t("run_start.default_name", { preset: presetName ?? t(`run_start.preset.${preset}`), date: new Intl.DateTimeFormat().format(new Date()) }));
     setStep("review");
   }
   async function start() {
     if (!review || loading || working || review.blocked || engineId === null) return;
     setWorking(true); setFailure(null);
     try {
-      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, name, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
+      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, presetName, name, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
       window.location.hash = `#/runs/${run.id}`;
     } catch (error) { fail(error); } finally { setWorking(false); }
   }
+  function chooseFile(file: SettingsFile, id: number | null) {
+    pendingFile.current = { file, id }; switching.current = null;
+    setLoaded({ file, id, baseline: [] }); setDropped([]); setDraft({}); setApplied([]); setMoved([]); setEditing(false);
+    setPreset("custom"); setLoading(true); setOffset(0); setOffsets([]); setRefresh(value => value + 1);
+  }
   const info = review?.engine.info;
+  const resolved = review?.settings ? resolveSettings(review.settings.options, preset, draft, review.settings.facts, loaded?.baseline) : null;
+  const file: SettingsFile | null = !loading && resolved && !Object.keys(resolved.errors).length ? {
+    options: Object.entries(resolved.values).map(([name, value]) => ({ name, value })),
+    preset: presetName ?? t(`run_start.preset.${preset}`), engineVersion: typeof info?.engineVersion === "string" ? info.engineVersion : null,
+  } : null;
   const number = (value: number | null | undefined) => value == null ? t("run_start.not_reported") : String(value);
   const memory = (value: number | null | undefined) => value == null ? t("run_start.not_reported") : formatBytes(value);
   return <section aria-labelledby="run-start-title">
@@ -141,11 +169,18 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
       {loading && <p role="status">{t("run_start.loading")}</p>}
       {failure && <ErrorMessage failure={failure} />}
       {changed && <><p role="alert">{t("run_start.changed")}</p><Button onClick={() => { setOffsets([]); setOffset(0); }}>{t("run_start.reload")}</Button></>}
-      {editing && review?.settings && !loading && <SettingsEditor options={review.settings.options} preset={preset} draft={draft} facts={review.settings.facts} onChange={setDraft} onApply={applySettings} onCancel={() => { setDraft(editorBefore.current); setEditing(false); }} disabled={working} />}
+      {editing && review?.settings && !loading && <SettingsEditor options={review.settings.options} preset={preset} draft={draft} baselineOptions={loaded?.baseline} facts={review.settings.facts} onChange={setDraft} onApply={applySettings} onCancel={() => { setDraft(editorBefore.current); setEditing(false); }} disabled={working} />}
       {!editing && <Button className="secondary" disabled={!review?.settings || loading || working} onClick={editSettings}>{t("run_settings.change")}</Button>}
+      {review?.settings && <PresetLibrary key={`${projectId}-${engineId}`} file={file} selectedId={loaded?.id ?? null} disabled={working || loading} onChoose={chooseFile} onRename={(id, name) => { if (loaded?.id === id) setLoaded({ ...loaded, file: { ...loaded.file, preset: name } }); }} onDelete={id => { if (loaded?.id === id) setLoaded({ ...loaded, id: null }); }} onAuthRequired={onAuthRequired} />}
+      {loaded && !loading && review?.settings && <section aria-label={t("run_presets.loaded", { name: loaded.file.preset })}>
+        <h3>{t("run_presets.loaded", { name: loaded.file.preset })}</h3>
+        {loaded.file.engineVersion !== (info?.engineVersion ?? null) && <p>{t("run_presets.version", { before: loaded.file.engineVersion ?? t("run_presets.unknown_version"), after: info?.engineVersion ?? t("run_presets.unknown_version") })}</p>}
+        <OptionList options={planPreset("custom", review.settings.options, loaded.baseline).departures.map(option => ({ ...option, help: review.settings!.options.find(item => item.name === option.name)?.help ?? "", unexplained: review.settings!.options.find(item => item.name === option.name)?.unexplained ?? false }))} />
+      </section>}
+      {dropped.length > 0 && <section aria-label={t("run_presets.dropped")} aria-live="polite"><h3>{t("run_presets.dropped")}</h3><ul>{dropped.map(item => <li key={item.name}><code>{item.name}</code>{" "}{String(item.value)}<p>{t(`run_presets.drop.${item.reason}`)}</p></li>)}</ul></section>}
       {!editing && step === "preset" && <>
         <fieldset disabled={working}><legend>{t("run_start.presets")}</legend>
-          {PRESET_IDS.map(id => <div key={id}><label><input type="radio" name="preset" value={id} checked={preset === id} onChange={() => changePreset(id)} /> {t(`run_start.preset.${id}`)}</label>
+          {PRESET_IDS.map(id => <div key={id}><label><input type="radio" name="preset" value={id} checked={!loaded && preset === id} onChange={() => changePreset(id)} /> {t(`run_start.preset.${id}`)}</label>
             <p>{t(`run_start.description.${id}`)}</p>
             {review && !loading && <OptionList options={review.presets.find(item => item.id === id)?.departures ?? []} />}
           </div>)}
@@ -156,7 +191,7 @@ export function RunStart({ projectId, onAuthRequired }: { projectId: number; onA
         <h3>{t("run_start.review")}</h3>
         <p>{t("run_start.project", { name: review.project.name })}</p>
         <TextField id="run-name" label={t("run_start.name")} value={name} onChange={event => setName(event.target.value)} required maxLength={200} />
-        <p>{t("run_start.selected_preset", { preset: t(`run_start.preset.${review.preset}`) })}</p>
+        <p>{t("run_start.selected_preset", { preset: review.presetName ?? t(`run_start.preset.${review.preset}`) })}</p>
         <h4>{t("run_start.photos")}</h4>
         {review.wayIn === "link" ? <p>{t("run_start.link_unknown")}</p> : review.photos.included !== null && review.photos.excluded !== null && review.photos.total !== null && review.photos.bytes !== null && <p>{t("run_start.photo_counts", { included: review.photos.included, excluded: review.photos.excluded, total: review.photos.total, size: formatBytes(review.photos.bytes) })}</p>}
         <p>{t(`run_start.way.${review.wayIn}`)}</p>

@@ -8,6 +8,8 @@ function id(raw: unknown): number | null {
 }
 function preset(raw: unknown): raw is PresetId { return (PRESET_IDS as readonly unknown[]).includes(raw); }
 
+function named(raw: unknown): raw is string | undefined { return raw === undefined || typeof raw === "string" && raw.trim().length > 0 && raw.length <= 200; }
+
 function edits(raw: unknown): raw is Array<{ name: string; value: OptionValue }> | undefined {
   return raw === undefined || Array.isArray(raw) && raw.length <= 256 && raw.every(item =>
     item && typeof item === "object" && typeof item.name === "string" && item.name.length > 0 && item.name.length <= 200 &&
@@ -29,19 +31,19 @@ export function projectRunRoutes(ctx: RouteContext): RouteTable {
       const project = id(req.params.id);
       const parsed = await readJson(req);
       if (!parsed.ok) return parsed.response;
-      const { engineId, preset: selected, options, offset = 0 } = parsed.body;
-      if (project === null || typeof engineId !== "number" || id(engineId) === null || !preset(selected) || !edits(options) || !Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) > 999999999 || Object.keys(parsed.body).some(key => !["engineId", "preset", "options", "offset"].includes(key))) return errorResponse(400, "api.invalid_body");
-      const result = await ctx.projectRuns.review(project, engineId, selected, offset as number, options);
+      const { engineId, preset: selected, options, presetName, offset = 0 } = parsed.body;
+      if (project === null || typeof engineId !== "number" || id(engineId) === null || !preset(selected) || !edits(options) || !named(presetName) || !Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) > 999999999 || Object.keys(parsed.body).some(key => !["engineId", "preset", "options", "offset", "presetName"].includes(key))) return errorResponse(400, "api.invalid_body");
+      const result = await ctx.projectRuns.review(project, engineId, selected, offset as number, options, presetName?.trim());
       return result.ok ? Response.json(result.value) : errorResponse(result.status, result.error.code, result.error.data);
     } },
     "/api/projects/:id/runs": { POST: async req => {
       const project = id(req.params.id);
       const parsed = await readJson(req);
       if (!parsed.ok) return parsed.response;
-      const { engineId, preset: selected, name, revision, options } = parsed.body;
+      const { engineId, preset: selected, name, revision, options, presetName } = parsed.body;
       if (project === null || typeof engineId !== "number" || id(engineId) === null || !preset(selected) || typeof name !== "string" || !name.trim() || name.trim().length > 200 || typeof revision !== "string" || !/^[a-f0-9]{64}$/.test(revision)) return errorResponse(400, "api.invalid_body");
-      if (!edits(options) || Object.keys(parsed.body).some(key => !["engineId", "preset", "name", "revision", "options"].includes(key))) return errorResponse(400, "api.invalid_body");
-      const result = await ctx.projectRuns.start(project, { engineId, preset: selected, name: name.trim(), revision, options });
+      if (!edits(options) || !named(presetName) || Object.keys(parsed.body).some(key => !["engineId", "preset", "name", "revision", "options", "presetName"].includes(key))) return errorResponse(400, "api.invalid_body");
+      const result = await ctx.projectRuns.start(project, { engineId, preset: selected, name: name.trim(), revision, options, presetName: presetName?.trim() });
       return result.ok ? Response.json(result.value, { status: 202 }) : errorResponse(result.status, result.error.code, result.error.data);
     } },
   };

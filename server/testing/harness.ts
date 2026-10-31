@@ -1,3 +1,4 @@
+import { PresetStore } from "../presets/preset-store.ts";
 import { LinkStore } from "../projects/link-store.ts";
 import { ProjectRuns } from "../projects/project-runs.ts";
 import { RunInputs } from "../projects/run-inputs.ts";
@@ -285,6 +286,7 @@ export function openHarness(
   const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
+    presets: new PresetStore(db),
     projects,
     projectDeletion,
     links,

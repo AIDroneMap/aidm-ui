@@ -19,6 +19,7 @@ export type SettingsEditorProps = {
   onApply: () => void;
   onCancel: () => void;
   disabled?: boolean;
+  baselineOptions?: readonly { name: string; value: OptionValue }[];
 };
 
 const groups = [...new Set(OPTION_CATALOGUE.flatMap((option) => option.bin === "shown" ? [option.group] : []))];
@@ -45,10 +46,10 @@ function Group({ label, initialOpen, searching, children }: { label: string; ini
   return <Disclosure label={label} open={searching || open} onToggle={(event) => { if (!searching) setOpen(event.currentTarget.open); }}>{children}</Disclosure>;
 }
 
-export function SettingsEditor({ options, preset, draft, facts, onChange, onApply, onCancel, disabled = false }: SettingsEditorProps) {
+export function SettingsEditor({ options, preset, draft, facts, onChange, onApply, onCancel, disabled = false, baselineOptions }: SettingsEditorProps) {
   const [search, setSearch] = useState("");
   const id = useId();
-  const resolved = resolveSettings(options, preset, draft, facts);
+  const resolved = resolveSettings(options, preset, draft, facts, baselineOptions);
   const query = search.trim().toLocaleLowerCase();
   const matches = (option: ReconciledOption) => !query || [option.name, ...(option.unexplained ? [option.help ?? ""] : fields.map((field) => t(`option.${option.name}.${field}`)))].some((text) => text.toLocaleLowerCase().includes(query));
   const changed = options.filter((option) => Object.hasOwn(draft, option.name) && (Boolean(resolved.errors[option.name]) || resolved.values[option.name] !== resolved.baseline[option.name]));

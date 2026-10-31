@@ -19,6 +19,7 @@ test("review ignores stale engines, blocks above the limit and starts at the lim
     const url = new URL(request.url);
     if (url.pathname === "/") return new Response('<div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } });
     if (url.pathname === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
+    if (url.pathname === "/api/presets") return Response.json({ presets: [], nextOffset: null });
     if (url.pathname === "/api/engines") return Response.json([{ id: 1, name: "Slow", enabled: true }, { id: 2, name: "Ready", enabled: true }]);
     if (url.pathname.endsWith("/run-review")) {
       const id = Number(url.searchParams.get("engineId"));

@@ -51,7 +51,7 @@ export class ProjectRuns {
     this.clientFor = deps.clientFor ?? (endpoint => new TaskClient(endpoint, { log: deps.log }));
   }
 
-  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = []): Promise<Outcome<Reviewed>> {
+  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string): Promise<Outcome<Reviewed>> {
     const { projects, engines, inputs, photos, settings } = this.deps;
     if (id === projects.sampleId()) return refuse(409, "project.sample_photos_forbidden");
     const project = projects.get(id);
@@ -105,9 +105,10 @@ export class ProjectRuns {
     else if (plan.unsupportedPresetOptions.length || !outputFlags.includes("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
     else if (this.deps.runs.listUnfinished().some(run => run.projectId === id)) blocked = { code: "project_run.already_running", data: {} };
-    const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options })).digest("hex");
+    const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
     return { ok: true, value: { inputs: snapshot, client, options, view: {
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
+      ...(presetName !== undefined ? { presetName } : {}),
       preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, supported).departures.map(detail) })),
       wayIn: snapshot.wayIn, photos: snapshot.wayIn === "link" ? { included: null, excluded: null, total: null, bytes: null } : { included: snapshot.photoCount, excluded: snapshot.excludedPhotoCount, total: snapshot.totalPhotoCount, bytes: snapshot.photoBytes },
       settings: { options: supported, facts: {
@@ -118,8 +119,8 @@ export class ProjectRuns {
     } } };
   }
 
-  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = []): Promise<Outcome<RunReviewView>> {
-    const result = await this.inspect(id, engine, preset, offset, edits);
+  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string): Promise<Outcome<RunReviewView>> {
+    const result = await this.inspect(id, engine, preset, offset, edits, presetName);
     return result.ok ? { ok: true, value: result.value.view } : result;
   }
 
@@ -130,13 +131,13 @@ export class ProjectRuns {
     this.starting.add(id);
     let handedOver = false;
     try {
-      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options);
+      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options, request.presetName);
       if (!reviewed.ok) return reviewed;
       const { view } = reviewed.value;
       if (view.blocked) return { ok: false, status: 409, error: view.blocked };
       if (request.revision !== view.revision) return refuse(409, "project_run.review_changed");
       if (this.deps.links.isBusy(id) || (reviewed.value.inputs.wayIn === "link" && this.deps.links.revision(id) !== reviewed.value.inputs.revision)) return refuse(409, "project_run.review_changed");
-      const run = this.deps.runs.create({ projectId: id, engineId: request.engineId, name: request.name, preset: request.preset, wayIn: view.wayIn, options: reviewed.value.options });
+      const run = this.deps.runs.create({ projectId: id, engineId: request.engineId, name: request.name, preset: request.preset, presetName: request.presetName, wayIn: view.wayIn, options: reviewed.value.options });
       if (view.wayIn === "link") this.deps.links.recordRun(id, run.id);
       const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
       this.preparing.set(run.id, preparing);

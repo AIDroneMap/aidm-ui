@@ -226,6 +226,7 @@ export class RunTracker {
       projectId: run.projectId,
       name: run.name,
       preset: run.preset,
+      ...(run.presetName !== undefined ? { presetName: run.presetName } : {}),
       wayIn: run.wayIn,
       sample: run.sample,
       engineId: run.engineId,

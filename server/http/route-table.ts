@@ -1,3 +1,4 @@
+import type { PresetStore } from "../presets/preset-store.ts";
 import type { LinkStore } from "../projects/link-store.ts";
 import type { ProjectRuns } from "../projects/project-runs.ts";
 import type { ImportStore } from "../projects/import-store.ts";
@@ -37,6 +38,7 @@ export type RouteTable = Record<string, Partial<Record<Method, RouteHandler>>>;
 /** Everything the routes need from the rest of the server. */
 export interface RouteContext {
   identity: InstanceIdentity;
+  presets: PresetStore;
   projects: ProjectStore;
   projectDeletion: ProjectDeletion;
   links: LinkStore;
