@@ -57,7 +57,7 @@ test("run history, keyboard retry, changed settings and deletion use production 
     const wait = (condition: string) => evaluate(`new Promise((resolve,reject)=>{const end=Date.now()+5000;const tick=()=>(${condition})?resolve(true):Date.now()>end?reject(Error(${JSON.stringify(condition)})):setTimeout(tick,20);tick()})`);
     const button = (label: string) => `[...document.querySelectorAll('button')].find(el=>el.textContent===${JSON.stringify(label)})`;
     const click = async (label: string) => { await wait(`${button(label)}&&!${button(label)}.disabled`);await evaluate(`${button(label)}.click();true`); };
-    const field = async (selector: string, text: string) => { await wait(`document.querySelector(${JSON.stringify(selector)})`);await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(text)});el.dispatchEvent(new Event('input',{bubbles:true}));return true})()`); };
+    const field = async (selector: string, text: string) => { await wait(`document.querySelector(${JSON.stringify(selector)})`);await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(text)});el.dispatchEvent(new Event('input',{bubbles:true}));return true})()`); };
 
     const activate = async (label: string) => {
       await wait(`${button(label)}&&!${button(label)}.disabled`);
@@ -68,6 +68,9 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await send("Page.navigate", { url: h.base+`/#/projects/${project}` });
     await wait(`document.querySelector('a[href="#/runs/${original.id}"]')`);
     expect(await evaluate("document.body.textContent.includes('Selected engine')")).toBe(true);
+    await field("#project-notes", "Keep these notes while the project refreshes");
+    await evaluate("new Promise(resolve => requestAnimationFrame(() => resolve(true)))");
+    expect(await evaluate("document.querySelectorAll('#run-history-title').length")).toBe(1);
     await evaluate(`location.hash='#/runs/${original.id}';true`);
     await activate("Run again with other settings");
     await wait("document.querySelector('.settings-editor')");
