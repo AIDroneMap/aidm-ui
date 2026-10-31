@@ -425,6 +425,13 @@ export class RunTracker {
     }
     if (this.current(runId, following) === null) return;
     const state = runStateFromTask(info.value.statusCode, info.value.processingTime);
+    if (run.restartPending) {
+      if (isFinished(state)) {
+        this.update(runId, { state: "failed", restartPending: false, problem: { code: "run.restart_unconfirmed", data: {} } });
+        return;
+      }
+      if (state === "queued" || state === "processing") this.update(runId, { restartPending: false });
+    }
     const queue = state === "queued" ? await client.info() : null;
     const processingTime = info.value.processingTime;
     if (processingTime !== null && processingTime >= 0) following.engineMs = processingTime;

@@ -236,3 +236,23 @@ test("a restart whose response is lost follows the existing task instead of crea
   expect(h.runs.get(retry.id)?.taskUuid).toBe(run.taskUuid);
   expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
 });
+
+test("a restart that never reaches the engine cannot reuse the previous completed archive", async () => {
+  await h.stop();
+  h = openHarness({ runPollMs: 10, runClientFor: endpoint => new TaskClient(endpoint, { fetch: (async (input, init) => {
+    if (new URL(String(input)).pathname === "/task/restart") throw new Error("Restart request did not reach the engine");
+    return fetch(input, init);
+  }) as typeof fetch }) });
+  project = h.ctx.projects.create("Field", "").id; engine = h.engineStore.addRemote({ name: "Engine", address: api.address, token: api.token }).id;
+  const original = await initial();
+  const fixture = join(h.dataFolder, "archive.zip"); writeStoredZip(fixture, [{ name: "odm_report/report.pdf", data: Buffer.from("original") }]);
+  api.setTask(original.taskUuid!, { statusCode: 40, results: await readFile(fixture), output: ["Original completed"] });
+  await eventually(async () => h.tracker.view(original.id)?.resultsAvailable === true);
+  const body = { engineId: engine, preset: "custom", sourceRunId: original.id, options: [{ name: "orthophoto-resolution", value: 8 }] };
+  const review = await (await send("POST", `/api/projects/${project}/run-review`, body)).json() as RunReviewView;
+  const repeated = await (await send("POST", `/api/projects/${project}/runs`, { ...body, name: "Unconfirmed restart", revision: review.revision })).json() as RunView;
+  await eventually(async () => h.runs.get(repeated.id)?.problem?.code === "run.restart_unconfirmed");
+  expect(h.tracker.view(repeated.id)?.resultsAvailable).toBe(false);
+  expect(h.tracker.log(repeated.id, 0).lines).toEqual([]);
+  expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
+});

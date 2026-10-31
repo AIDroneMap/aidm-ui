@@ -1217,6 +1217,7 @@
   "run_manage.history": "Runs",
   "run_manage.empty": "No runs yet.",
   "run_manage.waiting": "Waiting. The engine reports {count} running or waiting runs.",
+  "run.restart_unconfirmed": "The engine did not confirm the restart. Check its connection, then retry this run.",
   "run.action_unavailable": "Wait for the current run action to finish, then try again.",
   "run.photos_unavailable": "The original photos were not recorded for this run. Start a new run from the project."
 }

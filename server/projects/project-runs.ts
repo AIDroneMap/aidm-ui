@@ -162,7 +162,7 @@ export class ProjectRuns {
     if (!release) return false;
     this.starting.add(key); tracker.pause(id);
     const boundary = tracker.log(id, Number.MAX_SAFE_INTEGER).next;
-    tracker.update(id, { state: source.wayIn === "link" ? "created" : "uploading", taskUuid: null, restarted: true, restartedAtLine: boundary, progress: null });
+    tracker.update(id, { state: source.wayIn === "link" ? "created" : "uploading", taskUuid: null, restarted: true, restartedAtLine: boundary, progress: null, restartPending: false });
     const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.preparing.set(id, preparing);
     const client = this.clientFor(engine);
@@ -216,7 +216,7 @@ export class ProjectRuns {
           if (restarted.failure.kind === "unreachable" || restarted.failure.kind === "bad_response") {
             runs.retireTask(engineId, original.taskUuid, run.id);
             this.preparing.delete(run.id);
-            tracker.update(run.id, { state: "engine_unreachable" }); tracker.follow(run.id); return;
+            tracker.update(run.id, { state: "engine_unreachable", restartPending: true }); tracker.follow(run.id); return;
           }
           if (!isTaskNotFound(restarted.failure)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
         }

@@ -10,7 +10,7 @@ Migration 13 records each run's original input selection in the private server d
 
 A confirmed task-not-found response recreates the task using that saved selection. Changes to the project's later photos, exclusions, folder selection or ZIP address do not replace the original inputs. Upload and imported reads stay bounded and verify the files around copying. Missing or changed originals fail visibly and leave no committed replacement task. Imported files remain unchanged. A linked run can reuse its saved address, but the server cannot guarantee that the remote ZIP still exists or has unchanged contents.
 
-Active runs recover after three consecutive task-not-found responses. Network, authentication and malformed-response failures do not count as missing tasks. A lost restart response leaves the new attempt following the existing task, so a timeout cannot create a duplicate. Older runs created before migration 13 can still restart an existing task. They cannot recreate missing photos that were never recorded for them.
+Active runs recover after three consecutive task-not-found responses. Network, authentication and malformed-response failures do not count as missing tasks. A lost restart response leaves the new attempt following the existing task. It must observe a queued or processing state before accepting completion. An immediate finished response cannot establish that the restart happened, so it reports an unconfirmed restart without copying the previous log or archive. A timeout cannot create a duplicate. Older runs created before migration 13 can still restart an existing task. They cannot recreate missing photos that were never recorded for them.
 
 ## Queue and deletion
 
