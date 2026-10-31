@@ -39,8 +39,8 @@ export type TaskApiResult<T> = { ok: true; value: T } | { ok: false; failure: Ta
  * `${uuid} not found`). The upload and commit routes say "Invalid uuid (not
  * found)" instead, which is a different answer and does not match.
  */
-export function isTaskNotFound(failure: TaskApiFailure): boolean {
-  return failure.kind === "engine_error" && /^\S+ not found$/.test(failure.message);
+export function isTaskNotFound(failure: TaskApiFailure, uuid?: string): boolean {
+  return failure.kind === "engine_error" && (uuid === undefined ? /^\S+ not found$/.test(failure.message) : failure.message === `${uuid} not found`);
 }
 
 export type EngineInfo = EngineInfoView;

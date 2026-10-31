@@ -507,7 +507,8 @@ export class RunTracker {
 
   /** One poll got no usable answer. A task the engine does not know ends the run; anything else is counted as unreachable. */
   private async pollFailed(runId: number, following: Following, failure?: TaskApiFailure): Promise<void> {
-    if (failure !== undefined && isTaskNotFound(failure)) {
+    const uuid = this.runs.get(runId)?.taskUuid;
+    if (failure !== undefined && uuid && isTaskNotFound(failure, uuid)) {
       // The engine answered, so it is reachable; it just does not have the task.
       following.failedPolls = 0;
       following.notFoundPolls++;

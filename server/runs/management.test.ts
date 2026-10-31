@@ -279,3 +279,24 @@ test("cancelling during a restart with a lost response still cancels the engine 
     expect(api.uploads).toHaveLength(1);
   } finally { release(); }
 });
+
+test("an unrelated not-found error cannot recreate or remove an engine task", async () => {
+  await h.stop();
+  let wrongInfo = false, wrongRestart = false;
+  h = openHarness({ runPollMs: 10, runClientFor: endpoint => new TaskClient(endpoint, { fetch: (async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (wrongRestart && path === "/task/restart" || wrongInfo && /^\/task\/[^/]+\/info$/.test(path)) return Response.json({ error: "Program not found" });
+    return fetch(input, init);
+  }) as typeof fetch }) });
+  project = h.ctx.projects.create("Field", "").id; engine = h.engineStore.addRemote({ name: "Engine", address: api.address, token: api.token }).id;
+  const original = await initial(); wrongInfo = true;
+  await eventually(async () => h.runs.get(original.id)?.state === "engine_unreachable");
+  expect(h.runs.get(original.id)?.taskUuid).toBe(original.taskUuid);
+  expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
+  wrongInfo = false; api.setTask(original.taskUuid!, { statusCode: 30 });
+  await eventually(async () => h.runs.get(original.id)?.state === "failed");
+  wrongRestart = true;
+  const retry = await (await send("POST", `/api/runs/${original.id}/retry`)).json() as RunView;
+  await eventually(async () => h.runs.get(retry.id)?.state === "failed");
+  expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
+});

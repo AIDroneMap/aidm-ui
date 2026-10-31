@@ -207,7 +207,7 @@ export class ProjectRuns {
             tracker.update(run.id, { taskUuid: original.taskUuid });
             if (preparing.abort.signal.aborted) {
               const cancelled = await client.cancelTask(original.taskUuid);
-              if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(run.id, "cancelled", null); return; }
+              if (cancelled.ok || isTaskNotFound(cancelled.failure, original.taskUuid)) { this.finish(run.id, "cancelled", null); return; }
               preparing.cancelFailure = problemFromFailure(cancelled.failure);
             }
             this.preparing.delete(run.id);
@@ -217,13 +217,13 @@ export class ProjectRuns {
             runs.retireTask(engineId, original.taskUuid, run.id);
             if (preparing.abort.signal.aborted) {
               const cancelled = await client.cancelTask(original.taskUuid);
-              if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(run.id, "cancelled", null); return; }
+              if (cancelled.ok || isTaskNotFound(cancelled.failure, original.taskUuid)) { this.finish(run.id, "cancelled", null); return; }
               preparing.cancelFailure = problemFromFailure(cancelled.failure);
             }
             this.preparing.delete(run.id);
             tracker.update(run.id, { state: "engine_unreachable", restartPending: true }); tracker.follow(run.id); return;
           }
-          if (!isTaskNotFound(restarted.failure)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
+          if (!isTaskNotFound(restarted.failure, original.taskUuid)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
         }
         if (!source) { this.finish(run.id, "failed", { code: "run.photos_unavailable", data: {} }); return; }
         tracker.update(run.id, { state: source.wayIn === "link" ? "created" : "uploading", step: source.wayIn === "link" ? null : "upload" });
@@ -309,7 +309,7 @@ export class ProjectRuns {
       }
       if (signal.aborted) {
         const cancelled = await client.cancelTask(uuid);
-        if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(id, "cancelled", null); return; }
+        if (cancelled.ok || isTaskNotFound(cancelled.failure, uuid)) { this.finish(id, "cancelled", null); return; }
         preparing.cancelFailure = problemFromFailure(cancelled.failure);
       }
       // Cancellation after this point uses the tracker and the normal engine cancel route.
@@ -321,7 +321,7 @@ export class ProjectRuns {
     } finally {
       if (uuid !== null && !committed) {
         const removed = await client.removeTask(uuid);
-        if (!removed.ok && !isTaskNotFound(removed.failure)) this.deps.log(`Run ${id}: could not remove its uncommitted task`);
+        if (!removed.ok && !isTaskNotFound(removed.failure, uuid)) this.deps.log(`Run ${id}: could not remove its uncommitted task`);
       }
     }
   }
@@ -365,7 +365,7 @@ export class ProjectRuns {
         const engine = run.engineId === null ? null : engines.get(run.engineId);
         if (!engine) return refuse(409, "project.deletion_engine_missing");
         const removed = await this.clientFor(engine).removeTask(run.taskUuid);
-        if (!removed.ok && !isTaskNotFound(removed.failure)) return refuse(502, "project.deletion_incomplete");
+        if (!removed.ok && !isTaskNotFound(removed.failure, run.taskUuid)) return refuse(502, "project.deletion_incomplete");
       }
       await tracker.remove(run);
       return { ok: true, value: undefined };
