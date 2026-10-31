@@ -66,11 +66,11 @@ export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: 
     if (map.current?.getLayer(layer.name)) map.current.setLayoutProperty(layer.name, "visibility", next ? "visible" : "none");
   }
 
-  return <div>
+  return <div className={coordinates ? undefined : "map-outside"}>
     <fieldset disabled={!loaded}><legend>{t("map.layers")}</legend>{layers.map(layer => <label key={layer.name}><input type="checkbox" checked={visible[layer.name] ?? false} onChange={() => toggle(layer)} /> {t(`map.layer.${layer.name}`)}</label>)}</fieldset>
     {basemapFailed && basemap && <p role="alert">{t("basemap.failed", { url: basemap.url })}</p>}
     {failed && <div role="alert"><p>{t("map.tile_error")}</p><button onClick={onRetry}>{t("map.retry")}</button></div>}
-    <div ref={container} className={coordinates ? "result-map" : "result-map map-outside"} />
+    <div ref={container} className="result-map" />
     {basemap?.enabled && <p className="basemap-attribution" aria-label={t("basemap.attribution")}>{basemap.attribution}</p>}
     {coordinates && <p aria-live="off">{coordinates}</p>}
     <p>{t("map.keyboard")}</p>
