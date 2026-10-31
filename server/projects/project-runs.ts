@@ -96,6 +96,9 @@ export class ProjectRuns {
       if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
       throw error;
     }
+    const archiveUnavailable = original?.engineId === engineId && original.state === "completed" && !["ready", "deleted"].includes(this.deps.tracker.results.view(original.id)?.state ?? "");
+    const previousTask = archiveUnavailable && original.taskUuid ? await client.taskInfo(original.taskUuid) : null;
+    const previousTaskMissing = previousTask !== null && !previousTask.ok && isTaskNotFound(previousTask.failure, original!.taskUuid!);
     const currentEngine = engines.get(engineId);
     if (!currentEngine?.enabled) return refuse(409, "project_run.engine_unavailable");
     if (currentEngine.address !== engine.address || currentEngine.token !== engine.token) return refuse(409, "project_run.review_changed");
@@ -120,7 +123,7 @@ export class ProjectRuns {
     else if (plan.unsupportedPresetOptions.length || !outputFlags.includes("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
     else if (this.deps.runs.listUnfinished().some(run => run.projectId === id && run.engineId === engineId)) blocked = { code: "project_run.already_running", data: {} };
-    if (original?.state === "completed" && !["ready", "deleted"].includes(this.deps.tracker.results.view(original.id)?.state ?? "")) blocked = { code: "run.results_not_ready", data: {} };
+    if (archiveUnavailable && !previousTaskMissing) blocked = { code: "run.results_not_ready", data: {} };
     const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, sourceRunId, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
     return { ok: true, value: { inputs: snapshot, client, options, view: {
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },

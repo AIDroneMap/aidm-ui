@@ -300,3 +300,19 @@ test("an unrelated not-found error cannot recreate or remove an engine task", as
   await eventually(async () => h.runs.get(retry.id)?.state === "failed");
   expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
 });
+
+test("a completed run whose task and uncached archive are missing can recreate its original photos", async () => {
+  const original = await initial();
+  api.setTask(original.taskUuid!, { statusCode: 40, results: null });
+  await eventually(async () => h.tracker.view(original.id)?.results?.state === "failed");
+  api.tasks.delete(original.taskUuid!);
+  const body = { engineId: engine, preset: "custom", sourceRunId: original.id };
+  const review = await (await send("POST", `/api/projects/${project}/run-review`, body)).json() as RunReviewView;
+  expect(review.blocked).toBeNull();
+  const response = await send("POST", `/api/projects/${project}/runs`, { ...body, name: "Recovered", revision: review.revision });
+  expect(response.status).toBe(202);
+  const run = await response.json() as RunView;
+  await eventually(async () => h.runs.get(run.id)?.state === "queued");
+  expect(h.runs.get(run.id)?.taskUuid).not.toBe(original.taskUuid);
+  expect(api.uploads).toHaveLength(2);
+});
