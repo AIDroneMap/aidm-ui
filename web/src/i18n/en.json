@@ -1206,5 +1206,18 @@
   "run_settings.moved_domain": "The allowed values changed.",
   "run_settings.moved_defaultValue": "The engine default changed.",
   "run_settings.moved_value_reason": "The effective value changed.",
-  "run_settings.gpu_warning": "This local engine is using the CPU. Check the matcher setting against the engine's guidance:"
+  "run_settings.gpu_warning": "This local engine is using the CPU. Check the matcher setting against the engine's guidance:",
+  "run_manage.actions": "Run actions",
+  "run_manage.retry": "Retry",
+  "run_manage.again": "Run again with other settings",
+  "run_manage.delete": "Delete run",
+  "run_manage.delete_explain": "This removes this run, its saved results and its run on the engine. The project photos and other runs are kept.",
+  "run_manage.keep": "Keep run",
+  "run_manage.confirm_delete": "Delete this run",
+  "run_manage.history": "Runs",
+  "run_manage.empty": "No runs yet.",
+  "run_manage.waiting": "Waiting. The engine reports {count} running or waiting runs.",
+  "run.restart_unconfirmed": "The engine did not confirm the restart. Check its connection, then retry this run.",
+  "run.action_unavailable": "Wait for the current run action to finish, then try again.",
+  "run.photos_unavailable": "The original photos were not recorded for this run. Start a new run from the project."
 }

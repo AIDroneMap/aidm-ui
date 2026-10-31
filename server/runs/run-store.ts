@@ -5,6 +5,8 @@ import type { TaskOption } from "../task-api/task-client.ts";
 
 /** One row of the runs table. */
 export interface RunRecord {
+  taskRetired: boolean;
+  restartPending: boolean;
   presetName?: string;
   id: number;
   projectId: number;
@@ -27,6 +29,8 @@ export interface RunRecord {
 }
 
 interface RunRow {
+  task_retired: number;
+  restart_pending: number;
   preset_name: string | null;
   id: number;
   project_id: number;
@@ -48,6 +52,7 @@ interface RunRow {
 }
 
 export interface RunPatch {
+  restartPending?: boolean;
   taskUuid?: string | null;
   state?: RunState;
   progress?: number | null;
@@ -70,6 +75,8 @@ function parseJson<T>(text: string | null, fallback: T): T {
 
 function toRecord(row: RunRow): RunRecord {
   return {
+    taskRetired: row.task_retired === 1,
+    restartPending: row.restart_pending === 1,
     id: row.id,
     projectId: row.project_id,
     name: row.name,
@@ -96,6 +103,32 @@ const FINISHED_STATES = `(${FINISHED_RUN_STATES.map((state) => `'${state}'`).joi
 export class RunStore {
   constructor(private readonly db: Database) {}
 
+  retireTask(engine: number, uuid: string, owner: number): void {
+    this.db.query("UPDATE runs SET task_retired = 1 WHERE engine_id = ? AND task_uuid = ? AND id <> ?").run(engine, uuid, owner);
+  }
+
+  claimTask(id: number, engine: number, uuid: string): void {
+    this.db.transaction(() => {
+      this.retireTask(engine, uuid, id);
+      this.db.query("UPDATE runs SET task_retired = 0 WHERE id = ?").run(id);
+      this.update(id, { taskUuid: uuid, restartPending: true });
+    })();
+  }
+
+  referenceTask(id: number, uuid: string): void {
+    this.db.query("UPDATE runs SET task_uuid = ?, task_retired = 1 WHERE id = ?").run(uuid, id);
+  }
+
+  taskRuns(engine: number, uuid: string): RunRecord[] {
+    return (this.db.query("SELECT * FROM runs WHERE engine_id = ? AND task_uuid = ?").all(engine, uuid) as RunRow[]).map(toRecord);
+  }
+
+  list(project: number, offset: number, limit: number): RunRecord[] {
+    return (this.db.query("SELECT * FROM runs WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").all(project, limit, offset) as RunRow[]).map(toRecord);
+  }
+
+  remove(id: number): void { this.db.query("DELETE FROM runs WHERE id = ?").run(id); }
+
   completed(): RunRecord[] {
     return (this.db.query("SELECT * FROM runs WHERE state = 'completed' AND task_uuid IS NOT NULL").all() as RunRow[]).map(toRecord);
   }
@@ -108,6 +141,15 @@ export class RunStore {
   saveResults(id: number, details: unknown): void {
     this.db.query("INSERT INTO run_results (run_id, details) VALUES (?, ?) ON CONFLICT (run_id) DO UPDATE SET details = excluded.details")
       .run(id, JSON.stringify(details));
+  }
+
+  source<T>(id: number): T | null {
+    const row = this.db.query("SELECT details FROM run_sources WHERE run_id = ?").get(id) as { details: string } | null;
+    return row ? JSON.parse(row.details) as T : null;
+  }
+
+  saveSource(id: number, source: unknown): void {
+    this.db.query("INSERT INTO run_sources (run_id, details) VALUES (?, ?)").run(id, JSON.stringify(source));
   }
 
   /** The id of a built-in project, such as "sample". */
@@ -155,6 +197,7 @@ export class RunStore {
     if (current === null) return null;
     if (FINISHED_RUN_STATES.includes(current.state)) return current;
     const next = {
+      restartPending: patch.restartPending ?? current.restartPending,
       taskUuid: patch.taskUuid === undefined ? current.taskUuid : patch.taskUuid,
       state: patch.state ?? current.state,
       progress: patch.progress === undefined ? current.progress : patch.progress,
@@ -165,10 +208,11 @@ export class RunStore {
     };
     this.db
       .query(
-        `UPDATE runs SET task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, restarted = ?, restarted_at_line = ?, updated_at = ?
+        `UPDATE runs SET restart_pending = ?, task_uuid = ?, state = ?, progress = ?, engine_message = ?, problem = ?, restarted = ?, restarted_at_line = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
+        next.restartPending ? 1 : 0,
         next.taskUuid,
         next.state,
         next.progress,

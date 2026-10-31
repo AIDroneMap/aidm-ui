@@ -16,6 +16,7 @@ test("project switches sources without losing edits and ignores stale link reads
     const path = new URL(request.url).pathname;
     if (path === "/") return new Response('<div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } });
     if (path === "/fixture.js") return new Response(await fixture.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
+    if (path.endsWith("/runs")) return Response.json({ runs: [], nextOffset: null });
     if (path === "/api/projects/1") return Response.json({ id: 1, name: "Survey", notes: "Saved", builtin: null, photoCount: 0, runCount: 0, latestState: null, lastChange: "2024-01-01T00:00:00Z" });
     if (path.endsWith("/link")) {
       if (request.method === "PUT") { stored = (await request.json() as { url: string }).url; return Response.json({ url: stored, size: 1024, facts: null, factsRunId: null }); }

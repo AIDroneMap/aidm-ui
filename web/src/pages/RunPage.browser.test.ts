@@ -23,6 +23,7 @@ test("project archive links open the requested run, including after a reload", a
     if (path === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
     if (path === "/api/auth/session") return Response.json({ passphraseRequired: false });
     if (path === "/api/wizard") return Response.json({ completed: true });
+    if (path === "/api/projects/1/runs") return Response.json({ runs: [], nextOffset: null });
     if (path === "/api/projects/1") return Response.json({ id: 1, name: "Sample", notes: "", builtin: "sample", photoCount: 0, runCount: 2, latestState: "completed", lastChange: "2026-10-26T10:00:00Z", resultsBytes: 3072, resultArchives: [{ runId: 7, size: 1024 }, { runId: 8, size: 2048 }] });
     if (path === "/api/runs/9") return Response.json({ error: { code: "run.not_found", data: {} } }, { status: 404 });
     if (/^\/api\/runs\/[78]$/.test(path)) {

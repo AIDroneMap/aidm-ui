@@ -39,6 +39,7 @@ export interface RunReviewView {
 }
 
 export interface ProjectRunRequest {
+  sourceRunId?: number;
   presetName?: string;
   engineId: number;
   preset: PresetId;
