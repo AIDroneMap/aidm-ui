@@ -215,6 +215,11 @@ export class ProjectRuns {
           }
           if (restarted.failure.kind === "unreachable" || restarted.failure.kind === "bad_response") {
             runs.retireTask(engineId, original.taskUuid, run.id);
+            if (preparing.abort.signal.aborted) {
+              const cancelled = await client.cancelTask(original.taskUuid);
+              if (cancelled.ok || isTaskNotFound(cancelled.failure)) { this.finish(run.id, "cancelled", null); return; }
+              preparing.cancelFailure = problemFromFailure(cancelled.failure);
+            }
             this.preparing.delete(run.id);
             tracker.update(run.id, { state: "engine_unreachable", restartPending: true }); tracker.follow(run.id); return;
           }

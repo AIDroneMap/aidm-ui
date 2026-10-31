@@ -256,3 +256,26 @@ test("a restart that never reaches the engine cannot reuse the previous complete
   expect(h.tracker.log(repeated.id, 0).lines).toEqual([]);
   expect(api.tasks.size).toBe(1); expect(api.uploads).toHaveLength(1);
 });
+
+test("cancelling during a restart with a lost response still cancels the engine task", async () => {
+  await h.stop();
+  let received = false, release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  h = openHarness({ runPollMs: 10, runClientFor: endpoint => new TaskClient(endpoint, { fetch: (async (input, init) => {
+    const response = await fetch(input, init);
+    if (new URL(String(input)).pathname === "/task/restart") { received = true; await delayed; await response.body?.cancel(); throw new Error("Lost restart response"); }
+    return response;
+  }) as typeof fetch }) });
+  project = h.ctx.projects.create("Field", "").id; engine = h.engineStore.addRemote({ name: "Engine", address: api.address, token: api.token }).id;
+  try {
+    const original = await initial(); api.setTask(original.taskUuid!, { statusCode: 30 });
+    await eventually(async () => h.runs.get(original.id)?.state === "failed");
+    const run = await (await send("POST", `/api/runs/${original.id}/retry`)).json() as RunView;
+    await eventually(async () => received);
+    const cancelling = h.ctx.projectRuns.cancel(run.id); release();
+    const result = await cancelling;
+    expect(result?.ok && result.value.state).toBe("cancelled");
+    expect(api.tasks.get(original.taskUuid!)?.statusCode).toBe(50);
+    expect(api.uploads).toHaveLength(1);
+  } finally { release(); }
+});
