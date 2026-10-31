@@ -120,6 +120,7 @@ export class TaskClient {
       ok: true,
       value: {
         version: raw.version,
+        ...(raw.imagesPath === true ? { imagesPath: true as const } : {}),
         engineVersion: this.text(raw, "engineVersion"),
         cpuCores: this.count(raw, "cpuCores"),
         totalMemory: this.count(raw, "totalMemory"),
@@ -131,7 +132,7 @@ export class TaskClient {
     };
   }
 
-  async createTask(name: string, options: TaskOption[], signal?: AbortSignal): Promise<TaskApiResult<{ uuid: string }>> {
+  async createTask(name: string, options: TaskOption[], signal?: AbortSignal, imagesPath?: string): Promise<TaskApiResult<{ uuid: string }>> {
     const reported = await this.options(signal);
     if (!reported.ok) return reported;
     const invalid = validateOptions(options, reported.value);
@@ -139,6 +140,7 @@ export class TaskClient {
     const form = new FormData();
     form.append("name", name);
     form.append("options", JSON.stringify(options));
+    if (imagesPath !== undefined) form.append("imagesPath", imagesPath);
     const body = await this.requestObject("POST", "/task/new/init", { body: form, signal });
     if (!body.ok) return body;
     const uuid = body.value.uuid;

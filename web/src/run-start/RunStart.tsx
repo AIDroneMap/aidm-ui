@@ -8,7 +8,7 @@ import { reconcileSettingsFile, type SettingsFile, type SettingValue, type Dropp
 import { planPreset } from "../../../shared/run-plan.ts";
 import { SettingsEditor } from "../run-settings/SettingsEditor.tsx";
 import { PRESET_IDS, type PresetId } from "../../../shared/option-catalogue.ts";
-import type { ReviewOption, RunReviewView } from "../../../shared/run-review.ts";
+import type { ImportMode, ReviewOption, RunReviewView } from "../../../shared/run-review.ts";
 import { api, asApiFailure, ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { Button } from "../controls/Button.tsx";
@@ -32,8 +32,28 @@ export function OptionList({ options }: { options: ReviewOption[] }) {
   })}</ul>;
 }
 
+export function ImportChoice({ value, onChange, disabled = false }: { value: NonNullable<RunReviewView["importMode"]>; onChange(mode: ImportMode): void; disabled?: boolean }) {
+  const fieldset = useRef<HTMLFieldSetElement>(null);
+  const restoreFocus = useRef(false);
+  function choose(mode: ImportMode) { restoreFocus.current = true; onChange(mode); }
+  useEffect(() => {
+    if (restoreFocus.current && !disabled) {
+      if (document.activeElement === document.body || fieldset.current?.contains(document.activeElement)) fieldset.current?.querySelector<HTMLInputElement>(`input[value="${value.selected}"]`)?.focus();
+      restoreFocus.current = false;
+    }
+  }, [disabled, value.selected]);
+  if (!value.available) return <p>{t(value.selectionRequiresCopy ? "run_start.import_selection_copy" : "run_start.import_copy")}</p>;
+  return <fieldset ref={fieldset} disabled={disabled}><legend>{t("run_start.import_choice")}</legend>
+    <label><input type="radio" name="import-mode" value="in-place" checked={value.selected === "in-place"} onChange={() => choose("in-place")} /> {t("run_start.import_in_place")}</label>
+    <label><input type="radio" name="import-mode" value="copy" checked={value.selected === "copy"} onChange={() => choose("copy")} /> {t("run_start.import_copy")}</label>
+    <p>{t("run_start.import_copy_help")}</p>
+    {value.selected === "in-place" && value.restartRequired && <p>{t("run_start.import_restart")}</p>}
+  </fieldset>;
+}
+
 export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId: number; sourceRunId?: number; onAuthRequired(): void }) {
   const [open, setOpen] = useState(sourceRunId !== undefined);
+  const [importMode, setImportMode] = useState<ImportMode | undefined>();
   const seedEditing = useRef(sourceRunId !== undefined);
   const [draft, setDraft] = useState<SettingsDraft>({});
   const [applied, setApplied] = useState<Array<{ name: string; value: ReviewOption["value"] }>>([]);
@@ -67,7 +87,7 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
     if (problem.code === "auth.passphrase_required") auth.current(); else setFailure(problem);
   }
   useEffect(() => {
-    setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
+    setImportMode(undefined); setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
   }, [projectId]);
   useEffect(() => {
     if (!open) return;
@@ -88,8 +108,8 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
     const current = ++generation.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoading(true); setFailure(null); setChanged(false);
-    const pending = sourceRunId !== undefined || applied.length || presetName !== undefined
-      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied, presetName, sourceRunId })
+    const pending = importMode !== undefined || sourceRunId !== undefined || applied.length || presetName !== undefined
+      ? api<RunReviewView>("POST", `/api/projects/${projectId}/run-review`, { engineId, preset, offset, options: applied, presetName, sourceRunId, importMode })
       : api<RunReviewView>("GET", `/api/projects/${projectId}/run-review?engineId=${engineId}&preset=${preset}&offset=${offset}`);
     pending.then(value => {
       if (current !== generation.current) return;
@@ -120,12 +140,13 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
       if (value.facts && value.facts.pendingMetadata > 0) timer = setTimeout(() => setRefresh(value => value + 1), 300);
     }, error => { if (current === generation.current) { setReview(null); setLoading(false); fail(error); } });
     return () => { generation.current++; clearTimeout(timer); };
-  }, [open, projectId, engineId, preset, offset, refresh, settingsKey, presetName, sourceRunId]);
+  }, [open, projectId, engineId, preset, offset, refresh, settingsKey, presetName, sourceRunId, importMode]);
   function changePreset(value: PresetId) {
     setDraft({}); setApplied([]); setMoved([]); setEditing(false); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
     setLoading(true); setReview(null); setPreset(value); setOffset(0); setOffsets([]);
   }
   function changeEngine(value: number) {
+    setImportMode(undefined);
     if (review?.settings) switching.current = { options: review.settings.options, draft, baseline: loaded?.baseline };
     setApplied([]); setMoved([]); setLoading(true); setReview(null); setEngineId(value); setOffset(0); setOffsets([]);
   }
@@ -149,7 +170,7 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
     if (!review || loading || working || review.blocked || engineId === null) return;
     setWorking(true); setFailure(null);
     try {
-      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, presetName, sourceRunId, name, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
+      const run = await api<RunView>("POST", `/api/projects/${projectId}/runs`, { engineId, preset, presetName, sourceRunId, name, importMode: review.importMode?.selected, revision: review.revision, ...(applied.length ? { options: applied } : {}) });
       window.location.hash = `#/runs/${run.id}`;
     } catch (error) { fail(error); } finally { setWorking(false); }
   }
@@ -174,6 +195,7 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
         {engines.map(engine => <option key={engine.id} value={engine.id}>{engine.name}</option>)}
       </Select>
       {loading && <p role="status">{t("run_start.loading")}</p>}
+      {!editing && step === "review" && review?.importMode && <ImportChoice value={{ ...review.importMode, selected: importMode ?? review.importMode.selected }} disabled={working || loading} onChange={mode => { setLoading(true); setOffset(0); setOffsets([]); setImportMode(mode); }} />}
       {failure && <ErrorMessage failure={failure} />}
       {changed && <><p role="alert">{t("run_start.changed")}</p><Button onClick={() => { setOffsets([]); setOffset(0); }}>{t("run_start.reload")}</Button></>}
       {editing && review?.settings && !loading && <SettingsEditor options={review.settings.options} preset={preset} draft={draft} baselineOptions={loaded?.baseline} facts={review.settings.facts} onChange={setDraft} onApply={applySettings} onCancel={() => { setDraft(editorBefore.current); setEditing(false); }} disabled={working} />}
@@ -202,6 +224,7 @@ export function RunStart({ projectId, sourceRunId, onAuthRequired }: { projectId
         <h4>{t("run_start.photos")}</h4>
         {review.wayIn === "link" ? <p>{t("run_start.link_unknown")}</p> : review.photos.included !== null && review.photos.excluded !== null && review.photos.total !== null && review.photos.bytes !== null && <p>{t("run_start.photo_counts", { included: review.photos.included, excluded: review.photos.excluded, total: review.photos.total, size: formatBytes(review.photos.bytes) })}</p>}
         <p>{t(`run_start.way.${review.wayIn}`)}</p>
+
         {review.facts && <><ul>{review.facts.flights.map(flight => <li key={flight.id}>{t("run_start.flight", { camera: [flight.make, flight.model].filter(Boolean).join(" ") || t("photos.unknown_camera"), first: flight.first, last: flight.last, count: flight.photoCount, excluded: flight.excludedPhotoCount })}</li>)}</ul>
         {offsets.length > 0 && <Button className="secondary" onClick={() => { setLoading(true); setOffset(offsets[offsets.length - 1]!); setOffsets(offsets.slice(0, -1)); }}>{t("upload.previous")}</Button>}
         {review.facts.nextOffset !== null && <Button className="secondary" onClick={() => { setLoading(true); setOffsets([...offsets, offset]); setOffset(review.facts!.nextOffset!); }}>{t("upload.next")}</Button>}</>}

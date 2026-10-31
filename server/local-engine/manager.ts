@@ -1,4 +1,5 @@
 import { TaskClient } from "../task-api/task-client.ts";
+import { realpath, lstat } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { isAbsolute, join } from "node:path";
@@ -24,7 +25,7 @@ import type { ManifestService, OfferFacts } from "../manifest/manifest-service.t
 import { speedMeter } from "../downloads/speed.ts";
 import { StepLog } from "./step-log.ts";
 import { MacConnection } from "./mac-connection.ts";
-import { connectionFor, ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
+import { connectionFor, importedPath, ContainerPackage, type ContainerPackageDeps, type ContainerVariant, type ImageSource } from "../packages/container-package.ts";
 import { fail, ok, type EnginePackage, type PackageResult } from "../packages/engine-package.ts";
 import { NativePackage, type ChildState, type NativeOptions } from "../packages/native-package.ts";
 import { systemRunner, type CommandRunner } from "../process/command-runner.ts";
@@ -1084,6 +1085,39 @@ export class LocalEngineManager {
     return enabled ? this.start() : this.stop();
   }
 
+  acceptsRuns(): boolean { return !this.busy && !this.installing && this.restart.task === undefined; }
+
+  importPlan(path: string): { path: string; restartRequired: boolean } {
+    const installed = this.settings.get("local.package");
+    const container = installed !== null && !isNativePackage(installed);
+    return { path: container ? importedPath(path) : path, restartRequired: container && !this.settings.get("local.importFolders").includes(path) };
+  }
+
+  async prepareImport(path: string, preparingRunId?: number): Promise<PackageResult<{ path: string }>> {
+    const claimed = await this.claim();
+    if (!claimed.ok) return claimed;
+    try {
+      const installed = this.settings.get("local.package"), engine = this.store.local();
+      if (!installed || !engine || !engine.enabled || !engine.address) return fail("local.not_installed");
+      if (!isAbsolute(path) || path.includes("\0") || (!isNativePackage(installed) && path.includes(":")) || await realpath(path) !== path || !(await lstat(path)).isDirectory()) return fail("project_run.photos_changed");
+      const plan = this.importPlan(path);
+      if (!plan.restartRequired) return ok({ path: plan.path });
+      const info = await new TaskClient(engine).info();
+      if (!info.ok) return fail("local.busy");
+      if (this.deps.runs.listUnfinished().some(run => run.engineId === engine.id && run.id !== preparingRunId) || info.value.queueCount !== 0 || info.value.imagesPath !== true) return fail("local.busy");
+      const previous = this.settings.get("local.importFolders");
+      this.settings.set("local.importFolders", [...previous, path]);
+      const started = await this.startEngine();
+      if (!started.ok) {
+        this.settings.set("local.importFolders", previous);
+        await this.startEngine();
+        return started;
+      }
+      return ok({ path: plan.path });
+    } catch { return fail("project_run.photos_changed"); }
+    finally { this.busy = false; }
+  }
+
   /** Starts the installed engine, or starts it again after a stop. Also what the operator does after the manager gave up. */
   async start(): Promise<PackageResult<void>> {
     const claimed = await this.claim();
@@ -1537,6 +1571,15 @@ export class LocalEngineManager {
       return this.failStart(engine.id, { code: "server.internal_error", data: {} });
     }
 
+    const importFolders: string[] = [];
+    if (compareVersions(installed.packageVersion, "2.7.0") >= 0) {
+      for (const path of this.settings.get("local.importFolders")) {
+        try {
+          if (isAbsolute(path) && !path.includes(":") && !path.includes("\0") && await realpath(path) === path && (await lstat(path)).isDirectory()) importFolders.push(path);
+        } catch { /* A missing original is never recreated by starting the engine. */ }
+      }
+      this.settings.set("local.importFolders", importFolders);
+    }
     let started: PackageResult<{ address: string; memoryCapEnforced?: boolean }> = fail("runtime.start_failed");
     for (let attempt = 1; attempt <= PORT_TRIES; attempt++) {
       let hostPort: number;
@@ -1547,6 +1590,7 @@ export class LocalEngineManager {
       }
       started = await pkg.start({
         hostPort,
+        ...(compareVersions(installed.packageVersion, "2.7.0") >= 0 ? { importFolders } : {}),
         token: engine.token,
         memoryBytes: applied.memoryBytes,
         cpus: applied.cpus,

@@ -207,6 +207,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       nativeRunner: runner,
     });
     const sample = new SampleJob({
+    canUseLocalEngine: () => localEngine.acceptsRuns(),
       dataset: SAMPLE_DATASET,
       dataFolder,
       runs: runStore,
@@ -233,7 +234,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
 
     const links = new LinkStore(db);
   const photos = new PhotoStore(db, dataFolder, imports);
-    const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
+    const projectRuns = new ProjectRuns({ localEngine, projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runStore, tracker, settings, log });
     const routes = createRoutes({
       identity,
       presets: new PresetStore(db),

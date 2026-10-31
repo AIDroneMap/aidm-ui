@@ -33,6 +33,7 @@ export type DatasetOutcome =
   | { ok: false; status: number; error: ApiError };
 
 export interface SampleJobDeps {
+  canUseLocalEngine?: () => boolean;
   dataset: SampleDatasetEntry;
   dataFolder: string;
   runs: RunStore;
@@ -138,6 +139,7 @@ export class SampleJob {
     if (!offer.offered) {
       return { ok: false, status: 409, error: offer.reason ?? { code: "sample.engine_not_usable", data: {} } };
     }
+    if (this.deps.engineStore.get(engineId)?.kind === "local" && this.deps.canUseLocalEngine?.() === false) return { ok: false, status: 409, error: { code: "local.busy", data: {} } };
     const projectId = this.projectId();
     if (projectId === null) throw new Error("The built-in sample project is missing.");
     const latest = this.deps.runs.latestForProject(projectId);

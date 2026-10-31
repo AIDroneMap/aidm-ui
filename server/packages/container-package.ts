@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
@@ -34,6 +35,8 @@ export const CONTAINER_NAME = "aidm-local-engine";
 /** Where the task API keeps its data inside the image. */
 export const ENGINE_DATA_PATH = "/var/www/data";
 /** The port the task API listens on inside the container. */
+export const IMPORT_ROOT = "/aidm-imports";
+export function importedPath(path: string): string { return `${IMPORT_ROOT}/${createHash("sha256").update(path).digest("hex")}`; }
 export const ENGINE_PORT = 3000;
 /** Where the folder with the task API's config file is mounted inside the container. */
 export const ENGINE_CONFIG_FOLDER_IN_CONTAINER = "/etc/aidm-ui";
@@ -320,7 +323,7 @@ export class ContainerPackage implements EnginePackage {
         // container that did not stop cleanly is ours: the leftover is gone.
         rmSync(connection.path, { force: true });
       }
-      writeEngineConfig(configFolder, options.token, connection.via === "socket" ? ENGINE_SOCKET_IN_CONTAINER : null);
+      writeEngineConfig(configFolder, options.token, connection.via === "socket" ? ENGINE_SOCKET_IN_CONTAINER : null, options.importFolders !== undefined);
     } catch {
       return fail("local.engine_config_write_failed", {});
     }
@@ -332,6 +335,7 @@ export class ContainerPackage implements EnginePackage {
       publish: connection.via === "socket" ? null : { hostAddress: "127.0.0.1", hostPort: options.hostPort, containerPort: ENGINE_PORT },
       ...(connection.via === "socket" ? { publishSocket: { hostPath: connection.path, containerPath: ENGINE_SOCKET_IN_CONTAINER } } : {}),
       mounts: [
+        ...(options.importFolders ?? []).map(hostPath => ({ hostPath, containerPath: importedPath(hostPath), readOnly: true, preserveSource: true })),
         { hostPath: options.engineDataFolder, containerPath: ENGINE_DATA_PATH, readOnly: false },
         { hostPath: configFolder, containerPath: ENGINE_CONFIG_FOLDER_IN_CONTAINER, readOnly: true },
       ],
@@ -410,7 +414,7 @@ function sameDisk(a: string, b: string): boolean {
  * and renamed, so the engine never reads half a file. Both the folder and the
  * file are private to this user, because the file holds the token.
  */
-function writeEngineConfig(folder: string, token: string, socket: string | null): void {
+function writeEngineConfig(folder: string, token: string, socket: string | null, imports: boolean): void {
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   // A folder that already exists keeps its old mode otherwise.
   chmodSync(folder, 0o700);
@@ -418,7 +422,7 @@ function writeEngineConfig(folder: string, token: string, socket: string | null)
   const temporary = `${file}.new`;
   rmSync(temporary, { force: true });
   // The port stays open inside the container even with the socket: the connection checks knock on it from inside.
-  const config = { token, port: ENGINE_PORT, parallelQueueProcessing: 1, ...(socket === null ? {} : { socket }) };
+  const config = { token, port: ENGINE_PORT, parallelQueueProcessing: 1, ...(imports ? { imagesRoot: IMPORT_ROOT } : {}), ...(socket === null ? {} : { socket }) };
   writeFileSync(temporary, `${JSON.stringify(config)}\n`, { mode: 0o600 });
   renameSync(temporary, file);
 }

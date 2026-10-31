@@ -235,8 +235,12 @@ export class FakeRuntime implements ContainerRuntime {
     const version = this.versionOf?.(spec.image);
     const api = new FakeTaskApi({
       token: config === undefined ? "fake-token" : (config ?? ""),
-      info: version === undefined ? undefined : { version },
+      info: { ...(version === undefined ? {} : { version }), ...(readConfig(spec)?.imagesRoot ? { imagesPath: true } : {}) },
     });
+    api.inputPath = path => {
+      const mount = spec.mounts.find(mount => path === mount.containerPath);
+      return mount?.hostPath ?? path;
+    };
     // A silent engine runs but listens on nothing, so every call to it is refused.
     if (config !== null && !this.silent(spec.image)) {
       try {

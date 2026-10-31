@@ -13,7 +13,10 @@ export interface ReviewOption {
   unexplained: boolean;
 }
 
+export type ImportMode = "copy" | "in-place";
+
 export interface RunReviewView {
+  importMode?: { selected: ImportMode; available: boolean; restartRequired: boolean; selectionRequiresCopy: boolean };
   presetName?: string;
   project: { id: number; name: string };
   engine: {
@@ -39,6 +42,7 @@ export interface RunReviewView {
 }
 
 export interface ProjectRunRequest {
+  importMode?: ImportMode;
   sourceRunId?: number;
   presetName?: string;
   engineId: number;

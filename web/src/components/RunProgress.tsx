@@ -74,7 +74,7 @@ export function RunProgress({
     <>
       {run.engineName !== null && <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName })}</p>}
       <p role="status" className="run-state">
-        {t(run.step === "results" ? "run.results_fetching" : known ? `run.state.${run.state}` : "run.state.unknown")}
+        {t(run.step === "link" ? "run.linking" : run.step === "results" ? "run.results_fetching" : known ? `run.state.${run.state}` : "run.state.unknown")}
       </p>
       {run.state === "queued" && run.queueCount != null && <p>{t("run_manage.waiting", { count: run.queueCount })}</p>}
       {run.sample && <h2>{t("run.sample_name")}</h2>}

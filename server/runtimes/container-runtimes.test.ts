@@ -830,3 +830,17 @@ test("Docker whose daemon cannot apply a CPU quota starts the container without 
   expect(expected).toContain("--memory");
   expect(expected).not.toContain("--cpus");
 });
+
+
+test("import mounts never relabel the original source on Podman", () => {
+  const argv = podmanRunArgv(spec({ mounts: [{ hostPath: "/photos", containerPath: "/imports", readOnly: true, preserveSource: true }] }), detection("podman"));
+  expect(argv).toContain("/photos:/imports:ro");
+  expect(argv.some(value => value.includes(":ro,Z"))).toBe(false);
+});
+
+test("Docker uses an existing read-only bind source, including a comma in its path", () => {
+  const argv = dockerRunArgv(spec({ mounts: [{ hostPath: '/photos/field, "one"', containerPath: "/imports", readOnly: true, preserveSource: true }] }), detection("docker"));
+  expect(argv).toContain("--mount");
+  expect(argv[argv.indexOf("--mount") + 1]).toBe('type=bind,"source=/photos/field, ""one""",target=/imports,readonly');
+  expect(argv).not.toContain("-v");
+});

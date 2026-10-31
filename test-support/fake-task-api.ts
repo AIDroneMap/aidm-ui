@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import recordedOptions from "./fixtures/task-api-2.6.1-options.json";
 import type { EngineOption } from "../shared/engine-options.ts";
 
@@ -35,6 +36,7 @@ function recordedInfo(): FakeInfo {
 }
 
 export interface FakeTask {
+  imagesPath?: string;
   zipurl?: string;
   uuid: string;
   name: string;
@@ -79,6 +81,7 @@ export class FakeTaskApi {
   /** Milliseconds a cancel call waits before the engine acts on it, to make a cancel slow. */
   cancelDelayMs = 0;
   resultsWait?: Promise<void>;
+  inputPath: (path: string) => string = path => path;
   private nextUuid = 1;
 
   private server: Bun.Server<undefined> | undefined;
@@ -255,6 +258,14 @@ export class FakeTaskApi {
         return Response.json({ error: `JSON Parse error: ${error instanceof Error ? error.message : "bad options"}` });
       }
     }
+    const imagesPath = form.get("imagesPath");
+    let images: string[] = [];
+    if (typeof imagesPath === "string") {
+      if (this.info.imagesPath !== true) return Response.json({ error: "imagesPath is not enabled" });
+      try { images = (await readdir(this.inputPath(imagesPath))).filter(name => /\.(jpe?g|png|tiff?|bmp|raw|dng|nef|jxl|mp4|mov|lrv|ts)$/i.test(name)); }
+      catch { return Response.json({ error: "Cannot read imagesPath" }); }
+      if (!images.length) return Response.json({ error: "imagesPath holds no supported image or video file" });
+    }
     const uuid = `00000000-0000-4000-8000-${String(this.nextUuid++).padStart(12, "0")}`;
     const name = form.get("name");
     // The real API shows RUNNING while it reads the images, with processing time -1.
@@ -262,7 +273,8 @@ export class FakeTaskApi {
       uuid,
       name: typeof name === "string" ? name : "",
       options,
-      images: [],
+      ...(typeof form.get("imagesPath") === "string" ? { imagesPath: form.get("imagesPath") as string } : {}),
+      images,
       committed: typeof form.get("zipurl") === "string",
       ...(typeof form.get("zipurl") === "string" ? { zipurl: form.get("zipurl") as string } : {}),
       statusCode: 20,

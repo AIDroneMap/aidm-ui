@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { lstat, open, opendir, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BigIntStats } from "node:fs";
 import type { Database } from "bun:sqlite";
@@ -18,6 +18,7 @@ export class ImportUnavailable extends Error {
   constructor(public readonly state: State) { super(`Import ${state}`); }
 }
 function signature(s: BigIntStats): string { return [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s.ctimeNs].join(":"); }
+function contentIdentity(value: string): string { return value.slice(0, value.lastIndexOf(":")); }
 function within(parent: string, child: string): boolean { const r = relative(parent, child); return r === "" || (!r.startsWith(`..${sep}`) && r !== ".." && !isAbsolute(r)); }
 function unavailable(error: unknown): ImportUnavailable {
   return error instanceof ImportUnavailable ? error : new ImportUnavailable((error as NodeJS.ErrnoException)?.code === "ENOENT" ? "missing" : "changed");
@@ -61,7 +62,7 @@ export class ImportStore {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const before = await file.stat({ bigint: true });
-      if (!before.isFile() || signature(before) !== entry.signature) throw new ImportUnavailable("changed");
+      if (!before.isFile() || contentIdentity(signature(before)) !== contentIdentity(entry.signature)) throw new ImportUnavailable("changed");
       const hash = createHash("sha256");
       const buffer = Buffer.allocUnsafe(256 * 1024);
       let position = 0;
@@ -71,11 +72,12 @@ export class ImportStore {
         hash.update(buffer.subarray(0, bytesRead)); position += bytesRead;
       }
       if ((await file.read(buffer, 0, 1, position)).bytesRead !== 0) throw new ImportUnavailable("changed");
-      if (signature(await file.stat({ bigint: true })) !== entry.signature || position !== entry.size) throw new ImportUnavailable("changed");
+      if (signature(await file.stat({ bigint: true })) !== signature(before) || position !== entry.size) throw new ImportUnavailable("changed");
       if (entry.sha256 !== null && hash.digest("hex") !== entry.sha256) throw new ImportUnavailable("changed");
       if (entry.sha256 === null) entry.sha256 = hash.digest("hex");
       const after = await lstat(await this.safePath(root, entry.name), { bigint: true });
-      if (signature(after) !== entry.signature) throw new ImportUnavailable("changed");
+      if (signature(after) !== signature(before)) throw new ImportUnavailable("changed");
+      entry.signature = signature(after);
     } finally { await file.close(); }
   }
   async select(id: number, input: string): Promise<"ok" | "invalid_path" | "unreadable" | "busy" | "uploads_present"> {
@@ -143,7 +145,14 @@ export class ImportStore {
         if (!row) break;
         const path = await this.safePath(root, row.name);
         const info = await lstat(path, { bigint: true });
-        if (signature(info) !== row.signature || (row.kind === "directory" ? !info.isDirectory() : !info.isFile())) throw new ImportUnavailable("changed");
+        if (row.kind === "directory" ? !info.isDirectory() : !info.isFile()) throw new ImportUnavailable("changed");
+        if (signature(info) !== row.signature) {
+          // Linking changes ctime. Verify the bytes before accepting that metadata change.
+          if (row.kind === "directory" || contentIdentity(signature(info)) !== contentIdentity(row.signature)) throw new ImportUnavailable("changed");
+          const previous = row.signature;
+          await this.digest(root, row);
+          this.db.query("UPDATE project_import_entries SET signature=? WHERE project_id=? AND generation=? AND name=? AND signature=?").run(row.signature, id, generation, row.name, previous);
+        }
         next = `${row.name}\0`;
       }
     } catch (error) { throw unavailable(error); }
@@ -216,6 +225,29 @@ export class ImportStore {
     })].sort((a, b) => a.name.localeCompare(b.name));
     if (this.header(id)?.generation !== h.generation) throw new ImportUnavailable("changed");
     return { path: h.path, entries };
+  }
+
+  async inPlacePath(saved: SavedImport): Promise<string | null> {
+    try {
+      if (!saved.entries.length || saved.entries.some(entry => entry.name.includes("/") || entry.name.includes("\\"))) return null;
+      if (await realpath(saved.path) !== saved.path) throw new ImportUnavailable("changed");
+      const selected = new Set(saved.entries.map(entry => entry.name));
+      const names = (await readdir(saved.path)).filter(name => /\.(jpe?g|png|tiff?|bmp|raw|dng|nef|jxl|mp4|mov|lrv|ts)$/i.test(name));
+      if (names.length !== selected.size || names.some(name => !selected.has(name))) return null;
+      for (const name of names) {
+        const info = await lstat(join(saved.path, name));
+        if (!info.isFile() || info.isSymbolicLink()) return null;
+      }
+      return saved.path;
+    } catch (error) { throw unavailable(error); }
+  }
+
+  async verifyInPlace(saved: SavedImport, signal?: AbortSignal): Promise<void> {
+    try {
+      if (await this.inPlacePath(saved) === null) throw new ImportUnavailable("changed");
+      for (const entry of saved.entries) { signal?.throwIfAborted(); await this.digest(saved.path, entry); }
+      if (await this.inPlacePath(saved) === null) throw new ImportUnavailable("changed");
+    } catch (error) { signal?.throwIfAborted(); throw unavailable(error); }
   }
 
   async replay(saved: SavedImport, client: TaskClient, uuid: string, signal?: AbortSignal): Promise<TaskApiResult<void>> {

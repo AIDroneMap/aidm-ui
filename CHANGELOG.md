@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Let a same-machine engine read a checked imported folder in place, with copy mode for selections the API cannot represent. Container folders are shared read-only after an idle restart. Evidence: `docs/testing/in-place-imports.md`, route and keyboard tests, and the native task API acceptance. Closes #74.
+
 - List project runs, retry or change settings, recover missing engine tasks from recorded inputs, and delete individual runs. Queue text uses the engine's total of running and waiting runs. Repeating an older attempt preserves unsaved results from every completed attempt sharing the task. Evidence: `docs/testing/run-management.md`, upload-counting route tests, the production-route keyboard journey and the hosted native task API flow. Closes #71.
 
 - Save, rename and delete operator presets, and export or import a settings file with explicit dropped-option review. Evidence: `docs/testing/settings-files.md`, preset persistence tests and the real-route Chromium round trip.
