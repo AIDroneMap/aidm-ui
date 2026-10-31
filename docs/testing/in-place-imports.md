@@ -27,4 +27,6 @@ Creating or removing a hard link changes a file's ctime even when its bytes, per
 - `web/src/run-start/ImportMode.browser.test.ts` checks the keyboard choices, restart notice, engine changes, submitted copy mode and tablet width.
 - The existing native task API acceptance adds an in-place project run when that API reports the capability. It checks completion, zero uploads, the engine's image count and original file names, modes, sizes, modification times and hashes after run deletion. An older API still exercises the existing copy flow.
 
+The prepared API 2.7.0 package retains exactly the API 2.6.1 test-mode option fixture, Git blob `7b897173fddd91a5165424fcce7c2f00cfb6c69b`. The catalogue guard names only these two API versions and still rejects any further missing or unexplained option. This fixture exception does not describe the real engine option list.
+
 Test depth is full because engine startup, mounts and task preparation change. The pull request links CI and the exact-head runtime record separately. Disposable diagnostics make no performance or production-readiness claim.
