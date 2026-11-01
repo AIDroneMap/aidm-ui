@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop accepting the development test key, so that a release build goes ahead. Engine manifests now verify only against the publisher's API release key. Evidence: the key and release-check tests in `server/manifest/release-check.test.ts`.
+
 - Add a download-first installation and test guide, with setup steps, project checks and the limits of the current test executables. Evidence: `docs/guides/install-and-test.md` and the documented build, workflow and interface labels.
 
 - Offer the published API 2.7.0 and engine 0.2.0 package on first setup without a release refresh. Earlier installations receive an update offer without being silently replaced. Evidence: the fresh Linux and Apple silicon route regressions in `server/manifest/builtin-offer.test.ts`, signature checks and the full-test record linked from the pull request. Closes #118.
