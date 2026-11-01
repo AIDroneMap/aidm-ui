@@ -74,11 +74,18 @@ test("map uses archived raster bounds, detects TMS tiles and omits absent elevat
   expect(await (await fetch(`${h.base}/api/runs/${run.id}/map`)).json()).toEqual({ state: "unavailable", layers: [] });
 });
 
-test("current XYZ tiles and each elevation layer use their own result raster", async () => {
+test.each([false, true])("current XYZ layers use primary georeferencing with overviews %s", async overviews => {
+  const image = Buffer.from(raster());
+  if (overviews) {
+    image.writeUInt32LE(400, 10 + image.readUInt16LE(8) * 12);
+    image.writeUInt16LE(1, 400);
+    image.writeUInt16LE(256, 402); image.writeUInt16LE(4, 404);
+    image.writeUInt32LE(1, 406); image.writeUInt32LE(2, 410);
+  }
   const run = await readyArchive([
-    { name: "odm_orthophoto/odm_orthophoto.tif", data: raster() },
-    { name: "odm_dem/dsm.tif", data: raster() },
-    { name: "odm_dem/dtm.tif", data: raster() },
+    { name: "odm_orthophoto/odm_orthophoto.tif", data: image },
+    { name: "odm_dem/dsm.tif", data: image },
+    { name: "odm_dem/dtm.tif", data: image },
     { name: "orthophoto_tiles/16/16020/23092.png", data: png },
     { name: "dsm_tiles/16/16020/23092.png", data: png },
     { name: "dtm_tiles/16/16020/23092.png", data: png },

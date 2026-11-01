@@ -22,6 +22,22 @@ function fixture(): Buffer {
   return data;
 }
 
+function bigFixture(): Buffer {
+  const data = Buffer.alloc(320);
+  data.write("MM"); data.writeUInt16BE(43, 2); data.writeUInt16BE(8, 4); data.writeBigUInt64BE(16n, 8);
+  data.writeBigUInt64BE(5n, 16);
+  const tags = [[256, 4, 1, 2], [257, 4, 1, 3], [33550, 12, 3, 144], [33922, 12, 6, 168], [34735, 3, 12, 216]];
+  for (const [index, tag] of tags.entries()) {
+    const pos = 24 + index * 20;
+    data.writeUInt16BE(tag[0]!, pos); data.writeUInt16BE(tag[1]!, pos + 2); data.writeBigUInt64BE(BigInt(tag[2]!), pos + 4);
+    if (index < 2) data.writeUInt32BE(tag[3]!, pos + 12); else data.writeBigUInt64BE(BigInt(tag[3]!), pos + 12);
+  }
+  [1, 1, 0].forEach((value, index) => data.writeDoubleBE(value, 144 + index * 8));
+  [0, 0, 0, 10, 20, 0].forEach((value, index) => data.writeDoubleBE(value, 168 + index * 8));
+  [1, 1, 0, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326].forEach((value, index) => data.writeUInt16BE(value, 216 + index * 2));
+  return data;
+}
+
 async function read(data: Buffer, method: 0 | 8 = 0) {
   const folder = await mkdtemp(join(tmpdir(), "georef-"));
   const path = join(folder, "archive");
@@ -55,18 +71,7 @@ test("converts the primary orthophoto's UTM metadata", async () => {
 });
 
 test("reads big-endian BigTIFF metadata", async () => {
-  const data = Buffer.alloc(320);
-  data.write("MM"); data.writeUInt16BE(43, 2); data.writeUInt16BE(8, 4); data.writeBigUInt64BE(16n, 8);
-  data.writeBigUInt64BE(5n, 16);
-  const tags = [[256, 4, 1, 2], [257, 4, 1, 3], [33550, 12, 3, 144], [33922, 12, 6, 168], [34735, 3, 12, 216]];
-  for (const [index, tag] of tags.entries()) {
-    const pos = 24 + index * 20;
-    data.writeUInt16BE(tag[0]!, pos); data.writeUInt16BE(tag[1]!, pos + 2); data.writeBigUInt64BE(BigInt(tag[2]!), pos + 4);
-    if (index < 2) data.writeUInt32BE(tag[3]!, pos + 12); else data.writeBigUInt64BE(BigInt(tag[3]!), pos + 12);
-  }
-  [1, 1, 0].forEach((value, index) => data.writeDoubleBE(value, 144 + index * 8));
-  [0, 0, 0, 10, 20, 0].forEach((value, index) => data.writeDoubleBE(value, 168 + index * 8));
-  [1, 1, 0, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326].forEach((value, index) => data.writeUInt16BE(value, 216 + index * 2));
+  const data = bigFixture();
   for (const method of [0, 8] as const) expect(await read(data, method)).toEqual({ bounds: [10, 17, 12, 20], epsg: 4326 });
 });
 
@@ -93,5 +98,37 @@ test("rejects truncated and out-of-range metadata", async () => {
   const count = fixture(); count.writeUInt16LE(257, 8);
   for (const data of [fixture().subarray(0, 100), offset, count]) {
     for (const method of [0, 8] as const) expect(await read(data, method)).toBeNull();
+  }
+});
+
+// The first image holds the orthophoto georeferencing. Later directories hold overviews.
+function withOverview(primary: Buffer): Buffer {
+  const little = primary.toString("ascii", 0, 2) === "II";
+  const big = (little ? primary.readUInt16LE(2) : primary.readUInt16BE(2)) === 43;
+  const data = Buffer.concat([primary, Buffer.alloc(80)]);
+  const u16 = (value: number, offset: number) => little ? data.writeUInt16LE(value, offset) : data.writeUInt16BE(value, offset);
+  const u32 = (value: number, offset: number) => little ? data.writeUInt32LE(value, offset) : data.writeUInt32BE(value, offset);
+  const u64 = (value: number, offset: number) => little ? data.writeBigUInt64LE(BigInt(value), offset) : data.writeBigUInt64BE(BigInt(value), offset);
+  const ifd = big ? 16 : 8, countSize = big ? 8 : 2, itemSize = big ? 20 : 12;
+  const next = ifd + countSize + 5 * itemSize;
+  if (big) u64(primary.length, next); else u32(primary.length, next);
+  if (big) u64(2, primary.length); else u16(2, primary.length);
+  for (const [i, tag] of [256, 257].entries()) {
+    const at = primary.length + countSize + i * itemSize;
+    u16(tag, at); u16(4, at + 2);
+    if (big) u64(1, at + 4); else u32(1, at + 4);
+    u32(1, at + (big ? 12 : 8));
+  }
+  return data;
+}
+
+test.each([0, 8] as const)("reads the primary raster with overview directories in ZIP method %s", async method => {
+  for (const primary of [fixture(), bigFixture()]) expect(await read(withOverview(primary), method)).toEqual({ bounds: [10, 17, 12, 20], epsg: 4326 });
+});
+
+test("rejects overview pointers into the header, primary directory or beyond the raster", async () => {
+  for (const offset of [1, 8, 10, 0xfffffff0]) {
+    const data = fixture(); data.writeUInt32LE(offset, 70);
+    expect(await read(data)).toBeNull();
   }
 });
