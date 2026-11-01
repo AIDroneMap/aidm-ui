@@ -6,7 +6,7 @@ The API reads every accepted top-level file. It cannot apply exclusions or flatt
 
 ## Local packages
 
-Container packages use a separate read-only mount for each imported folder. The task API sees stable paths below `/aidm-imports`; paths and the shared-folder list stay in the server. The review tells the operator that adding a folder requires an idle restart. The manager checks unfinished runs and the engine's reported queue before restarting. A preparation blocks new project and sample starts until it releases the engine. Existing mounts remain available for task restarts. A missing or replaced original is never recreated or mounted during a later engine start.
+Container packages use a separate read-only mount for each imported folder. The task API sees stable paths below `/aidm-imports`; paths and the shared-folder list stay in the server. The review tells the operator that adding a folder requires an idle restart. The manager checks unfinished runs and the engine's reported queue before restarting. It keeps the preparation reserved until the restarted API reports the expected version. A readiness timeout restores the earlier shared-folder list and refuses the run. A preparation blocks new project and sample starts until it releases the engine. Existing mounts remain available for task restarts. A missing or replaced original is never recreated or mounted during a later engine start.
 
 Imported mounts do not use Podman's SELinux relabel option, because relabeling changes the originals. Docker uses an existing bind source rather than a volume source that creates a missing directory. A runtime that cannot read the source fails visibly; it does not change the source permissions. The operator can choose the copy instead.
 

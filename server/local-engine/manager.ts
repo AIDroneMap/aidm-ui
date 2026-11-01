@@ -1108,10 +1108,11 @@ export class LocalEngineManager {
       const previous = this.settings.get("local.importFolders");
       this.settings.set("local.importFolders", [...previous, path]);
       const started = await this.startEngine();
-      if (!started.ok) {
+      const pkg = started.ok ? this.packageFor(installed) : null;
+      if (!started.ok || pkg === null || !(await this.waitForVersion(engine.id, installed, pkg))) {
         this.settings.set("local.importFolders", previous);
-        await this.startEngine();
-        return started;
+        if (!this.closed) await this.startEngine();
+        return started.ok ? fail("engine.unreachable") : started;
       }
       return ok({ path: plan.path });
     } catch { return fail("project_run.photos_changed"); }

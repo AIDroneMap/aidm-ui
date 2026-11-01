@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Let a same-machine engine read a checked imported folder in place, with copy mode for selections the API cannot represent. Container folders are shared read-only after an idle restart. Evidence: `docs/testing/in-place-imports.md`, route and keyboard tests, and the native task API acceptance. Closes #74.
+- Let a same-machine engine read a checked imported folder in place, with copy mode for selections the API cannot represent. Container folders are shared read-only after an idle restart, and run preparation waits for the restarted API. Evidence: `docs/testing/in-place-imports.md`, route and keyboard tests, and the native task API acceptance. Closes #74.
 - Keep the result map inside its panel when coordinates update. Evidence: the Chromium canvas-containment regression in `web/src/map/MapView.browser.test.ts`. Closes #113.
 - Open maps from cloud-optimized orthophotos that contain overview image directories. Evidence: generated TIFF and BigTIFF metadata tests, map-route regressions, and the retained real-result diagnostic in #111.
 

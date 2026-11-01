@@ -162,6 +162,51 @@ test("a local import start uses the restarted container address and its read-onl
   expect([...runtime.engine(CONTAINER_NAME)!.tasks.values()][0]?.imagesPath).toBe(importedPath(folder));
 });
 
+test.each([false, true])("a local folder restart waits for the API and restores its folders on timeout %s", async timeout => {
+  class DelayedRuntime extends FakeRuntime {
+    pending: Promise<void> = Promise.resolve();
+    override async start(spec: Parameters<FakeRuntime["start"]>[0]) {
+      const result = await super.start(spec);
+      if (result.ok && this.starts.length === 2) {
+        const api = this.engine(spec.name)!;
+        await api.stop();
+        if (!timeout) this.pending = Bun.sleep(150).then(() => api.start(spec.publish!.hostPort));
+      }
+      return result;
+    }
+  }
+  const runtime = new DelayedRuntime({ versionOf: () => "2.7.0" });
+  const h = openHarness({ runtimes: { podman: runtime }, updateReadyTimeoutMs: timeout ? 30 : 1000 });
+  cleanup.push(async () => { await runtime.pending; await h.stop(); });
+  const digest = `sha256:${"b".repeat(64)}`, image = "ghcr.io/aidronemap/aidm-api";
+  runtime.holdImage(`${image}@${digest}`);
+  const engine = h.engineStore.addLocal({ name: "This computer", token: "import-test-token", packageKind: "container", installedVersion: "2.7.0" }).id;
+  h.settings.set("local.package", { packageVersion: "2.7.0", variant: "linux-amd64-cpu", runtime: "podman", container: { kind: "container", image, digest, size: 100, gpu: false } });
+  expect((await h.localEngine.start()).ok).toBe(true);
+  const folder = await mkdtemp(join(tmpdir(), "aidm-delayed-import-"));
+  cleanup.push(() => rm(folder, { recursive: true, force: true }));
+  await writeFile(join(folder, "one.jpg"), "one synthetic photo");
+  const project = h.ctx.projects.create("Field", "").id;
+  await fetch(`${h.base}/api/projects/${project}/import`, { method: "PUT", body: JSON.stringify({ path: folder }) });
+  const review = await (await fetch(`${h.base}/api/projects/${project}/run-review?engineId=${engine}&preset=quick-map`)).json();
+  const response = await fetch(`${h.base}/api/projects/${project}/runs`, { method: "POST", body: JSON.stringify({ engineId: engine, preset: "quick-map", name: "Field", revision: review.revision }) });
+  if (timeout) {
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("engine.unreachable");
+    expect(h.settings.get("local.importFolders")).toEqual([]);
+    expect(runtime.starts).toHaveLength(3);
+    expect(h.localEngine.acceptsRuns()).toBe(true);
+    return;
+  }
+  expect(response.status).toBe(202);
+  const run = await response.json();
+  await runtime.pending;
+  await eventually(async () => h.runs.get(run.id)?.state === "queued" || h.runs.get(run.id)?.state === "failed");
+  expect(h.runs.get(run.id)?.state).toBe("queued");
+  expect(runtime.engine(CONTAINER_NAME)!.uploads).toHaveLength(0);
+  expect([...runtime.engine(CONTAINER_NAME)!.tasks.values()][0]?.imagesPath).toBe(importedPath(folder));
+});
+
 test("retry refuses changed originals before restarting an in-place task", async () => {
   const api = new FakeTaskApi({ info: { imagesPath: true } }); await api.start(); cleanup.push(() => api.stop());
   const h = openHarness(); cleanup.push(() => h.stop());
