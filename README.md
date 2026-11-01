@@ -6,6 +6,14 @@ AIDM UI lets a single operator create projects, bring in photos, review settings
 
 > **Status: pre-alpha, not for use.** Projects, photo intake, reviewed settings, run history, downloads and offline viewers are implemented under specification #58. [Milestone 2](docs/milestones/0002-own-flight.md) records the completed checks and known limits. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
 
+## Install and test
+
+A pilot should download the app, open it and follow the setup screens. Running a downloaded executable needs no Git, Bun or other developer tools.
+
+**There is no tagged UI release or pilot installer yet.** For controlled pre-alpha testing, download a standalone executable from a successful [CI run on main](https://github.com/AIDroneMap/aidm-ui/actions/workflows/ci.yml?query=branch%3Amain). Sign in to GitHub, open the run's **Artifacts**, choose your platform and extract the ZIP. The artifacts expire after seven days. The Mac download is still a command-line executable, not a signed app; Windows can attach to an engine elsewhere but has no local engine yet.
+
+The [install-and-test guide](docs/guides/install-and-test.md) lists the exact downloads, setup screens and expected results. It walks through the sample, browser uploads, folder imports, ZIP links, settings, viewers, retained runs and deletion. It also explains the current download gaps. [Contributor build and source-test commands](docs/guides/install-and-test.md#for-contributors-only) are separate from the operator steps.
+
 ## What it does
 
 - **Projects and photos.** Group photos into projects. Bring them in from the browser, from a folder on the same computer, or as a link the engine fetches itself. Before processing, see what the photos say about themselves: cameras, flights, photos without GPS, duplicates.
@@ -13,8 +21,8 @@ AIDM UI lets a single operator create projects, bring in photos, review settings
 - **Runs.** Follow every run stage by stage, with its log. Cancel it, retry it, or run it again with other settings without sending the photos again.
 - **Viewers.** Orthophotos and elevation models on a 2D map; the textured model in 3D. Point clouds in 3D come later.
 - **Exports.** The whole results archive, or one output at a time: GeoTIFF, LAZ, OBJ, GLB, the report.
-- **An engine on your own computer.** A first-run wizard checks the machine, installs the engine, and proves it with a sample job. No Docker, no terminal.
-- **Local or cloud, per job.** Run small jobs on your own computer and send large ones to engines on your network or in the cloud, from the same interface.
+- **An engine on your own computer.** A first-run wizard checks the machine, installs the engine, and offers a sample job. It guides the runtime setup without asking the operator to write container commands.
+- **Choose an engine per run.** Select the local engine or one you have added by its task API address and token.
 
 What it will not do: user accounts, teams or billing. AIDM UI is for one operator. On a shared server, put it behind your own login and reverse proxy.
 
@@ -56,7 +64,7 @@ At the end of every run, the log has one line that sums it up: its state, the en
 
 ### On a Mac
 
-AIDM UI runs the engine in Apple's container tool, which gives it a small network inside the Mac. When the engine runs but does not answer, the engines page says why. The causes found so far:
+With API 2.7.0's socket capability, AIDM UI reaches the engine through Apple's socket relay instead of publishing a network port. Older packages, or a socket path that exceeds the operating system's limit, use the port fallback. When that fallback cannot reach a running engine, the engines page explains the connection problem. The network causes found so far:
 
 - **The Local Network permission.** macOS asks whether "container" may find devices on your local network, when the engine first starts. If the answer was no, turn it on in System Settings, Privacy & Security, Local Network: switch on "container". No restart is needed.
 - **A VPN client that changes the route.** A VPN client that sends all traffic through an exit node can send the engine's traffic into its tunnel, or to your router, instead of to the engine. It may do it again each time it reconnects. Turn the exit node off while you use the engine on this Mac, or use an engine on another computer. Do not change the routes by hand: the client puts its own back at its next reconnect.
