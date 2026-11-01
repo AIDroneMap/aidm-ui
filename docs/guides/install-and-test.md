@@ -2,9 +2,26 @@
 
 A pilot's normal installation should be a download, an app to open, and the setup screens. Running a downloaded AIDM UI executable does not require Git, Bun, Node.js or a compiler.
 
-**Current status: pre-alpha, not for use.** There is no tagged UI release or pilot installer yet. The available downloads are temporary standalone test executables from GitHub Actions. Mac app packaging and signing are still pending. Do not mistake these test builds for a supported pilot release.
+**Current status: pre-alpha, not for use.**
 
-## Get the current test download
+## Get a release
+
+Open the [releases page](https://github.com/AIDroneMap/aidm-ui/releases) and follow the install steps of the newest release.
+
+| Computer | File | How to open it |
+| --- | --- | --- |
+| Apple silicon Mac | `aidm-ui-<version>-mac-apple-silicon.dmg` | Open the disk image, drag AIDM UI onto Applications, and open it from there |
+| Linux x86-64 | `aidm-ui-<version>-linux-x64` | Allow the file to run as a program in the file manager, then run it |
+| Linux arm64 | `aidm-ui-<version>-linux-arm64` | Allow the file to run as a program in the file manager, then run it |
+| Windows x64 | `aidm-ui-<version>-windows-x64.exe` | Open it; use an engine on another computer |
+
+The release notes say whether the Mac app is signed by its developer. When it is not, macOS refuses to open it the first time. Choose **Done**, then open System Settings, **Privacy & Security**, and choose **Open Anyway** next to the line about AIDM UI. macOS asks for this once.
+
+Opening the Mac app starts AIDM UI in the background and opens its interface in the browser. Opening the app again while AIDM UI runs opens the interface again. AIDM UI keeps running until you log out or restart the Mac.
+
+`SHA256SUMS` on the release page holds the checksum of every file.
+
+## Get a test download between releases
 
 1. Open [AIDM UI's CI runs on main](https://github.com/AIDroneMap/aidm-ui/actions/workflows/ci.yml?query=branch%3Amain) in your browser. Sign in to GitHub to download an artifact.
 2. Choose a successful run on `main`. Confirm that **Build the four executables** passed, then scroll to **Artifacts**.
@@ -15,10 +32,10 @@ A pilot's normal installation should be a download, an app to open, and the setu
 | --- | --- | --- | --- |
 | Linux x86-64 | `aidm-ui-linux-x64` | `aidm-ui-linux-x64` | Allow the file to run as a program in the file manager, then run it |
 | Linux arm64 | `aidm-ui-linux-arm64` | `aidm-ui-linux-arm64` | Allow the file to run as a program in the file manager, then run it |
-| Apple silicon Mac | `aidm-ui-macos-arm64` | `aidm-ui-macos-arm64` | A command-line test executable; a signed, double-clickable Mac app is not available yet |
+| Apple silicon Mac | `aidm-ui-macos-arm64` | `aidm-ui-macos-arm64` | A command-line test executable; the Mac app is on the releases page |
 | Windows x64 | `aidm-ui-windows-x64` | `aidm-ui-windows-x64.exe` | Open the extracted executable; use an engine on another computer |
 
-Linux file managers differ in how they launch executables. If yours cannot open this file, a desktop launcher is still missing for that setup. The Mac artifact is not a `.app` or `.dmg`, and the Windows artifact is not an installer. These are gaps in the pilot download, not reasons for a pilot to install developer tools.
+Linux file managers differ in how they launch executables. If yours cannot open this file, a desktop launcher is still missing for that setup. The Mac artifact is not a `.app` or `.dmg`, and the Windows artifact is not an installer. A pilot uses a release instead; these test downloads are for testers.
 
 Every build accepts only the publisher's API release key. A build refuses to go ahead while a test key is accepted, unless it is a development build that is never published.
 

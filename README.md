@@ -10,7 +10,9 @@ AIDM UI lets a single operator create projects, bring in photos, review settings
 
 A pilot should download the app, open it and follow the setup screens. Running a downloaded executable needs no Git, Bun or other developer tools.
 
-**There is no tagged UI release or pilot installer yet.** For controlled pre-alpha testing, download a standalone executable from a successful [CI run on main](https://github.com/AIDroneMap/aidm-ui/actions/workflows/ci.yml?query=branch%3Amain). Sign in to GitHub, open the run's **Artifacts**, choose your platform and extract the ZIP. The artifacts expire after seven days. The Mac download is still a command-line executable, not a signed app; Windows can attach to an engine elsewhere but has no local engine yet.
+Download AIDM UI from the [releases page](https://github.com/AIDroneMap/aidm-ui/releases). Each release lists its install steps. On a Mac with Apple silicon, the download is a disk image with the AIDM UI app: drag it to Applications and open it. Linux and Windows get a standalone executable; Windows can attach to an engine elsewhere but has no local engine yet.
+
+For controlled testing between releases, a successful [CI run on main](https://github.com/AIDroneMap/aidm-ui/actions/workflows/ci.yml?query=branch%3Amain) has one executable per platform under **Artifacts**. Sign in to GitHub to download them. They expire after seven days, and the Mac one is a command-line executable, not the app.
 
 The [install-and-test guide](docs/guides/install-and-test.md) lists the exact downloads, setup screens and expected results. It walks through the sample, browser uploads, folder imports, ZIP links, settings, viewers, retained runs and deletion. It also explains the current download gaps. [Contributor build and source-test commands](docs/guides/install-and-test.md#for-contributors-only) are separate from the operator steps.
 
