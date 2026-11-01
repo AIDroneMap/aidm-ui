@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record the second specification, its merged flows, released-package checks and known limits with their owners. Evidence: `docs/milestones/0002-own-flight.md`.
+
 - Let a same-machine engine read a checked imported folder in place, with copy mode for selections the API cannot represent. Container folders are shared read-only after an idle restart, and run preparation waits for the restarted API. Evidence: `docs/testing/in-place-imports.md`, route and keyboard tests, and the native task API acceptance. Closes #74.
 - Accept the publisher's API 2.7.0 manifest key. Evidence: the published signed-manifest fixture and tampering checks in `server/manifest/verify.test.ts`. Closes #115.
 
