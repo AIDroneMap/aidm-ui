@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tarHeader } from "../images/image-archive.ts";
@@ -190,7 +190,7 @@ for (const id of ["podman", "docker"]) {
         publish: { hostAddress: "127.0.0.1", hostPort: port, containerPort: 3000 },
         mounts: [
           { hostPath: folder, containerPath: "/var/www/data", readOnly: false },
-          { hostPath: settingsFolder, containerPath: "/var/www/data/settings", readOnly: true },
+          { hostPath: settingsFolder, containerPath: "/var/www/data/settings", readOnly: true, preserveSource: true },
         ],
         memoryBytes: 256 * 1024 ** 2,
         cpus: 1,
@@ -219,6 +219,10 @@ for (const id of ["podman", "docker"]) {
       const mounts = details[0]?.Mounts ?? [];
       expect(mounts.find((mount) => mount.Destination === "/var/www/data/settings")?.RW).toBe(false);
       expect(mounts.find((mount) => mount.Destination === "/var/www/data")?.RW).toBe(true);
+      const writing = Bun.spawn([id, "exec", name, "touch", "/var/www/data/settings/unwanted.txt"], { stdout: "pipe", stderr: "pipe" });
+      await new Response(writing.stderr).text();
+      expect(await writing.exited).not.toBe(0);
+      expect(existsSync(join(settingsFolder, "unwanted.txt"))).toBe(false);
     }, SLOW);
 
     test("a second container under the same name is refused", async () => {

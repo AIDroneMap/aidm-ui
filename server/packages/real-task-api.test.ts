@@ -1,3 +1,4 @@
+import { compareVersions } from "../engines/versions.ts";
 import { modelAcceptanceAssets, assertArchivedModel } from "../../test-support/model-acceptance.ts";
 import { assertCatalogueDrift } from "../../test-support/catalogue-drift.ts";
 import type { ReconciledOption } from "../../shared/engine-options.ts";
@@ -170,10 +171,15 @@ real(
     files.files.set(`/releases/download/v${version}/manifest.json.sig`, signature);
     files.redirects.set("/releases/latest/download/manifest.json", `/releases/download/v${version}/manifest.json`);
 
+    const taskCalls: string[] = [];
     const h = openHarness({
       assets,
       enginePollMs: 250,
       runPollMs: 250,
+      runClientFor: endpoint => new TaskClient(endpoint, { fetch: (async (input, init) => {
+        taskCalls.push(new URL(String(input)).pathname);
+        return fetch(input, init);
+      }) as typeof fetch }),
       runtimes: {},
       updateReadyTimeoutMs: 120_000,
       sampleDataset: {
@@ -431,6 +437,27 @@ real(
         expect(status).toBe(40);
         expect(await folderSnapshot(source)).toEqual(before);
       } finally { await client.removeTask(created.value.uuid); }
+      const info = await client.info();
+      if (compareVersions(version as string, "2.7.0") >= 0) expect(info.ok && info.value.imagesPath).toBe(true);
+      if (info.ok && info.value.imagesPath === true) {
+        const review = await (await fetch(`${h.base}/api/projects/${project.id}/run-review?engineId=${engineId}&preset=quick-map`)).json() as RunReviewView;
+        expect(review.importMode).toMatchObject({ available: true, selected: "in-place", restartRequired: false });
+        const uploadCount = taskCalls.filter(path => path.includes("/task/new/upload/")).length;
+        const response = await fetch(`${h.base}/api/projects/${project.id}/runs`, { method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "In-place field", revision: review.revision }) });
+        expect(response.status).toBe(202);
+        const run = await response.json() as RunView;
+        await eventually(async () => (await (await fetch(`${h.base}/api/runs/${run.id}`)).json() as RunView).resultsAvailable, 240_000);
+        expect(taskCalls.filter(path => path.includes("/task/new/upload/"))).toHaveLength(uploadCount);
+        const completed = h.runs.get(run.id)!;
+        const task = await client.taskInfo(completed.taskUuid!);
+        expect(task.ok && task.value.imagesCount).toBe(3);
+        const after = await folderSnapshot(source);
+        expect(after.map(({ changed, ...entry }) => entry)).toEqual(before.map(({ changed, ...entry }) => entry));
+        expect((await fetch(`${h.base}/api/runs/${run.id}`, { method: "DELETE" })).status).toBe(204);
+        const removed = await folderSnapshot(source);
+        expect(removed.map(({ changed, ...entry }) => entry)).toEqual(before.map(({ changed, ...entry }) => entry));
+        console.log("In-place import acceptance passed", { photos: 3, uploads: 0, originalsPreserved: true });
+      }
     } finally { await chmod(source, 0o700); }
   },
   SLOW,

@@ -20,7 +20,7 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
+import { parse, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
 import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
@@ -409,7 +409,7 @@ export class NativePackage implements EnginePackage {
       for (const folder of ["data", "tmp", ...((deps.extraArgs ?? []).includes("--test") ? [join("tests", "data")] : [])]) {
         mkdirSync(join(options.engineDataFolder, folder), { recursive: true });
       }
-      this.writeConfig(options.hostPort, options.token);
+      this.writeConfig(options.hostPort, options.token, options.importFolders !== undefined ? parse(options.engineDataFolder).root : undefined);
     } catch {
       return fail("runtime.start_failed", { reason: "files" });
     }
@@ -449,11 +449,11 @@ export class NativePackage implements EnginePackage {
   }
 
   /** The options the task API reads with --config. Written whole and moved into place, readable by this user only. */
-  private writeConfig(port: number, token: string): void {
+  private writeConfig(port: number, token: string, imagesRoot?: string): void {
     mkdirSync(dirname(this.configFile), { recursive: true, mode: 0o700 });
     const temporary = `${this.configFile}.new`;
     rmSync(temporary, { force: true });
-    const options = { token, port, parallelQueueProcessing: 1, odx_path: this.enginePath };
+    const options = { token, port, parallelQueueProcessing: 1, odx_path: this.enginePath, ...(imagesRoot === undefined ? {} : { imagesRoot }) };
     writeFileSync(temporary, `${JSON.stringify(options)}\n`, { mode: 0o600 });
     renameSync(temporary, this.configFile);
   }

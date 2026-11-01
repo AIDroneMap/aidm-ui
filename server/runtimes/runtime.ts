@@ -50,7 +50,7 @@ export interface ContainerSpec {
    * Folders shared with the container. A read-only mount cannot be changed from
    * inside, which protects a folder that holds a secret or a setting.
    */
-  mounts: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>;
+  mounts: Array<{ hostPath: string; containerPath: string; readOnly: boolean; preserveSource?: boolean }>;
   /** Null: no cap. */
   memoryBytes: number | null;
   cpus: number | null;

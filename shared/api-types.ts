@@ -58,6 +58,8 @@ export type EngineState = (typeof ENGINE_STATES)[number];
 
 /** What the engine reported in its info call, as the server last read it. Null where the engine sent no usable value. */
 export interface EngineInfoView {
+  /** True only when the API allows tasks from a readable folder. */
+  imagesPath?: true;
   /** The task API version, for example "2.5.0". */
   version: string;
   engineVersion: string | null;
@@ -168,7 +170,7 @@ export interface RunView {
   engineLocal: boolean;
   state: RunState;
   /** What the run does before the engine has it: fetching the dataset, then sending the images. */
-  step: "download" | "upload" | "results" | null;
+  step: "download" | "upload" | "link" | "results" | null;
   download: RunDownloadView | null;
   upload: { done: number; total: number } | null;
   /** The engine's own progress, 0 to 100, while it processes. */

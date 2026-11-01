@@ -283,7 +283,11 @@ export function sharedRunArgs(
     spec.name,
     ...publish,
     ...spec.mounts.flatMap((mount) => {
-      const mountOptions = [...(mount.readOnly ? ["ro"] : []), ...(options.selinuxLabel ? ["Z"] : [])];
+      if (mount.preserveSource && binary === "docker") {
+        const field = (value: string) => /[,"\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+        return ["--mount", ["type=bind", field(`source=${mount.hostPath}`), field(`target=${mount.containerPath}`), ...(mount.readOnly ? ["readonly"] : [])].join(",")];
+      }
+      const mountOptions = [...(mount.readOnly ? ["ro"] : []), ...(options.selinuxLabel && !mount.preserveSource ? ["Z"] : [])];
       const suffix = mountOptions.length === 0 ? "" : `:${mountOptions.join(",")}`;
       return ["-v", `${mount.hostPath}:${mount.containerPath}${suffix}`];
     }),

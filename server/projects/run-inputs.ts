@@ -20,7 +20,7 @@ export class RunInputsChanged extends Error {
 }
 
 type UploadEntry = { name: string; kind: string; sha256: string; size: number; storageId: string; excluded: number };
-export type SavedRunInputs = { snapshot: RunInputSnapshot } & ({ wayIn: "upload"; entries: UploadEntry[] } | { wayIn: "import"; imported: SavedImport });
+export type SavedRunInputs = { snapshot: RunInputSnapshot; importMode?: "copy" | "in-place" } & ({ wayIn: "upload"; entries: UploadEntry[] } | { wayIn: "import"; imported: SavedImport });
 const success: TaskApiResult<void> = { ok: true, value: undefined };
 
 function abort(signal?: AbortSignal): void { signal?.throwIfAborted(); }
@@ -78,6 +78,15 @@ export class RunInputs {
       : { wayIn: "upload", snapshot, entries: this.chosen(this.uploads(id)) };
     await this.check(id, snapshot);
     return saved;
+  }
+
+  async inPlacePath(saved: SavedRunInputs): Promise<string | null> {
+    return saved.wayIn === "import" ? this.imports.inPlacePath(saved.imported) : null;
+  }
+
+  async verifyInPlace(saved: SavedRunInputs, signal?: AbortSignal): Promise<void> {
+    if (saved.wayIn !== "import") throw new RunInputsChanged();
+    await this.imports.verifyInPlace(saved.imported, signal);
   }
 
   async replay(id: number, saved: SavedRunInputs, client: TaskClient, uuid: string, signal?: AbortSignal, onProgress?: (done: number, total: number) => void): Promise<TaskApiResult<void>> {

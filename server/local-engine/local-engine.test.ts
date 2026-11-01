@@ -914,3 +914,49 @@ test("lines that come in separate moments are still delivered, in order", async 
   await eventually(async () => stream.events.length - before === 2);
   expect(stream.events.slice(before).map((event) => (event.data as { lines: string[] }).lines)).toEqual([["first"], ["second"]]);
 });
+
+
+async function importEngine() {
+  const runtime = new FakeRuntime({ versionOf: () => "2.7.0" });
+  const h = start({ runtimes: { podman: runtime } });
+  runtime.holdImage(IMAGE_2_5_0);
+  h.engineStore.addLocal({ name: "This computer", token: "import-test-token", packageKind: "container", installedVersion: "2.7.0" });
+  h.settings.set("local.package", { packageVersion: "2.7.0", variant: "linux-amd64-cpu", runtime: "podman", container: { kind: "container", image: "ghcr.io/aidronemap/aidm-api", digest: DIGEST_2_5_0, size: SIZE_2_5_0, gpu: false } });
+  expect((await h.localEngine.start()).ok).toBe(true);
+  const folder = mkdtempSync(join(os.tmpdir(), "aidm-import-mount-"));
+  cleanups.push(() => rmSync(folder, { recursive: true, force: true }));
+  return { h, runtime, folder };
+}
+
+test("an idle local container restarts once to share an imported folder read-only", async () => {
+  const { h, runtime, folder } = await importEngine();
+  expect(h.localEngine.importPlan(folder).restartRequired).toBe(true);
+  const before = runtime.starts.length;
+  const result = await h.localEngine.prepareImport(folder);
+  expect(result.ok).toBe(true);
+  expect(runtime.starts).toHaveLength(before + 1);
+  expect(runtime.starts.at(-1)!.spec.mounts).toContainEqual(expect.objectContaining({ hostPath: folder, readOnly: true }));
+  expect(h.localEngine.importPlan(folder).restartRequired).toBe(false);
+  expect((await h.localEngine.prepareImport(folder)).ok).toBe(true);
+  expect(runtime.starts).toHaveLength(before + 1);
+});
+
+test.each(["reported", "recorded"] as const)("a %s active run prevents an import mount restart", async activity => {
+  const { h, runtime, folder } = await importEngine();
+  if (activity === "reported") runtime.engine(CONTAINER_NAME)!.info.taskQueueCount = 1;
+  else h.runs.create({ engineId: h.engineStore.local()!.id, projectId: h.ctx.projects.create("Field", "").id, options: [] });
+  const before = runtime.starts.length;
+  expect(await h.localEngine.prepareImport(folder)).toMatchObject({ ok: false, error: { code: "local.busy" } });
+  expect(runtime.starts).toHaveLength(before);
+});
+
+
+test("the sample cannot start while the local engine is reserving an import restart", async () => {
+  const { h, runtime, folder } = await importEngine();
+  runtime.engine(CONTAINER_NAME)!.infoDelayMs = 100;
+  const sharing = h.localEngine.prepareImport(folder);
+  await eventually(async () => !h.localEngine.acceptsRuns());
+  expect(await h.sample.start(h.engineStore.local()!.id)).toMatchObject({ ok: false, status: 409, error: { code: "local.busy" } });
+  expect((await sharing).ok).toBe(true);
+  expect(h.localEngine.acceptsRuns()).toBe(true);
+});

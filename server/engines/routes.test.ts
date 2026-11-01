@@ -431,11 +431,15 @@ test("the 2.6.1 compatibility baseline detects new and missing options through t
   expect(() => assertCatalogueDrift([], "2.6.2")).toThrow("Catalogue drift");
   const baseline = await options();
   expect(() => assertCatalogueDrift(baseline, "2.6.1")).not.toThrow();
+  expect(() => assertCatalogueDrift(baseline, "2.7.0")).not.toThrow();
+  expect(() => assertCatalogueDrift(baseline, "2.7.1")).toThrow("Catalogue drift");
   expect(() => assertCatalogueDrift(baseline, "2.6.2")).toThrow("Catalogue drift");
   fake.options.push({ name: "brand-new-option", type: "bool", value: "false", domain: "", help: "New help" });
   const added = await options();
   expect(() => assertCatalogueDrift(added, "2.6.1")).toThrow("brand-new-option");
+  expect(() => assertCatalogueDrift(added, "2.7.0")).toThrow("brand-new-option");
   fake.options = fake.options.filter((option) => option.name !== "brand-new-option" && option.name !== "dsm");
   const missing = await options();
   expect(() => assertCatalogueDrift(missing, "2.6.1")).toThrow("dsm");
+  expect(() => assertCatalogueDrift(missing, "2.7.0")).toThrow("dsm");
 });

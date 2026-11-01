@@ -48,6 +48,17 @@ test("info reads the version, cores, memory and queue length", async () => {
   });
 });
 
+test("info exposes in-place input only when the engine reports true", async () => {
+  const api = await startFake({ info: { imagesPath: true } });
+  const advertised = await clientFor(api).info();
+  expect(advertised.ok && advertised.value.imagesPath).toBe(true);
+  for (const value of [undefined, false, "true", 1]) {
+    api.info.imagesPath = value;
+    const info = await clientFor(api).info();
+    expect(info.ok && info.value.imagesPath).toBeUndefined();
+  }
+});
+
 test("the token goes in the query string, encoded", async () => {
   const api = await startFake({ token: "a b&c=d" });
   expect((await clientFor(api).info()).ok).toBe(true);
@@ -503,4 +514,22 @@ test("a ZIP address creates an already submitted task without uploading photos",
   if (!result.ok) return;
   expect(api.tasks.get(result.value.uuid)).toMatchObject({ name: "Linked flight", zipurl: url, committed: true, images: [], options: [{ name: "dsm", value: true }] });
   expect(api.requests.filter(request => request.method === "POST").map(request => request.path)).toEqual(["/task/new"]);
+});
+
+
+test("task creation passes the checked folder through imagesPath without an upload", async () => {
+  const forms: FormData[] = [];
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+    if (new URL(req.url).pathname === "/options") return Response.json([]);
+    forms.push(await req.formData());
+    return Response.json({ uuid: "folder-task" });
+  } });
+  try {
+    const client = new TaskClient({ address: `http://127.0.0.1:${server.port}`, token: "test-token" });
+    expect(await client.createTask("Field", [], undefined, "/photos/flight")).toEqual({ ok: true, value: { uuid: "folder-task" } });
+    expect(forms).toHaveLength(1);
+    expect(forms[0]!.get("imagesPath")).toBe("/photos/flight");
+    expect(forms[0]!.get("images")).toBeNull();
+    expect(forms[0]!.get("zipurl")).toBeNull();
+  } finally { await server.stop(true); }
 });

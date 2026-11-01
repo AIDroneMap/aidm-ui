@@ -1,3 +1,5 @@
+import type { LocalEngineManager } from "../local-engine/manager.ts";
+import { isLoopbackHost } from "../engines/address-rule.ts";
 import type { LinkStore } from "./link-store.ts";
 import { createHash } from "node:crypto";
 import type { ApiError } from "../../shared/api-error.ts";
@@ -31,6 +33,7 @@ type SavedSource = SavedRunInputs | { wayIn: "link"; url: string; revision: stri
 interface Reviewed { view: RunReviewView; inputs: ReviewedInputs; options: TaskOption[]; client: TaskClient }
 interface Preparing { abort: AbortController; done: Promise<void>; cancelFailure: ApiError | null }
 interface Dependencies {
+  localEngine?: Pick<LocalEngineManager, "importPlan" | "prepareImport" | "acceptsRuns">;
   projects: ProjectStore;
   projectDeletion: ProjectDeletion;
   inputs: RunInputs;
@@ -48,6 +51,7 @@ interface Dependencies {
 export class ProjectRuns {
   private readonly preparing = new Map<number, Preparing>();
   private readonly starting = new Set<string>();
+  private readonly configuringEngines = new Set<number>();
   private readonly deleting = new Set<number>();
   private readonly sourcesInUse = new Map<number, number>();
   private readonly clientFor: (endpoint: EngineEndpoint) => TaskClient;
@@ -56,7 +60,7 @@ export class ProjectRuns {
     deps.tracker.recoverMissing = id => this.recover(id);
   }
 
-  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number): Promise<Outcome<Reviewed>> {
+  private async inspect(id: number, engineId: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number, importMode?: ProjectRunRequest["importMode"]): Promise<Outcome<Reviewed>> {
     const { projects, engines, inputs, photos, settings } = this.deps;
     if (id === projects.sampleId()) return refuse(409, "project.sample_photos_forbidden");
     const project = projects.get(id);
@@ -96,6 +100,20 @@ export class ProjectRuns {
       if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
       throw error;
     }
+    let imported: RunReviewView["importMode"];
+    try {
+      if (snapshot.wayIn === "import") {
+        const saved = source && source.wayIn !== "link" ? source : await inputs.capture(id, snapshot);
+        const path = await inputs.inPlacePath(saved);
+        const sameMachine = engine.kind === "local" || isLoopbackHost(new URL(engine.address).hostname);
+        const available = info.value.imagesPath === true && sameMachine && path !== null;
+        imported = { selected: importMode ?? (available ? "in-place" : "copy"), available, restartRequired: available && engine.kind === "local" && path !== null ? this.deps.localEngine?.importPlan(path).restartRequired ?? false : false, selectionRequiresCopy: path === null };
+        if (imported.selected === "in-place" && !available) return refuse(409, "project_run.review_changed");
+      } else if (importMode !== undefined) return refuse(400, "api.invalid_body");
+    } catch (error) {
+      if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
+      throw error;
+    }
     const archiveUnavailable = original?.engineId === engineId && original.taskUuid !== null && this.deps.runs.taskRuns(engineId, original.taskUuid).some(run => this.hasUnsavedArchive(run));
     const previousTask = archiveUnavailable && original.taskUuid ? await client.taskInfo(original.taskUuid) : null;
     const previousTaskMissing = previousTask !== null && !previousTask.ok && isTaskNotFound(previousTask.failure, original!.taskUuid!);
@@ -124,8 +142,9 @@ export class ProjectRuns {
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
     else if (this.deps.runs.listUnfinished().some(run => run.projectId === id && run.engineId === engineId)) blocked = { code: "project_run.already_running", data: {} };
     if (archiveUnavailable && !previousTaskMissing) blocked = { code: "run.results_not_ready", data: {} };
-    const revision = createHash("sha256").update(JSON.stringify({ inputs: snapshot.revision, sourceRunId, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
+    const revision = createHash("sha256").update(JSON.stringify({ importMode: imported, inputs: snapshot.revision, sourceRunId, engine: engine.id, address: engine.address, version: info.value.version, engineVersion: info.value.engineVersion, limit: info.value.maxImages ?? null, reportedLimit: info.value.maxImages !== undefined, gpu, preset, reported: reported.value, options, presetName })).digest("hex");
     return { ok: true, value: { inputs: snapshot, client, options, view: {
+      ...(imported ? { importMode: imported } : {}),
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
       ...(presetName !== undefined ? { presetName } : {}),
       preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, supported).departures.map(detail) })),
@@ -138,8 +157,8 @@ export class ProjectRuns {
     } } };
   }
 
-  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number): Promise<Outcome<RunReviewView>> {
-    const result = await this.inspect(id, engine, preset, offset, edits, presetName, sourceRunId);
+  async review(id: number, engine: number, preset: PresetId, offset: number, edits: Readonly<NonNullable<ProjectRunRequest["options"]>> = [], presetName?: string, sourceRunId?: number, importMode?: ProjectRunRequest["importMode"]): Promise<Outcome<RunReviewView>> {
+    const result = await this.inspect(id, engine, preset, offset, edits, presetName, sourceRunId, importMode);
     return result.ok ? { ok: true, value: result.value.view } : result;
   }
 
@@ -160,12 +179,13 @@ export class ProjectRuns {
     const engine = run.engineId === null ? null : engines.get(run.engineId);
     if (!engine?.enabled) return false;
     const key = `${run.projectId}:${engine.id}`;
-    if (this.starting.has(key)) return false;
+    if (this.configuringEngines.has(engine.id) || this.starting.has(key)) return false;
     const release = this.deps.projectDeletion.beginWrite(run.projectId);
     if (!release) return false;
     this.starting.add(key); tracker.pause(id);
     const boundary = tracker.log(id, Number.MAX_SAFE_INTEGER).next;
-    tracker.update(id, { state: source.wayIn === "link" ? "created" : "uploading", taskUuid: null, restarted: true, restartedAtLine: boundary, progress: null, restartPending: false });
+    const linking = source.wayIn === "import" && source.importMode === "in-place";
+    tracker.update(id, { state: source.wayIn === "link" || linking ? "created" : "uploading", step: linking ? "link" : source.wayIn === "link" ? null : "upload", taskUuid: null, restarted: true, restartedAtLine: boundary, progress: null, restartPending: false });
     const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
     this.preparing.set(id, preparing);
     const client = this.clientFor(engine);
@@ -178,11 +198,12 @@ export class ProjectRuns {
     return run.state === "completed" && !["ready", "deleted"].includes(this.deps.tracker.results.view(run.id)?.state ?? "");
   }
 
-  private async repeat(original: RunRecord, engineId: number, options: TaskOption[], name: string, preset: string | null, presetName?: string): Promise<Outcome<RunView>> {
+  private async repeat(original: RunRecord, engineId: number, options: TaskOption[], name: string, preset: string | null, presetName?: string, importMode?: ProjectRunRequest["importMode"]): Promise<Outcome<RunView>> {
     const { runs, tracker, engines } = this.deps;
     const key = `${original.projectId}:${engineId}`;
+    if (engines.get(engineId)?.kind === "local" && this.deps.localEngine?.acceptsRuns() === false) return refuse(409, "local.busy");
     if (this.deleting.has(original.id)) return refuse(409, "run.action_unavailable");
-    if (this.starting.has(key) || runs.listUnfinished().some(run => run.projectId === original.projectId && run.engineId === engineId)) return refuse(409, "project_run.already_running");
+    if (this.configuringEngines.has(engineId) || this.starting.has(key) || runs.listUnfinished().some(run => run.projectId === original.projectId && run.engineId === engineId)) return refuse(409, "project_run.already_running");
     const release = this.deps.projectDeletion.beginWrite(original.projectId);
     if (!release) return refuse(409, "project.deletion_busy");
     const unblocks: Array<() => void> = [];
@@ -190,6 +211,16 @@ export class ProjectRuns {
     let handedOver = false;
     try {
       const client = this.clientFor(engines.get(engineId)!);
+      const source = runs.source<SavedSource>(original.id);
+      const changedImportMode = source?.wayIn === "import" && importMode !== undefined && importMode !== (source.importMode ?? "copy");
+      const reuseTask = original.engineId === engineId && original.taskUuid !== null && !changedImportMode;
+      if (reuseTask && source?.wayIn === "import" && source.importMode === "in-place") {
+        try { await this.deps.inputs.verifyInPlace(source); }
+        catch (error) {
+          if (error instanceof ImportUnavailable || error instanceof RunInputsChanged) return refuse(409, "project_run.photos_changed");
+          throw error;
+        }
+      }
       if (original.engineId === engineId && original.taskUuid) {
         const previousRuns = runs.taskRuns(engineId, original.taskUuid);
         for (const previous of previousRuns) {
@@ -203,9 +234,9 @@ export class ProjectRuns {
         }
       }
       this.sourcesInUse.set(original.id, (this.sourcesInUse.get(original.id) ?? 0) + 1);
-      const source = runs.source<SavedSource>(original.id);
       const run = runs.create({ projectId: original.projectId, engineId, name, preset, presetName, wayIn: original.wayIn, options });
       if (source) {
+        if (source.wayIn !== "link" && importMode !== undefined) source.importMode = importMode;
         runs.saveSource(run.id, source);
         if (source.wayIn === "link") this.deps.links.recordSource(original.projectId, run.id, source.url);
       }
@@ -213,7 +244,7 @@ export class ProjectRuns {
       this.preparing.set(run.id, preparing);
       preparing.done = (async () => {
         try {
-          if (original.engineId === engineId && original.taskUuid !== null) {
+          if (reuseTask && original.taskUuid !== null) {
             runs.referenceTask(run.id, original.taskUuid);
             let submitted = false;
             const restarted = await client.restartTask(original.taskUuid, options, undefined, () => {
@@ -245,7 +276,8 @@ export class ProjectRuns {
             if (!isTaskNotFound(restarted.failure, original.taskUuid)) { this.finish(run.id, "failed", problemFromFailure(restarted.failure)); return; }
           }
           if (!source) { this.finish(run.id, "failed", { code: "run.photos_unavailable", data: {} }); return; }
-          tracker.update(run.id, { state: source.wayIn === "link" ? "created" : "uploading", step: source.wayIn === "link" ? null : "upload", restartPending: false });
+          const linking = source.wayIn === "import" && source.importMode === "in-place";
+          tracker.update(run.id, { state: source.wayIn === "link" || linking ? "created" : "uploading", step: linking ? "link" : source.wayIn === "link" ? null : "upload", restartPending: false });
           await this.prepare(original.projectId, run.id, name, { client, options, inputs: source.wayIn === "link" ? source : source.snapshot, saved: source.wayIn === "link" ? undefined : source }, preparing);
         } catch {
           this.finish(run.id, preparing.abort.signal.aborted ? "cancelled" : "failed", preparing.abort.signal.aborted ? null : { code: "run.upload_failed", data: {} });
@@ -269,35 +301,52 @@ export class ProjectRuns {
 
   async start(id: number, request: ProjectRunRequest): Promise<Outcome<RunView>> {
     const key = `${id}:${request.engineId}`;
-    if (this.starting.has(key)) return refuse(409, "project_run.already_running");
+    if (this.deps.engines.get(request.engineId)?.kind === "local" && this.deps.localEngine?.acceptsRuns() === false) return refuse(409, "local.busy");
+    if (this.configuringEngines.has(request.engineId) || this.starting.has(key)) return refuse(409, "project_run.already_running");
     const release = this.deps.projectDeletion.beginWrite(id);
     if (!release) return refuse(409, "project.deletion_busy");
     this.starting.add(key);
     let handedOver = false;
     let ownsStarting = true;
     try {
-      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options, request.presetName, request.sourceRunId);
+      const reviewed = await this.inspect(id, request.engineId, request.preset, 0, request.options, request.presetName, request.sourceRunId, request.importMode);
       if (!reviewed.ok) return reviewed;
       const { view } = reviewed.value;
       if (view.blocked) return { ok: false, status: 409, error: view.blocked };
       if (request.revision !== view.revision) return refuse(409, "project_run.review_changed");
       if (request.sourceRunId === undefined && (this.deps.links.isBusy(id) || (reviewed.value.inputs.wayIn === "link" && this.deps.links.revision(id) !== reviewed.value.inputs.revision))) return refuse(409, "project_run.review_changed");
+      if (view.importMode?.selected === "in-place" && view.engine.kind === "local" && this.deps.localEngine) {
+        const saved = request.sourceRunId === undefined ? await this.deps.inputs.capture(id, reviewed.value.inputs as RunInputSnapshot) : this.deps.runs.source<SavedRunInputs>(request.sourceRunId);
+        const path = saved && await this.deps.inputs.inPlacePath(saved);
+        if (!path) return refuse(409, "project_run.photos_changed");
+        if ([...this.starting].some(other => other !== key && other.endsWith(`:${request.engineId}`))) return refuse(409, "project_run.already_running");
+        this.configuringEngines.add(request.engineId);
+        try {
+          const shared = await this.deps.localEngine.prepareImport(path);
+          if (!shared.ok) return { ok: false, status: 409, error: shared.error };
+          const currentEngine = this.deps.engines.get(request.engineId);
+          if (!currentEngine?.address) return refuse(409, "project_run.engine_unavailable");
+          reviewed.value.client = this.clientFor(currentEngine);
+        } finally { this.configuringEngines.delete(request.engineId); }
+      }
       if (request.sourceRunId !== undefined) {
         this.starting.delete(key);
         ownsStarting = false;
         const original = this.deps.runs.get(request.sourceRunId);
         if (!original) return refuse(404, "run.not_found");
-        return this.repeat(original, request.engineId, reviewed.value.options, request.name, request.preset, request.presetName);
+        return this.repeat(original, request.engineId, reviewed.value.options, request.name, request.preset, request.presetName, view.importMode?.selected);
       }
       let source: SavedSource;
       try { source = reviewed.value.inputs.wayIn === "link" ? reviewed.value.inputs : await this.deps.inputs.capture(id, reviewed.value.inputs); }
       catch (error) { if (error instanceof RunInputsChanged || error instanceof ImportUnavailable) return refuse(409, "project_run.photos_changed"); throw error; }
+      if (source.wayIn !== "link" && view.importMode) source.importMode = view.importMode.selected;
       const run = this.deps.runs.create({ projectId: id, engineId: request.engineId, name: request.name, preset: request.preset, presetName: request.presetName, wayIn: view.wayIn, options: reviewed.value.options });
       this.deps.runs.saveSource(run.id, source);
       if (view.wayIn === "link") this.deps.links.recordRun(id, run.id);
       const preparing: Preparing = { abort: new AbortController(), done: Promise.resolve(), cancelFailure: null };
       this.preparing.set(run.id, preparing);
-      this.deps.tracker.update(run.id, { state: view.wayIn === "link" ? "created" : "uploading", step: view.wayIn === "link" ? null : "upload", upload: view.photos.included === null ? null : { done: 0, total: view.photos.included } });
+      const linking = view.importMode?.selected === "in-place";
+      this.deps.tracker.update(run.id, { state: view.wayIn === "link" || linking ? "created" : "uploading", step: linking ? "link" : view.wayIn === "link" ? null : "upload", upload: linking || view.photos.included === null ? null : { done: 0, total: view.photos.included } });
       preparing.done = this.prepare(id, run.id, request.name, reviewed.value, preparing).finally(() => {
         this.preparing.delete(run.id); this.starting.delete(key); release();
       });
@@ -310,14 +359,44 @@ export class ProjectRuns {
 
   private async prepare(project: number, id: number, name: string, reviewed: Pick<Reviewed, "client" | "options" | "inputs"> & { saved?: SavedRunInputs }, preparing: Preparing): Promise<void> {
     const { tracker } = this.deps;
-    const { client, options, inputs } = reviewed;
+    let client = reviewed.client;
+    const { options, inputs } = reviewed;
     const { signal } = preparing.abort;
     let uuid: string | null = null;
     let committed = false;
     try {
       signal.throwIfAborted();
+      const saved = this.deps.runs.source<SavedSource>(id);
+      let imagesPath: string | undefined;
+      if (saved?.wayIn === "import" && saved.importMode === "in-place") {
+        const info = await client.info();
+        const run = this.deps.runs.get(id)!;
+        const engine = this.deps.engines.get(run.engineId!)!;
+        if (!info.ok || info.value.imagesPath !== true || !(engine.kind === "local" || isLoopbackHost(new URL(engine.address).hostname))) {
+          this.finish(id, "failed", { code: "project_run.review_changed", data: {} }); return;
+        }
+        tracker.update(id, { state: "created", step: "link", upload: null });
+        await this.deps.inputs.verifyInPlace(saved, signal);
+        const sourcePath = await this.deps.inputs.inPlacePath(saved);
+        if (sourcePath === null) throw new RunInputsChanged();
+        imagesPath = sourcePath;
+        if (engine.kind === "local" && this.deps.localEngine) {
+          const plan = this.deps.localEngine.importPlan(sourcePath);
+          if (plan.restartRequired) {
+            const key = `${run.projectId}:${engine.id}`;
+            if ([...this.starting].some(other => other !== key && other.endsWith(`:${engine.id}`))) { this.finish(id, "failed", { code: "local.busy", data: {} }); return; }
+            this.configuringEngines.add(engine.id);
+            try {
+              const shared = await this.deps.localEngine.prepareImport(sourcePath, id);
+              if (!shared.ok) { this.finish(id, "failed", shared.error); return; }
+              client = this.clientFor(this.deps.engines.get(engine.id)!);
+            } finally { this.configuringEngines.delete(engine.id); }
+          }
+          imagesPath = plan.path;
+        }
+      }
       // Finish the bounded init request so cancellation can remove the task by its returned identity.
-      const created = inputs.wayIn === "link" ? await client.createLinkedTask(name, options, inputs.url) : await client.createTask(name, options);
+      const created = inputs.wayIn === "link" ? await client.createLinkedTask(name, options, inputs.url) : await client.createTask(name, options, undefined, imagesPath);
       if (!created.ok) { this.finish(id, signal.aborted ? "cancelled" : "failed", signal.aborted ? null : problemFromFailure(created.failure)); return; }
       uuid = created.value.uuid;
       committed = inputs.wayIn === "link";
@@ -325,7 +404,9 @@ export class ProjectRuns {
       if (inputs.wayIn !== "link") {
         signal.throwIfAborted();
         const progress = (done: number, total: number) => tracker.update(id, { upload: { done, total } });
-        const copied = reviewed.saved
+        const copied = imagesPath !== undefined && saved?.wayIn === "import"
+          ? (await this.deps.inputs.verifyInPlace(saved, signal), { ok: true as const, value: undefined })
+          : reviewed.saved
           ? await this.deps.inputs.replay(project, reviewed.saved, client, uuid, signal, progress)
           : await this.deps.inputs.copyToTask(project, inputs, client, uuid, signal, progress);
         if (!copied.ok) { this.finish(id, "failed", problemFromFailure(copied.failure)); return; }

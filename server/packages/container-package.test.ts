@@ -619,3 +619,16 @@ test("a record whose layers cannot be had is left out, and the image is download
   expect((await pkg.install({})).ok).toBe(true);
   expect(blobsAsked()).toEqual([v2.configDigest, ...v2.layerDigests]);
 });
+
+
+test("an imported folder is mounted read-only beneath the API images root", async () => {
+  const { pkg, runtime, dataFolder } = setup();
+  runtime.images.add(IMAGE);
+  expect((await pkg.start({ ...startOptions, importFolders: ["/photos/flight"] })).ok).toBe(true);
+  const spec = runtime.starts[0]!.spec;
+  const imported = spec.mounts.find(mount => mount.hostPath === "/photos/flight");
+  expect(imported).toMatchObject({ readOnly: true });
+  expect(imported!.containerPath.startsWith("/aidm-imports/")).toBe(true);
+  const config = JSON.parse(readFileSync(join(containerConfigFolder(dataFolder), ENGINE_CONFIG_FILE_NAME), "utf8"));
+  expect(config.imagesRoot).toBe("/aidm-imports");
+});

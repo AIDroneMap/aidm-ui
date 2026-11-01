@@ -72,6 +72,7 @@ export interface PendingSwitch {
 }
 
 export interface SettingValues {
+  "local.importFolders": string[];
   "map.basemap": BasemapSettings;
   /** The port tried first on the next start; null means the default. */
   "server.port": number | null;
@@ -122,6 +123,7 @@ const DEFAULTS: SettingValues = {
   "lan.passphraseHash": null,
   "runtime.preferred": null,
   "engine.dataFolder": null,
+  "local.importFolders": [],
   "local.package": null,
   "local.native": null,
   "local.previous": null,

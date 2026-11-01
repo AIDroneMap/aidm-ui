@@ -170,3 +170,11 @@ test("a log read does not cut a line the program is still writing, and hands it 
   await pkg.logs({ follow: false, onLine: (line) => seen.push(line) });
   expect(seen).toEqual(["first", "second", "third, not finished"]);
 });
+
+
+test("the native API can read imports without mounting or restarting for each folder", async () => {
+  const { pkg } = packageWith();
+  expect((await pkg.start({ ...startOptions, importFolders: [] })).ok).toBe(true);
+  const config = JSON.parse(readFileSync(join(dataFolder, "engine-config", "native-2.6.0.json"), "utf8"));
+  expect(config.imagesRoot).toBe("/");
+});

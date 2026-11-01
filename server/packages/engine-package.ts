@@ -3,6 +3,8 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { InstallProgressView } from "../../shared/api-types.ts";
 
 export interface PackageStartOptions {
+  /** Imported folders explicitly shared with the local engine. */
+  importFolders?: string[];
   /** A free port on the loopback interface. */
   hostPort: number;
   token: string;

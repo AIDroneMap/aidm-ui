@@ -248,6 +248,7 @@ export function openHarness(
   });
 
   const sample = new SampleJob({
+    canUseLocalEngine: () => localEngine.acceptsRuns(),
     dataset: options.sampleDataset ?? SAMPLE_DATASET,
     dataFolder,
     runs,
@@ -283,7 +284,7 @@ export function openHarness(
 
   const links = new LinkStore(db);
   const photos = new PhotoStore(db, dataFolder, imports);
-  const projectRuns = new ProjectRuns({ projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
+  const projectRuns = new ProjectRuns({ localEngine, projects, projectDeletion, links, inputs: new RunInputs(db, dataFolder, imports), photos, engines: engineStore, runs: runs, tracker, settings, log, clientFor: options.runClientFor });
   const ctx: RouteContext = {
     identity: TEST_IDENTITY,
     presets: new PresetStore(db),
