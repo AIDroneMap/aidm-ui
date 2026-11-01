@@ -23,13 +23,13 @@ The project has two goals, and every change should serve at least one of them:
 
 ## Current stage
 
-Pre-alpha, not for use. The first milestone, from one executable to a finished run on a real Mac, is reached: `docs/milestones/0001-first-mac-run.md` has what it delivers and the known limits with their owners. It built the first specification, #2 (local server and engine manager), and its follow-ups. Projects, uploads, the job queue, the viewers and exports have no specification yet.
+Pre-alpha, not for use. Specification #58 adds projects, uploads and folder or ZIP inputs, reviewed settings and presets, retained runs, downloads and offline viewers. `docs/milestones/0002-own-flight.md` records the merged flows, released-package checks and known limits with their owners. The first milestone and its limits remain in `docs/milestones/0001-first-mac-run.md`.
 
 Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Build only what an approved specification covers. For anything else, limit work to specifications, mock-ups described in text, and documentation.
 
 The settled vocabulary is in `GLOSSARY.md` and the settled decisions are in `docs/adr/`. Read both before proposing anything.
 
-The stack is a TypeScript server on Bun with SQLite, compiled into one executable per platform, which serves a static single-page interface (TypeScript, React, Vite) and holds the engine manager. MapLibre GL and three.js are planned for the viewers and come with the specification that needs them.
+The stack is a TypeScript server on Bun with SQLite, compiled into one executable per platform, which serves a static single-page interface (TypeScript, React, Vite) and holds the engine manager. MapLibre GL and three.js provide the offline map and model viewers.
 
 ## Workflow
 

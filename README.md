@@ -2,11 +2,11 @@
 
 **The open web interface for [AIDM](https://github.com/AIDroneMap/aidm), part of [AIDroneMap](https://github.com/AIDroneMap). Every machine, one command.**
 
-AIDM UI will give a single operator a complete drone mapping tool in the browser: create a project, upload images, check them, start processing, follow progress, and view and export the results. It installs the AIDM engine on the operator's own computer without Docker or a terminal, and works with any AIDM task API on the network or in the cloud.
+AIDM UI lets a single operator create projects, bring in photos, review settings, run an engine, and view or download the results. It installs the engine on the operator's computer and can attach to a chosen task API endpoint.
 
-> **Status: pre-alpha, not for use.** The first milestone is reached: one executable takes an operator from a bare computer to a finished photogrammetry run, on Linux and on a Mac. [docs/milestones/0001-first-mac-run.md](docs/milestones/0001-first-mac-run.md) says what it delivers, what was measured and what is still missing. Projects, uploads, the viewers and exports are not written yet. Specifications are published as GitHub issues and approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and the decisions so far are in [docs/adr](docs/adr).
+> **Status: pre-alpha, not for use.** Projects, photo intake, reviewed settings, run history, downloads and offline viewers are implemented under specification #58. [Milestone 2](docs/milestones/0002-own-flight.md) records the completed checks and known limits. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
 
-## What it will do
+## What it does
 
 - **Projects and photos.** Group photos into projects. Bring them in from the browser, from a folder on the same computer, or as a link the engine fetches itself. Before processing, see what the photos say about themselves: cameras, flights, photos without GPS, duplicates.
 - **Presets and options.** Pick what you want out of a flight, from a quick map to a ground model, then change any option, each explained in plain words: what it does, when to change it, what it costs.
@@ -33,7 +33,7 @@ AIDM UI talks to every engine only through the task API, so it works the same wi
 
 - A small server written in TypeScript on Bun, with SQLite, compiled into one executable per platform. It serves the interface, holds the engine manager, and makes every call to every engine.
 - A single-page application built with TypeScript, React and Vite, compiled to static files and embedded in that executable, so there is nothing extra to install, and it works without an internet connection.
-- Planned: MapLibre GL for the 2D map and three.js for the 3D model, both fed only from what the engine produced. The map has no basemap unless you configure one; no key, no token.
+- MapLibre GL for the 2D map and three.js for the 3D model, both fed only from what the engine produced. The map has no basemap unless you configure one; no key, no token.
 - The engine runs as a native package where one exists, and through a container runtime (Podman, Docker or Apple's container tool) until then. The wizard installs the runtime when the computer has none.
 
 ## Troubleshooting
@@ -65,7 +65,7 @@ For a bug report from a Mac, send `logs/aidm-ui.log` and `logs/engine.log`, whic
 
 ## Contributing
 
-The project is pre-alpha and most of the interface has no specification yet, so the most useful contributions right now are ideas and use cases. Open a discussion or an issue describing how you process drone data and what you need from the interface.
+The project is pre-alpha. Development follows maintainer-approved specifications. Ideas and use cases help define what comes next. Open a discussion or an issue describing how you process drone data and what you need from the interface.
 
 Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) before opening a pull request. Every commit needs a DCO sign-off (`git commit -s`).
 
