@@ -20,7 +20,7 @@ A pilot's normal installation should be a download, an app to open, and the setu
 
 Linux file managers differ in how they launch executables. If yours cannot open this file, a desktop launcher is still missing for that setup. The Mac artifact is not a `.app` or `.dmg`, and the Windows artifact is not an installer. These are gaps in the pilot download, not reasons for a pilot to install developer tools.
 
-The test builds accept a development manifest key as well as the published API key. They are for controlled testing. The production release build deliberately refuses that development key; do not remove the check to publish a test build.
+Every build accepts only the publisher's API release key. A build refuses to go ahead while a test key is accepted, unless it is a development build that is never published.
 
 Once started, the executable opens the interface in your default browser. It listens on this computer by default. If the browser does not open, use the address shown by the executable. Keep the app running while using the interface.
 
@@ -121,6 +121,6 @@ A private development executable for Linux x64 can be built with:
 bun scripts/build.ts --development linux-x64
 ```
 
-The output is `dist/aidm-ui-linux-x64`. Other target names are `linux-arm64`, `macos-arm64` and `windows-x64`; the Windows file has an `.exe` suffix. The development flag permits the existing test key and must not be used to publish a release. A normal release build currently refuses that key by design. No key, signing rule or release setting needs to change to follow this guide.
+The output is `dist/aidm-ui-linux-x64`. Other target names are `linux-arm64`, `macos-arm64` and `windows-x64`; the Windows file has an `.exe` suffix. The development flag skips the check that refuses a test key, and must not be used to publish a release. No key, signing rule or release setting needs to change to follow this guide.
 
 For frontend development, `bun run dev` builds the interface and starts the source server. For real processing acceptance, use a machine with the engine runtime and follow the repository's testing rules.

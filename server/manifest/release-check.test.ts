@@ -16,12 +16,22 @@ async function buildScript(...args: string[]): Promise<{ code: number; output: s
   return { code, output: out + err };
 }
 
-test("a build is a release build unless it says otherwise, and today's keys stop it", async () => {
+test("a build is a release build unless it says otherwise, and today's keys let it go ahead", async () => {
   const result = await buildScript("--check-keys-only");
-  // This expectation changes to 0 the day the production key replaces the test key.
-  expect(result.code).toBe(1);
-  expect(result.output).toContain('The accepted key "development-test-key" is a test key.');
-  expect(result.output).toContain("--development");
+  expect(result.output).not.toContain("test key");
+  expect(result.output).toContain("Release key check passed.");
+  expect(result.code).toBe(0);
+});
+
+test("only the publisher's release key is accepted", () => {
+  expect(ACCEPTED_KEYS.map((key) => key.id)).toEqual(["api-release-2026"]);
+  expect(ACCEPTED_KEYS.some((key) => key.test)).toBe(false);
+});
+
+test("the release check still refuses a test key and names the flag that skips it", () => {
+  const withTestKey = [...ACCEPTED_KEYS, { id: "development-test-key", publicKey: "/ZvJB2b6/5SBwz1giwTJS3e8x8KvLyrAeYIrzGNoYck=", test: true }];
+  expect(releaseKeyProblems(withTestKey, "api-release-2026")).toEqual(['The accepted key "development-test-key" is a test key.']);
+  expect(releaseKeyProblems(withTestKey, "development-test-key")).toContain('The built-in manifest entry is signed with the test key "development-test-key".');
 });
 
 test("a default build names every problem the key check finds", async () => {

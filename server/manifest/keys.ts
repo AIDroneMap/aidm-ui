@@ -16,9 +16,4 @@ export const ACCEPTED_KEYS: readonly AcceptedKey[] = [
     publicKey: "AyWaJGsLzH6SSwcX1BTMUG6Q4HN9KmMrJZeNHKIZNSI=",
     test: false,
   },
-  {
-    id: "development-test-key",
-    publicKey: "/ZvJB2b6/5SBwz1giwTJS3e8x8KvLyrAeYIrzGNoYck=",
-    test: true,
-  },
 ];
