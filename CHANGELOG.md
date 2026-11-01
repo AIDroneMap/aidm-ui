@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accept the publisher's API 2.7.0 manifest key. Evidence: the published signed-manifest fixture and tampering checks in `server/manifest/verify.test.ts`. Closes #115.
+
 - Keep the result map inside its panel when coordinates update. Evidence: the Chromium canvas-containment regression in `web/src/map/MapView.browser.test.ts`. Closes #113.
 - Open maps from cloud-optimized orthophotos that contain overview image directories. Evidence: generated TIFF and BigTIFF metadata tests, map-route regressions, and the retained real-result diagnostic in #111.
 
