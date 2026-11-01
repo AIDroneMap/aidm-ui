@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a download-first installation and test guide, with setup steps, project checks and the limits of the current test executables. Evidence: `docs/guides/install-and-test.md` and the documented build, workflow and interface labels.
+
 - Offer the published API 2.7.0 and engine 0.2.0 package on first setup without a release refresh. Earlier installations receive an update offer without being silently replaced. Evidence: the fresh Linux and Apple silicon route regressions in `server/manifest/builtin-offer.test.ts`, signature checks and the full-test record linked from the pull request. Closes #118.
 
 - Record the second specification, its merged flows, released-package checks and known limits with their owners. Evidence: `docs/milestones/0002-own-flight.md`.

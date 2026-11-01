@@ -65,7 +65,7 @@ Only reviewed records and viewer canvas screenshots were collected. Photos, resu
 | No real native processing run or local Windows engine was checked | Engine package maintainer, AIDroneMap/aidm#15 |
 | The Sprint 2 flow was not repeated on a Mac, and the API publisher's relay check is not a UI import test | UI maintainer, Apple socket-relay and imported-folder acceptance |
 | GPU processing was not exercised | Engine release maintainer, the engine release GPU test |
-| No performance result is established for in-place imports | Benchmark maintainer, [AIDroneMap/aidm-bench#81](https://github.com/AIDroneMap/aidm-bench/issues/81) |
+| No performance result is established for in-place imports | Benchmark maintainer, import preparation and disk I/O measurement |
 
 ## Acceptance boundary
 
