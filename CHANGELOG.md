@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Offer the published API 2.7.0 and engine 0.2.0 package on first setup without a release refresh. Earlier installations receive an update offer without being silently replaced. Evidence: the fresh Linux and Apple silicon route regressions in `server/manifest/builtin-offer.test.ts`, signature checks and the full-test record linked from the pull request. Closes #118.
+
 - Record the second specification, its merged flows, released-package checks and known limits with their owners. Evidence: `docs/milestones/0002-own-flight.md`.
 
 - Let a same-machine engine read a checked imported folder in place, with copy mode for selections the API cannot represent. Container folders are shared read-only after an idle restart, and run preparation waits for the restarted API. Evidence: `docs/testing/in-place-imports.md`, route and keyboard tests, and the native task API acceptance. Closes #74.

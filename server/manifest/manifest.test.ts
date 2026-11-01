@@ -6,6 +6,7 @@ import type { PackagesView, RefreshResult } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { linuxInputs, recordedMachine } from "../../test-support/recorded-machine.ts";
 import {
+  BUILTIN_SEQUENCE,
   generateSigner,
   manifestBytes,
   sampleManifest,
@@ -82,9 +83,9 @@ function put(h: Harness, path: string, body: unknown): Promise<Response> {
   return fetch(`${h.base}${path}`, { method: "PUT", body: JSON.stringify(body) });
 }
 
-// With no network, the wizard offers the built-in 2.5.0 package for the detected variant.
+// With no network, the wizard offers the built-in 2.7.0 package for the detected variant.
 
-test("with no network, a Linux x64 computer is offered the built-in 2.5.0 amd64 image", async () => {
+test("with no network, a Linux x64 computer is offered the built-in 2.7.0 amd64 image", async () => {
   const calls: string[] = [];
   const h = open({
     manifest: {
@@ -96,11 +97,11 @@ test("with no network, a Linux x64 computer is offered the built-in 2.5.0 amd64 
   });
   expect(await packages(h)).toEqual({
     offer: {
-      packageVersion: "2.5.0",
-      engineVersion: "0.1.0",
+      packageVersion: "2.7.0",
+      engineVersion: "0.2.0",
       variant: "linux-amd64-cpu",
       kind: "container",
-      size: 682533845,
+      size: 573636504,
       processorSize: null,
       source: "builtin",
       tag: null,
@@ -118,7 +119,7 @@ test("a Linux arm64 computer is offered the built-in arm64 image", async () => {
   const h = open({ machine: recordedMachine(linuxInputs({ arch: "arm64" })) });
   const view = await packages(h);
   expect(view.offer?.variant).toBe("linux-arm64-cpu");
-  expect(view.offer?.size).toBe(622710197);
+  expect(view.offer?.size).toBe(510384603);
   expect(fake.requests).toEqual([]);
 });
 
@@ -237,28 +238,28 @@ test("a host that cannot be reached is a failed fetch", async () => {
 
 test("a lower sequence is refused, an equal one changes nothing, a higher one replaces", async () => {
   const h = open();
-  await publish("v2.6.0", sampleManifest({ sequence: 5, packageVersion: "2.6.0" }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 4, packageVersion: "2.6.0" }));
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v2.6.0", replaced: true });
   expect(await packages(h)).toMatchObject({ offer: { packageVersion: "2.6.0", source: "downloaded", tag: "v2.6.0" } });
 
-  await publish("v2.5.9", sampleManifest({ sequence: 3, packageVersion: "2.5.9" }));
+  await publish("v2.5.9", sampleManifest({ sequence: BUILTIN_SEQUENCE + 2, packageVersion: "2.5.9" }));
   expect((await refresh(h)).result).toEqual({
     ok: false,
-    error: { code: "manifest.older_sequence", data: { held: 5, offered: 3 } },
+    error: { code: "manifest.older_sequence", data: { held: BUILTIN_SEQUENCE + 4, offered: BUILTIN_SEQUENCE + 2 } },
   });
   expect((await packages(h)).offer?.packageVersion).toBe("2.6.0");
 
-  await publish("v2.6.0-again", sampleManifest({ sequence: 5, packageVersion: "2.6.1" }));
+  await publish("v2.6.0-again", sampleManifest({ sequence: BUILTIN_SEQUENCE + 4, packageVersion: "2.6.1" }));
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v2.6.0-again", replaced: false });
   expect((await packages(h)).offer?.packageVersion).toBe("2.6.0");
 
-  await publish("v2.7.0", sampleManifest({ sequence: 7, packageVersion: "2.7.0" }));
+  await publish("v2.7.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 6, packageVersion: "2.7.0" }));
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v2.7.0", replaced: true });
   expect(await packages(h)).toMatchObject({ offer: { packageVersion: "2.7.0", source: "downloaded", tag: "v2.7.0" } });
 });
 
 test("a manifest with the sequence of the built-in entry changes nothing", async () => {
-  await publish("v2.6.0", sampleManifest({ sequence: 1 }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE }));
   const h = open();
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v2.6.0", replaced: false });
   expect((await packages(h)).offer?.source).toBe("builtin");
@@ -266,7 +267,7 @@ test("a manifest with the sequence of the built-in entry changes nothing", async
 
 test("a downloaded manifest survives a restart on the same data folder", async () => {
   folder = mkdtempSync(join(os.tmpdir(), "aidm-ui-manifest-"));
-  await publish("v2.6.0", sampleManifest({ sequence: 4, packageVersion: "2.6.0" }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 3, packageVersion: "2.6.0" }));
   const first = open({ dataFolder: folder });
   await refresh(first);
   await first.stop();
@@ -279,38 +280,38 @@ test("a downloaded manifest survives a restart on the same data folder", async (
 
 test("a stored manifest whose key left the list is ignored and logged", async () => {
   folder = mkdtempSync(join(os.tmpdir(), "aidm-ui-manifest-"));
-  await publish("v2.6.0", sampleManifest({ sequence: 4 }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 3 }));
   const first = open({ dataFolder: folder });
   await refresh(first);
   await first.stop();
   harness = undefined;
 
   const second = open({ dataFolder: folder, manifest: { keys: [...ACCEPTED_KEYS] } });
-  expect((await packages(second)).offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin" });
+  expect((await packages(second)).offer).toMatchObject({ packageVersion: "2.7.0", source: "builtin" });
   expect(second.logs.some((line) => line.includes("stored manifest was ignored"))).toBe(true);
 });
 
 test("a manifest below the highest sequence ever accepted is refused, even after the stored one was dropped", async () => {
   folder = mkdtempSync(join(os.tmpdir(), "aidm-ui-manifest-"));
   const second = await generateSigner("second-key");
-  await publish("v2.6.0", sampleManifest({ sequence: 5 }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 4 }));
   const first = open({ dataFolder: folder });
   await refresh(first);
   await first.stop();
   harness = undefined;
 
   // The key that signed the stored manifest leaves the list, so the stored manifest is dropped.
-  await publish("v2.5.9", sampleManifest({ sequence: 3, packageVersion: "2.5.9" }), second);
+  await publish("v2.5.9", sampleManifest({ sequence: BUILTIN_SEQUENCE + 2, packageVersion: "2.5.9" }), second);
   const next = open({ dataFolder: folder, manifest: { keys: keys(second) } });
-  expect((await packages(next)).offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin" });
+  expect((await packages(next)).offer).toMatchObject({ packageVersion: "2.7.0", source: "builtin" });
   expect((await refresh(next)).result).toEqual({
     ok: false,
-    error: { code: "manifest.older_sequence", data: { held: 5, offered: 3 } },
+    error: { code: "manifest.older_sequence", data: { held: BUILTIN_SEQUENCE + 4, offered: BUILTIN_SEQUENCE + 2 } },
   });
   expect((await packages(next)).offer?.source).toBe("builtin");
 
   // The same sequence as the floor is accepted again, because nothing newer is held.
-  await publish("v2.6.0-resigned", sampleManifest({ sequence: 5 }), second);
+  await publish("v2.6.0-resigned", sampleManifest({ sequence: BUILTIN_SEQUENCE + 4 }), second);
   expect((await refresh(next)).result).toEqual({ ok: true, tag: "v2.6.0-resigned", replaced: true });
 });
 
@@ -332,7 +333,7 @@ test("variants this version does not know are skipped and logged once, and the r
 });
 
 test("a stored manifest that was altered after it was signed is ignored and logged once, and the built-in offer stands", async () => {
-  await publish("v2.6.0", sampleManifest({ sequence: 4 }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 3 }));
   const h = open();
   await refresh(h);
   expect((await packages(h)).offer?.source).toBe("downloaded");
@@ -341,7 +342,7 @@ test("a stored manifest that was altered after it was signed is ignored and logg
   const text = atob(held.bytes).replace('"packageVersion": "2.6.0"', '"packageVersion": "9.9.9"');
   h.settings.set("manifest.held", { ...held, bytes: btoa(text) });
 
-  expect((await packages(h)).offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin" });
+  expect((await packages(h)).offer).toMatchObject({ packageVersion: "2.7.0", source: "builtin" });
   await packages(h);
   await packages(h);
   expect(h.logs.filter((line) => line.includes("stored manifest was ignored"))).toHaveLength(1);
@@ -350,16 +351,16 @@ test("a stored manifest that was altered after it was signed is ignored and logg
 // A manifest whose minimum aidm-ui version is too high is not offered and the "update the interface" message code is shown.
 
 test("a newer manifest that needs a newer interface is kept, the built-in package is still offered, and the reason says why", async () => {
-  await publish("v3.0.0", sampleManifest({ sequence: 9, minimumUiVersion: "10.0.0" }));
+  await publish("v3.0.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 8, minimumUiVersion: "10.0.0" }));
   const h = open();
   expect((await refresh(h)).result).toEqual({ ok: true, tag: "v3.0.0", replaced: true });
   const view = await packages(h);
-  expect(view.offer).toMatchObject({ packageVersion: "2.5.0", source: "builtin", tag: null });
+  expect(view.offer).toMatchObject({ packageVersion: "2.7.0", source: "builtin", tag: null });
   expect(view.reason).toEqual({ code: "manifest.update_interface", data: { minimum: "10.0.0", running: "9.9.9" } });
 });
 
 test("a stored manifest the interface can run is offered over the built-in entry, with no reason", async () => {
-  await publish("v2.6.0", sampleManifest({ sequence: 9, minimumUiVersion: "9.0.0" }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 8, minimumUiVersion: "9.0.0" }));
   const h = open();
   await refresh(h);
   const view = await packages(h);
@@ -368,7 +369,7 @@ test("a stored manifest the interface can run is offered over the built-in entry
 });
 
 test("when no manifest is one the interface can run, nothing is offered and the newest one's minimum is named", async () => {
-  await publish("v3.0.0", sampleManifest({ sequence: 9, minimumUiVersion: "10.0.0" }));
+  await publish("v3.0.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 8, minimumUiVersion: "10.0.0" }));
   const h = open({ manifest: { uiVersion: "0.0.1" } });
   await refresh(h);
   const view = await packages(h);
@@ -377,7 +378,7 @@ test("when no manifest is one the interface can run, nothing is offered and the 
 });
 
 test("a running version that cannot be read offers no manifest at all", async () => {
-  await publish("v2.6.0", sampleManifest({ sequence: 9 }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 8 }));
   const h = open({ manifest: { uiVersion: "development" } });
   await refresh(h);
   const view = await packages(h);
@@ -386,7 +387,7 @@ test("a running version that cannot be read offers no manifest at all", async ()
 });
 
 test("a manifest for exactly the running interface is offered", async () => {
-  await publish("v2.6.0", sampleManifest({ sequence: 9, minimumUiVersion: "9.9.9" }));
+  await publish("v2.6.0", sampleManifest({ sequence: BUILTIN_SEQUENCE + 8, minimumUiVersion: "9.9.9" }));
   const h = open();
   await refresh(h);
   expect((await packages(h)).offer?.packageVersion).toBe("2.6.0");

@@ -1,21 +1,13 @@
 # Built-in manifest entry
 
-`2.5.0.json` describes the published aidm-api 2.5.0 release, which predates manifests and never gets one. It goes through the same code path as a downloaded manifest (ADR 0003). `2.5.0.json.sig.b64` is its raw Ed25519 signature in base64.
+`2.7.0.json` contains the exact manifest published with API 2.7.0. `2.7.0.json.sig.b64` stores its raw Ed25519 signature as base64. The default setup offers this package before any release check. The manifest names engine 0.2.0 and sequence 2007000.
 
-Where the numbers come from:
+The publisher's public key is already accepted in `../keys.ts`. The built-in bytes pass through the same signature and schema verification as a downloaded manifest. The release's per-platform image digests, compressed sizes and socket capabilities are preserved. Nothing is resigned, and no key, schema or sequence rule changes when selecting this entry.
 
-- Image: `ghcr.io/aidronemap/aidm-api`, pinned by digest, never by tag.
-- Digests: the per-platform image digests listed in the multi-platform index of the 2.5.0 release (index digest `sha256:d31ddbb2c1e04cfa67365c7a8dc9bc3b6b4f3b486371a2d60b97a2457c79bdcc`). The GPU image is its own image, index digest `sha256:ae6e4538f6c5715951001e0e388c7bb4e28977e6db1c48adcf39705626342b72`.
-- Sizes: the sum of the compressed layer sizes and the config size in each platform manifest. That is the number of bytes a pull downloads.
-- Sequence 1, so any downloaded manifest replaces it.
+The release is https://github.com/AIDroneMap/aidm-api/releases/tag/v2.7.0. The manifest SHA-256 is `a91dc6bc9445974444adc1a18665571544f46dc0df9f278e879015b83a079d97`. Matching fixtures and signature-tampering checks are in `test-support/fixtures` and `server/manifest/verify.test.ts`. Route regressions in `server/manifest/builtin-offer.test.ts` check fresh Linux and Apple silicon offers and the update offer for an older saved installation.
 
-The signature is made with the development test key listed in `../keys.ts`. The maintainer replaces the key and signs the file again with `scripts/sign-manifest.ts`. A build is a release build unless it is given `--development`, and a release build refuses the test key (`bun scripts/build.ts`).
+A new UI build does not silently replace an installed engine or its recorded data. The normal engine controls offer the newer package and require the operator to start the update. This preserves running work and rollback behavior.
 
-Signing:
+The `2.5.0` files are retained for historical compatibility tests. `builtin.ts` no longer imports them for installation. That older entry predates publisher manifests and is signed by the development test key.
 
-- `bun scripts/sign-manifest.ts --generate-key --out-key <new-file.pem>` makes a key pair. The private key goes to a new file that only its owner can read, and the command refuses a path that already exists. It prints only the public key, which goes into `../keys.ts`. Keep the private key file offline.
-- `bun scripts/sign-manifest.ts 2.5.0.json < <private-key.pem>` reads the private key from standard input. It refuses a manifest the app would not read, and checks the signature against the public key of the private key before it writes anything.
-- It writes the raw signature to `2.5.0.json.sig` and its base64 text to `2.5.0.json.sig.b64`. The built-in entry keeps the `.sig.b64` file; the release publishes the raw `manifest.json.sig`.
-- `.gitattributes` marks this folder as not text, so a checkout on Windows keeps the exact bytes the signature covers.
-
-The entry is removed once 2.6.1 is the oldest supported task API version (there is no 2.6.0 release).
+Development builds still accept that test key. The release-build check still rejects it. Updating the default package does not turn a development executable into a production release or change the accepted-key list.

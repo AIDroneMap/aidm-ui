@@ -19,13 +19,16 @@ export async function generateSigner(id = "test-key"): Promise<TestSigner> {
   };
 }
 
+/** The sequence of the published built-in release; synthetic updates must follow it. */
+export const BUILTIN_SEQUENCE = 2_007_000;
+
 const DIGEST = `sha256:${"ab".repeat(32)}`;
 
 /** A small valid manifest; override any field. */
 export function sampleManifest(overrides: Partial<Manifest> = {}): Manifest {
   return {
     schemaVersion: 1,
-    sequence: 2,
+    sequence: BUILTIN_SEQUENCE + 1,
     packageVersion: "2.6.0",
     engineVersion: "0.2.0",
     minimumUiVersion: "0.1.0",

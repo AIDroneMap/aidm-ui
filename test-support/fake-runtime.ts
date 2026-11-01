@@ -19,6 +19,7 @@ import {
   type RuntimeResult,
 } from "../server/runtimes/runtime.ts";
 import { FakeTaskApi } from "./fake-task-api.ts";
+import published from "./fixtures/api-2.7.0-manifest.json";
 import { recordedText } from "./scripted-runner.ts";
 
 interface FakeContainer {
@@ -232,10 +233,11 @@ export class FakeRuntime implements ContainerRuntime {
     // The real task API exits with status 1 when it cannot read its config file.
     // The fake does the same: the container is created and is already stopped.
     const config = readConfigToken(spec);
-    const version = this.versionOf?.(spec.image);
+    const released = Object.values(published.variants).some((variant) => spec.image === `${variant.image}@${variant.digest}`);
+    const version = this.versionOf?.(spec.image) ?? (released ? published.packageVersion : undefined);
     const api = new FakeTaskApi({
       token: config === undefined ? "fake-token" : (config ?? ""),
-      info: { ...(version === undefined ? {} : { version }), ...(readConfig(spec)?.imagesRoot ? { imagesPath: true } : {}) },
+      info: { ...(version === undefined ? {} : { version }), ...(released ? { engineVersion: published.engineVersion } : {}), ...(readConfig(spec)?.imagesRoot ? { imagesPath: true } : {}) },
     });
     api.inputPath = path => {
       const mount = spec.mounts.find(mount => path === mount.containerPath);

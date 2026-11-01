@@ -156,7 +156,6 @@ real(
     }
     const assets = modelAcceptance ? await modelAcceptanceAssets(join(scratch, "viewer")) : undefined;
     const manifest = sampleManifest({
-      sequence: 2,
       packageVersion: version as string,
       variants: {
         "linux-amd64-cpu": {

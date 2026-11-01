@@ -2,13 +2,15 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import { bytesToBase64 } from "../../shared/base64.ts";
 import type { ApiError } from "../../shared/api-error.ts";
 import type { LocalEngineView } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
-import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
+import { BUILTIN_SEQUENCE, generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
 import { imageFolder } from "../images/image-download.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
+import legacy from "../manifest/builtin/2.5.0.json";
 import type { Manifest } from "../manifest/schema.ts";
 import type { InstalledContainerPackage } from "../settings/settings.ts";
 import { CONTAINER_NAME } from "../packages/container-package.ts";
@@ -100,7 +102,7 @@ function start(options: { runtime?: FakeRuntime; timeoutMs?: number; harness?: P
 function release(version: "2.6.0" | "2.7.0", sequence: number, overrides: Partial<Manifest> = {}): Manifest {
   const digest = IMAGES[version].slice(IMAGES[version].indexOf("@") + 1);
   return sampleManifest({
-    sequence,
+    sequence: BUILTIN_SEQUENCE + sequence,
     packageVersion: version,
     variants: {
       "linux-amd64-cpu": { kind: "container", image: REPOSITORY, digest, size: SIZES[version], gpu: false },
@@ -128,6 +130,19 @@ async function errorOf(response: Response): Promise<ApiError> {
 }
 
 async function installAndWaitReady(h: Harness): Promise<void> {
+  // Compatibility scenarios start from a historical package. Its signed
+  // fixture is remembered state, not the current first-install default.
+  if (h.settings.get("local.package") === null && h.settings.get("manifest.held") === null) {
+    const manifest = sampleManifest({
+      sequence: BUILTIN_SEQUENCE + 1,
+      packageVersion: legacy.packageVersion,
+      engineVersion: legacy.engineVersion,
+      variants: legacy.variants as Manifest["variants"],
+    });
+    const { bytes, signature } = await signedRelease(signer, manifest);
+    h.settings.set("manifest.held", { bytes: bytesToBase64(bytes), signature: bytesToBase64(signature), tag: "v2.5.0" });
+    h.settings.set("manifest.sequenceFloor", manifest.sequence);
+  }
   expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
   await eventually(async () => (await localView(h)).state === "ready");
 }
@@ -228,13 +243,13 @@ test("a manifest signed with a key that is not accepted offers nothing", async (
   expect((await localView(h)).update.available).toBeNull();
 });
 
-test("a release that is not newer than the installed one, or that needs a newer interface, offers nothing", async () => {
+test("a non-newer release offers nothing, while an incompatible one keeps the compatible built-in update", async () => {
   const h = start();
   await installAndWaitReady(h);
   await offer(h, release("2.6.0", 2, { packageVersion: "2.5.0" }));
   expect((await localView(h)).update.available).toBeNull();
   await offer(h, release("2.7.0", 3, { minimumUiVersion: "99.0.0" }));
-  expect((await localView(h)).update.available).toBeNull();
+  expect((await localView(h)).update.available).toEqual({ packageVersion: "2.7.0", size: 573636504 });
 });
 
 test("the daily check finds the release when the setting is daily, and there is no network call when it is never", async () => {
