@@ -269,6 +269,13 @@ jobs:
             gh release create "$tag" --draft --verify-tag --title "AIDM UI $VERSION" --notes-file release-notes.md
           fi
 
-          # Only reached for a draft
+          # Only reached for a draft. A file an earlier run attached and this run
+          # did not build goes, so the files always match SHA256SUMS and the notes.
+          gh release view "$tag" --json assets --jq '.assets[].name' | while read -r name; do
+            if [ ! -e "release/$name" ]; then
+              echo "Removing $name, which this run did not build"
+              gh release delete-asset "$tag" "$name" --yes
+            fi
+          done
           gh release upload "$tag" release/* --clobber
           gh release view "$tag" --json url,assets --jq '.url, (.assets[] | "\(.name) \(.size)")'
