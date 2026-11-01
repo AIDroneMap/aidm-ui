@@ -43,7 +43,6 @@ beforeEach(async () => {
   });
   repository = `${new URL(fake.url("/")).host}/aidronemap/aidm-api`;
   const manifest = sampleManifest({
-    sequence: 2,
     packageVersion: "2.6.0",
     variants: { "linux-amd64-cpu": { kind: "container", image: repository, digest: image.digest, size: image.size, gpu: false } },
   });

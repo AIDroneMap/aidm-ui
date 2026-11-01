@@ -106,13 +106,15 @@ describe("verifyManifest", () => {
   });
 });
 
-describe("the built-in 2.5.0 entry", () => {
+describe("the built-in published 2.7.0 entry", () => {
   test("verifies against the accepted keys through the same path as a downloaded manifest", async () => {
     const result = await verifyBuiltinManifest();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.packageVersion).toBe("2.5.0");
-    expect(result.manifest.sequence).toBe(1);
+    expect(result.manifest.packageVersion).toBe("2.7.0");
+    expect(result.manifest.engineVersion).toBe("0.2.0");
+    expect(result.keyId).toBe("api-release-2026");
+    expect(result.manifest.sequence).toBe(2007000);
     expect(Object.keys(result.manifest.variants)).toEqual(["linux-amd64-cpu", "linux-arm64-cpu", "linux-amd64-gpu"]);
     for (const variant of Object.values(result.manifest.variants)) expect(variant?.kind).toBe("container");
     expect(ACCEPTED_KEYS.some((key) => key.id === result.keyId)).toBe(true);

@@ -16,7 +16,7 @@ import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
 const GiB = 1024 ** 3;
-const ENGINE_SIZE = 622_710_197;
+const ENGINE_SIZE = 510_384_603;
 /** The sizes of the real pins, for the tests that download nothing. */
 const REAL_KERNEL_SIZE = 696_573_576;
 const REAL_INIT_SIZE = 69_425_005;
@@ -334,7 +334,6 @@ test("before any click the view already holds the plan of what the Mac lacks, an
   expect((await localView(missing.h)).plan).toEqual([
     { id: "installer", size: pin.size },
     { id: "approve", size: null },
-    { id: "network", size: null },
     { id: "service", size: null },
     { id: "kernel", size: kernelBytes.length },
     { id: "init", size: initSize },
@@ -369,7 +368,6 @@ test("the step list is complete, with the sizes of the downloads, before the fir
   expect(accepted.install?.steps).toEqual([
     { id: "installer", size: pin.size },
     { id: "approve", size: null },
-    { id: "network", size: null },
     { id: "service", size: null },
     { id: "kernel", size: kernelBytes.length },
     { id: "init", size: initSize },
@@ -380,9 +378,9 @@ test("the step list is complete, with the sizes of the downloads, before the fir
 
   await eventually(async () => (await localView(h)).state === "ready");
   const installViews = views.filter((view) => view.install !== null).map((view) => view.install);
-  for (const install of installViews) expect(ids(install?.steps ?? [])).toEqual(["installer", "approve", "network", "service", "kernel", "init", "engine"]);
-  // The steps came in order, and the engine's download came last. The Local Network permission is the operator's
-  // answer when the engine first starts, so the install never stands on that step.
+  for (const install of installViews) expect(ids(install?.steps ?? [])).toEqual(["installer", "approve", "service", "kernel", "init", "engine"]);
+  // The engine download comes last. The published package uses the socket
+  // relay, so there is no Local Network approval step.
   const seen = installViews.map((install) => install?.step).filter((step, index, all) => step !== all[index - 1]);
   expect(seen).toEqual(["installer", "approve", "service", "kernel", "init", "engine"]);
   const firstEngine = installViews.findIndex((install) => install?.step === "engine");
@@ -729,7 +727,7 @@ test("a failure while working out the install steps is logged as that, and not a
 
 // Criterion: the recorded start command always carries the memory and CPU flags and the rest, and never the token.
 
-test("the container starts with the caps, the loopback publish, the bind mounts and the fixed name, and no token, no restart flag and no platform flag", async () => {
+test("the container starts with the caps, the socket relay, the bind mounts and the fixed name, and no token, no restart flag and no platform flag", async () => {
   const { h, apple } = mac("missing");
   await send(h, "POST", "/api/local-engine/install");
   await eventually(async () => (await localView(h)).state === "ready");
@@ -741,7 +739,9 @@ test("the container starts with the caps, the loopback publish, the bind mounts 
   expect(argv).not.toContain("--platform");
   expect(argv).toContain("--memory");
   expect(argv).toContain("--cpus");
-  expect(argv[argv.indexOf("-p") + 1]).toMatch(/^127\.0\.0\.1:\d+:3000$/);
+  expect(argv).not.toContain("-p");
+  expect(argv).toContain("--publish-socket");
+  expect(started?.spec.publishSocket?.containerPath).toBe("/run/task-api.sock");
   expect(argv[argv.indexOf("-v") + 1]).toBe(`${join(h.dataFolder, "engine-data")}:/var/www/data`);
   expect(argv).toContain(`${containerConfigFolder(h.dataFolder)}:/etc/aidm-ui:ro`);
   expect(argv.slice(-2)).toEqual(["--config", "/etc/aidm-ui/task-api.json"]);

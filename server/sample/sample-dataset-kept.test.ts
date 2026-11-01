@@ -19,7 +19,7 @@ import { SAMPLE_DATASET, type SampleDatasetEntry } from "./sample-dataset.ts";
 
 const IMAGES = ["DJI_0001.JPG", "DJI_0002.JPG", "dji_0003.jpeg"];
 const REPOSITORY = "ghcr.io/aidronemap/aidm-api";
-const IMAGE_2_6_0 = `${REPOSITORY}@sha256:${"6".repeat(64)}`;
+const IMAGE_2_8_0 = `${REPOSITORY}@sha256:${"6".repeat(64)}`;
 
 let scratch: string;
 let dataFolder: string;
@@ -192,7 +192,7 @@ test("aidm-ui started again, as after an update of aidm-ui, uses the kept zip", 
 
 test("installing the local engine and updating it leave the zip in place", async () => {
   const signer: TestSigner = await generateSigner();
-  const versionOf = (image: string) => (image === IMAGE_2_6_0 ? "2.6.0" : "2.5.0");
+  const versionOf = (image: string) => (image === IMAGE_2_8_0 ? "2.8.0" : "2.7.0");
   await harness.stop();
   harness = open({
     runtimes: { podman: new FakeRuntime({ versionOf }) },
@@ -212,22 +212,21 @@ test("installing the local engine and updating it leave the zip in place", async
   expectKept();
 
   const manifest = sampleManifest({
-    sequence: 2,
-    packageVersion: "2.6.0",
+    packageVersion: "2.8.0",
     variants: {
-      "linux-amd64-cpu": { kind: "container", image: REPOSITORY, digest: IMAGE_2_6_0.slice(IMAGE_2_6_0.indexOf("@") + 1), size: 6_000, gpu: false },
+      "linux-amd64-cpu": { kind: "container", image: REPOSITORY, digest: IMAGE_2_8_0.slice(IMAGE_2_8_0.indexOf("@") + 1), size: 6_000, gpu: false },
     },
   });
   const { bytes, signature } = await signedRelease(signer, manifest);
-  releases.files.set("/releases/download/v2.6.0/manifest.json", bytes);
-  releases.files.set("/releases/download/v2.6.0/manifest.json.sig", signature);
-  releases.redirects.set("/releases/latest/download/manifest.json", "/releases/download/v2.6.0/manifest.json");
+  releases.files.set("/releases/download/v2.8.0/manifest.json", bytes);
+  releases.files.set("/releases/download/v2.8.0/manifest.json.sig", signature);
+  releases.redirects.set("/releases/latest/download/manifest.json", "/releases/download/v2.8.0/manifest.json");
   expect((await send("POST", "/api/packages/refresh")).status).toBe(200);
 
   expect((await send("POST", "/api/local-engine/update")).status).toBe(202);
   await eventually(async () => {
     const view = await localView();
-    return view.installed?.packageVersion === "2.6.0" && view.update.applying === null;
+    return view.installed?.packageVersion === "2.8.0" && view.update.applying === null;
   });
   expectKept();
 

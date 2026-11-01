@@ -13,12 +13,12 @@ import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 
 // Criteria of ticket #13. The three checks answer through recorded outputs; the container tool is the fake.
 
-const CPU_IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:a58c2a633f0f7c1df2a1a441321b1404bad98ece8896ef01ca9b18dfeb2e035e";
-const GPU_IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:58889cfff9ae903737a38b5a38cb0b019a2a3d869399e0633a26c8cb6ca7f920";
+const CPU_IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:a16acea2c75ab17204748fe3e28a19df5ec18c0c1f3af875cdc371158876e7e3";
+const GPU_IMAGE = "ghcr.io/aidronemap/aidm-api@sha256:d2174ca647d618f64ddecef3435b14a0d04646dbc6f5cdf158e90d5ea391cef6";
 const CHECK_NAME = "aidm-local-engine-gpu-check";
-const GPU_SIZE = 5_678_958_647;
-const CPU_SIZE = 682_533_845;
-const GPU_DIGEST = "sha256:58889cfff9ae903737a38b5a38cb0b019a2a3d869399e0633a26c8cb6ca7f920";
+const GPU_SIZE = 6_546_615_675;
+const CPU_SIZE = 573_636_504;
+const GPU_DIGEST = "sha256:d2174ca647d618f64ddecef3435b14a0d04646dbc6f5cdf158e90d5ea391cef6";
 const GPU_FLAGS = { podman: ["--device", "nvidia.com/gpu=all"], docker: ["--gpus", "all"] } as const;
 
 const open: Harness[] = [];
@@ -133,7 +133,7 @@ for (const tool of ["docker", "podman"] as const) {
     expect(runtime.removedImages).toEqual([GPU_IMAGE]);
     expect(runtime.images.has(GPU_IMAGE)).toBe(false);
     expect(runtime.images.has(CPU_IMAGE)).toBe(true);
-    expect(view.installed).toMatchObject({ variant: "linux-amd64-cpu", packageVersion: "2.5.0" });
+    expect(view.installed).toMatchObject({ variant: "linux-amd64-cpu", packageVersion: "2.7.0" });
     expect(view.warnings).toEqual([{ code: "gpu.in_image_failed", data: { guideUrl: NVIDIA_TOOLKIT_GUIDE_URL } }]);
     const argv = runtime.starts[0]?.argv ?? [];
     expect(argv).toContain(CPU_IMAGE);
@@ -415,7 +415,7 @@ test("the processor package of the fallback comes from the manifest the graphics
   // A newer manifest arrives while the graphics card package is being tested.
   const base = sampleManifest();
   const newer = sampleManifest({
-    sequence: 5,
+    sequence: 2_007_004,
     packageVersion: "3.0.0",
     variants: {
       ...base.variants,
@@ -428,5 +428,5 @@ test("the processor package of the fallback comes from the manifest the graphics
 
   await eventually(async () => (await localView(h)).state === "ready");
   expect(runtime.loads).toEqual([GPU_IMAGE, CPU_IMAGE]);
-  expect((await localView(h)).installed).toMatchObject({ packageVersion: "2.5.0", variant: "linux-amd64-cpu" });
+  expect((await localView(h)).installed).toMatchObject({ packageVersion: "2.7.0", variant: "linux-amd64-cpu" });
 });

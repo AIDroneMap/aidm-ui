@@ -8,7 +8,7 @@ import type { VariantId } from "../shared/api-types.ts";
 import type { Manifest } from "../server/manifest/schema.ts";
 import { systemRunner, type CommandRunner } from "../server/process/command-runner.ts";
 import { recorded } from "./scripted-runner.ts";
-import { sampleManifest } from "./signed-manifest.ts";
+import { BUILTIN_SEQUENCE, sampleManifest } from "./signed-manifest.ts";
 
 const FAKE_ENGINE = join(import.meta.dir, "fake-native-engine.ts");
 
@@ -131,15 +131,15 @@ export async function buildHostileArchive(version: string, hostility: Hostility)
 /** Where the archive is said to be, in a manifest. The fetch of the test sends this host to the fake file server. */
 export const ARCHIVE_HOST = "https://releases.example.test";
 
-/** A manifest whose entry for the variant (by default linux-amd64-cpu) is the native archive. */
+/** A synthetic manifest after the built-in sequence, with the native archive for the variant. */
 export function nativeRelease(
   archive: TestArchive,
-  sequence: number,
+  sequenceOffset: number,
   overrides: Partial<Manifest> = {},
   variant: VariantId = "linux-amd64-cpu",
 ): Manifest {
   return sampleManifest({
-    sequence,
+    sequence: BUILTIN_SEQUENCE + sequenceOffset,
     packageVersion: archive.version,
     variants: {
       [variant]: {

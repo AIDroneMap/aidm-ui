@@ -1,6 +1,6 @@
 import { base64ToBytes } from "../../shared/base64.ts";
-import manifestText from "./builtin/2.5.0.json" with { type: "text" };
-import signatureText from "./builtin/2.5.0.json.sig.b64" with { type: "text" };
+import manifestText from "./builtin/2.7.0.json" with { type: "text" };
+import signatureText from "./builtin/2.7.0.json.sig.b64" with { type: "text" };
 import type { AcceptedKey } from "./keys.ts";
 import { verifyManifest, type VerifiedManifest } from "./verify.ts";
 
@@ -14,7 +14,7 @@ function embeddedFileText(module: unknown): string {
   return module;
 }
 
-/** The built-in 2.5.0 entry, checked like any downloaded manifest. */
+/** The built-in published 2.7.0 entry, checked like any downloaded manifest. */
 export function verifyBuiltinManifest(keys?: readonly AcceptedKey[]): Promise<VerifiedManifest> {
   return verifyManifest(new TextEncoder().encode(embeddedFileText(manifestText)), base64ToBytes(signatureText), keys);
 }

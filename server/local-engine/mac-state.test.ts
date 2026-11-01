@@ -132,7 +132,7 @@ for (const service of ["stopped", "running"] as const) {
     expectToolLeftAlone(runner);
     expect(noNetwork.calls).toEqual([]);
     // The engine came through the image downloader and the tool's load.
-    expect(h.images.downloads.map((pinned) => pinned.digest)).toEqual(["sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd"]);
+    expect(h.images.downloads.map((pinned) => pinned.digest)).toEqual(["sha256:864b04cf67ac594ece1347977891dd8b67117012e206f30581af543320193c02"]);
     expect(apple.loads).toHaveLength(1);
     // The installer from the first test is where it was, and was not opened.
     expect(readFileSync(join(dataFolder, "downloads", "container-1.6.1-installer-signed.pkg"), "utf8")).toBe("the installer from the first test");
@@ -172,7 +172,7 @@ test("after a reboot the installed engine starts again: the service is started w
   const first = theMac("running", dataFolder);
   expect((await install(first.h)).status).toBe(202);
   await eventually(async () => (await localView(first.h)).state === "ready", 5000);
-  const pinned = "ghcr.io/aidronemap/aidm-api@sha256:107b6ef1049699b3bdcc055b4ecc704eaf0a9380202294a944e9eeff6c44e7fd";
+  const pinned = "ghcr.io/aidronemap/aidm-api@sha256:864b04cf67ac594ece1347977891dd8b67117012e206f30581af543320193c02";
   await first.h.stop();
   harnesses.splice(harnesses.indexOf(first.h), 1);
 
