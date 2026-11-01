@@ -43,6 +43,13 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     const send = (method: string, params: object = {}) => new Promise<any>(resolve => { const next = ++id; pending.set(next, resolve); socket!.send(JSON.stringify({ id: next, method, params })); });
     const evaluate = async (expression: string) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.result.exceptionDetails) throw new Error(JSON.stringify(result.result.exceptionDetails)); return result.result.result.value; };
     const wait = (expression: string) => evaluate(`new Promise((resolve,reject) => { const end = Date.now()+10000; const check = () => ${expression} ? resolve(true) : Date.now()>end ? reject(new Error('condition timed out')) : setTimeout(check,20); check(); })`);
+    const expectContained = async () => {
+      const { canvas, container } = await evaluate("({canvas:document.querySelector('.maplibregl-canvas').getBoundingClientRect().toJSON(),container:document.querySelector('.result-map').getBoundingClientRect().toJSON()})");
+      expect(canvas.left).toBeGreaterThanOrEqual(container.left - 0.5);
+      expect(canvas.top).toBeGreaterThanOrEqual(container.top - 0.5);
+      expect(canvas.right).toBeLessThanOrEqual(container.right + 0.5);
+      expect(canvas.bottom).toBeLessThanOrEqual(container.bottom + 0.5);
+    };
     await send("Network.enable");
     await send("Runtime.enable");
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
@@ -54,6 +61,7 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     await wait("document.querySelector('.maplibregl-canvas') && document.body.textContent.includes('Map centre, latitude:')");
     await wait("performance.getEntriesByType('resource').some(entry => entry.name.includes('/tiles/'))");
     await wait("!document.querySelector('fieldset').disabled");
+    await expectContained();
     expect(await evaluate("document.querySelectorAll('fieldset input').length")).toBe(2);
     expect(await evaluate("document.querySelectorAll('fieldset input')[1].checked")).toBe(false);
     await evaluate("document.querySelector('fieldset input').focus()");
@@ -71,6 +79,7 @@ test("renders local tiles and supports keyboard and layer controls", async () =>
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
     await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
     await wait(`document.querySelector('p[aria-live]').textContent !== ${JSON.stringify(before)}`);
+    await expectContained();
     const scaleBeforeZoom = await evaluate("document.querySelector('.maplibregl-ctrl-scale').textContent");
     const tilesBeforeZoom = requests.filter(url => url.includes("/tiles/")).length;
     await send("Input.dispatchKeyEvent", { type: "keyDown", key: "+", code: "Equal", windowsVirtualKeyCode: 187, modifiers: 8 });
