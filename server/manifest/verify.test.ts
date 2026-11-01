@@ -52,6 +52,37 @@ describe("verifySignature", () => {
 });
 
 describe("verifyManifest", () => {
+  // Exact release bytes from https://github.com/AIDroneMap/aidm-api/releases/tag/v2.7.0.
+  test("accepts the published API 2.7.0 manifest through the default trust list", async () => {
+    const bytes = new Uint8Array(await Bun.file(new URL("../../test-support/fixtures/api-2.7.0-manifest.json", import.meta.url)).arrayBuffer());
+    const encoded = await Bun.file(new URL("../../test-support/fixtures/api-2.7.0-manifest.sig.b64", import.meta.url)).text();
+    const signature = Uint8Array.from(atob(encoded.trim()), (byte) => byte.charCodeAt(0));
+    const result = await verifyManifest(bytes, signature);
+    expect(result).toMatchObject({
+      ok: true,
+      keyId: "api-release-2026",
+      manifest: {
+        schemaVersion: 1,
+        sequence: 2007000,
+        packageVersion: "2.7.0",
+        engineVersion: "0.2.0",
+        minimumUiVersion: "0.1.0",
+        variants: {
+          "linux-amd64-cpu": { digest: "sha256:a16acea2c75ab17204748fe3e28a19df5ec18c0c1f3af875cdc371158876e7e3", gpu: false, taskApiSocket: true },
+          "linux-arm64-cpu": { digest: "sha256:864b04cf67ac594ece1347977891dd8b67117012e206f30581af543320193c02", gpu: false, taskApiSocket: true },
+          "linux-amd64-gpu": { digest: "sha256:d2174ca647d618f64ddecef3435b14a0d04646dbc6f5cdf158e90d5ea391cef6", gpu: true, taskApiSocket: true },
+        },
+      },
+    });
+    const changedBytes = bytes.slice();
+    changedBytes[0] = changedBytes[0]! ^ 1;
+    expect((await verifyManifest(changedBytes, signature)).ok).toBe(false);
+    const changedSignature = signature.slice();
+    changedSignature[0] = changedSignature[0]! ^ 1;
+    expect((await verifyManifest(bytes, changedSignature)).ok).toBe(false);
+    expect((await verifyManifest(bytes, signature, ACCEPTED_KEYS.filter((key) => key.id !== "api-release-2026"))).ok).toBe(false);
+  });
+
   test("a signed, valid manifest is returned with the key that signed it", async () => {
     const signer = await generateSigner("k");
     const { bytes, signature } = await signedRelease(signer, sampleManifest());
