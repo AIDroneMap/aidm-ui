@@ -1,9 +1,32 @@
 name: Release build
 
-# Builds the four executables the way a release is built: without the
-# --development flag, so the build stops while a test key is still accepted.
-# It publishes nothing and creates no tag; it uploads each executable as an
-# artifact of its own, with a table of their sizes for the release notes.
+# Builds a release of AIDM UI, version from package.json.
+#
+# A v* tag push builds the executables without the --development flag, so the
+# build stops while a test key is still accepted. It packages the Mac app on a
+# disk image, opens it on a Mac, and opens a draft GitHub release with the
+# disk image, the Linux and Windows executables and SHA256SUMS attached. The
+# tag must be v<version> and on main. The maintainer publishes the draft; a
+# published release is never changed.
+#
+# Run it by hand on a branch for a dry run: the same builds, packaging and
+# checks, with the release files and notes kept as the release-files artifact,
+# and no release:
+#   gh workflow run release-build.yml --ref <branch>
+# Draft again from an existing tag, for example after a failed run:
+#   gh workflow run release-build.yml --ref v0.1.0
+#
+# The Mac disk image is required. The Linux and Windows executables are
+# attached when they build and pass, and a release goes ahead without them.
+#
+# Mac signing. In a tag run, the mac job runs in the release environment,
+# which admits only v* tags. With these five secrets in that environment, the
+# app is signed with a Developer ID certificate and notarized
+# (scripts/ci/package-macos.sh says what each one holds):
+#   MACOS_SIGNING_CERTIFICATE, MACOS_SIGNING_CERTIFICATE_PASSWORD,
+#   MACOS_NOTARY_KEY, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER_ID
+# Without them, and in every dry run, the app has an ad-hoc signature and the
+# release notes add the steps macOS asks the pilot for.
 on:
   push:
     tags: ["v*"]
@@ -12,10 +35,52 @@ on:
 permissions:
   contents: read
 
+# One run per tag, never cancelled. A new dry run cancels an older one on the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
-  release-build:
-    name: Build the four executables for a release
+  check:
+    name: Check the version
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # The full history, so that the tag's commit can be looked for on main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Read package.json and compare it with the tag
+        id: version
+        run: |
+          version=$(jq -r .version package.json)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::package.json version must look like 1.2.3, found '$version'"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::Tag $GITHUB_REF_NAME is not on main"
+              exit 1
+            fi
+          fi
+          echo "Version $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build the executables for a release
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,42 +88,187 @@ jobs:
       - name: Install Bun
         run: scripts/ci/install-bun.sh
       - run: bun install --frozen-lockfile
-      - name: Cross-compile Linux x64, Linux arm64, macOS arm64 and Windows x64
-        run: bun scripts/build.ts
-      # The workflow publishes no release. The size table goes into the run's
-      # summary and into a file, for the release notes the maintainer writes.
-      - name: Write the size of each executable for the release notes
+      - name: Check that no test key is accepted
+        run: bun scripts/build.ts --check-keys-only
+      - name: Build macOS arm64
+        run: bun scripts/build.ts macos-arm64
+      # The other platforms do not hold the release back. A failed one is left out.
+      - name: Build and smoke test Linux x64
+        id: linux-x64
+        continue-on-error: true
         run: |
+          bun scripts/build.ts linux-x64
+          scripts/ci/smoke-test.sh dist/aidm-ui-linux-x64
+      - name: Build Linux arm64
+        id: linux-arm64
+        continue-on-error: true
+        run: bun scripts/build.ts linux-arm64
+      - name: Build Windows x64
+        id: windows-x64
+        continue-on-error: true
+        run: bun scripts/build.ts windows-x64
+      - name: Write the size of each executable to the run's summary
+        continue-on-error: true
+        run: bun scripts/executable-sizes.ts dist >> "$GITHUB_STEP_SUMMARY"
+      - name: Write the Mac app
+        run: |
+          bun scripts/macos-app.ts dist/aidm-ui-macos-arm64 "$VERSION" mac
+          # A tar file keeps the executable bits that an artifact loses.
+          tar -C mac -cf mac-app.tar "AIDM UI.app"
+      - name: Name the other executables for the release
+        env:
+          LINUX_X64: ${{ steps.linux-x64.outcome }}
+          LINUX_ARM64: ${{ steps.linux-arm64.outcome }}
+          WINDOWS_X64: ${{ steps.windows-x64.outcome }}
+        run: |
+          mkdir release
+          attach() {
+            if [ "$1" = "success" ]; then
+              cp "dist/aidm-ui-$2" "release/aidm-ui-$VERSION-$2"
+            else
+              echo "::warning::$2 did not build or pass, so the release goes without it."
+            fi
+          }
+          attach "$LINUX_X64" linux-x64
+          attach "$LINUX_ARM64" linux-arm64
+          attach "$WINDOWS_X64" windows-x64.exe
+          touch release/.keep
+          ls -l release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac-app
+          path: mac-app.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: other-executables
+          path: release/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  mac:
+    name: Package and open the Mac app
+    needs: [check, build]
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a dry run.
+    runs-on: macos-26
+    timeout-minutes: 60
+    # Only a tag run can reach the signing secrets.
+    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mac-app
+      - name: Unpack the app
+        run: |
+          mkdir mac
+          tar -C mac -xf mac-app.tar
+      - name: Sign the app and make the disk image
+        env:
+          MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: scripts/ci/package-macos.sh "mac/AIDM UI.app" "$VERSION" out
+      - name: Open the app from the disk image
+        run: scripts/ci/macos-app-smoke-test.sh "out/aidm-ui-$VERSION-mac-apple-silicon.dmg" "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac-package
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: Assemble the release files and notes
+    needs: [check, build, mac]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Bun
+        run: scripts/ci/install-bun.sh
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mac-package
+          path: mac
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: other-executables
+          path: release
+      - name: Write the checksums and the notes
+        run: |
+          rm -f release/.keep
+          mv mac/*.dmg release/
+          signing=$(cat mac/mac-signing)
+          (cd release && sha256sum -- * > SHA256SUMS)
           mkdir notes
-          bun scripts/executable-sizes.ts dist > notes/release-notes-sizes.md
-          cat notes/release-notes-sizes.md >> "$GITHUB_STEP_SUMMARY"
+          # shellcheck disable=SC2046
+          bun scripts/release-notes.ts "$VERSION" "$signing" $(ls release) > notes/notes.md
+          {
+            echo "Mac app: $signing"
+            echo
+            echo '```'
+            ls -l release
+            echo
+            cat release/SHA256SUMS
+            echo '```'
+            echo
+            cat notes/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          mv notes/notes.md release-notes.md
+          rmdir notes
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: aidm-ui-release-notes-sizes
-          path: notes/release-notes-sizes.md
+          name: release-files
+          path: |
+            release/
+            release-notes.md
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+
+  release:
+    name: Draft release
+    needs: [check, assemble]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: aidm-ui-linux-x64
-          path: dist/aidm-ui-linux-x64
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: aidm-ui-linux-arm64
-          path: dist/aidm-ui-linux-arm64
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: aidm-ui-macos-arm64
-          path: dist/aidm-ui-macos-arm64
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: aidm-ui-windows-x64
-          path: dist/aidm-ui-windows-x64.exe
-          if-no-files-found: error
-          retention-days: 7
+          name: release-files
+      # Creates or updates a draft. A published release is never touched.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Release $tag is already published. Not changing it."
+              exit 1
+            fi
+            gh release edit "$tag" --draft --notes-file release-notes.md
+          else
+            gh release create "$tag" --draft --verify-tag --title "AIDM UI $VERSION" --notes-file release-notes.md
+          fi
+
+          # Only reached for a draft
+          gh release upload "$tag" release/* --clobber
+          gh release view "$tag" --json url,assets --jq '.url, (.assets[] | "\(.name) \(.size)")'
