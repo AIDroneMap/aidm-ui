@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open maps from cloud-optimized orthophotos that contain overview image directories. Evidence: generated TIFF and BigTIFF metadata tests, map-route regressions, and the retained real-result diagnostic in #111.
+
 - List project runs, retry or change settings, recover missing engine tasks from recorded inputs, and delete individual runs. Queue text uses the engine's total of running and waiting runs. Repeating an older attempt preserves unsaved results from every completed attempt sharing the task. Evidence: `docs/testing/run-management.md`, upload-counting route tests, the production-route keyboard journey and the hosted native task API flow. Closes #71.
 
 - Save, rename and delete operator presets, and export or import a settings file with explicit dropped-option review. Evidence: `docs/testing/settings-files.md`, preset persistence tests and the real-route Chromium round trip.
