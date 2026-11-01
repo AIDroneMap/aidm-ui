@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0
+
+- Package the Mac executable as the AIDM UI app on a disk image, and write release notes that hold only the pilot's install steps. Opening the app starts AIDM UI in the background, and opening it again opens the interface again. Evidence: `scripts/macos-app.test.ts`, `scripts/release-notes.test.ts`, and the release workflow's Mac smoke test, which opens the packaged app on macOS.
+
 - Stop accepting the development test key, so that a release build goes ahead. Engine manifests now verify only against the publisher's API release key. Evidence: the key and release-check tests in `server/manifest/release-check.test.ts`.
 
 - Add a download-first installation and test guide, with setup steps, project checks and the limits of the current test executables. Evidence: `docs/guides/install-and-test.md` and the documented build, workflow and interface labels.
