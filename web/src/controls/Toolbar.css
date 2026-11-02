@@ -1,0 +1,20 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.toolbar-separator {
+  width: 1px;
+  align-self: stretch;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-1);
+}
+
+.toolbar-spacer {
+  flex: 1;
+}

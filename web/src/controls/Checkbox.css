@@ -1,0 +1,56 @@
+/* Every checkbox that is not a switch: a box that fills with the accent and shows a tick. */
+:where(input[type="checkbox"]:not([role="switch"])) {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  box-sizing: border-box;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  background: var(--surface-0);
+  border: 1px solid var(--border-2);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: background-color var(--motion-state), border-color var(--motion-state);
+}
+
+:where(input[type="checkbox"]:not([role="switch"]))::before {
+  content: "";
+  width: 0.625rem;
+  height: 0.625rem;
+  background: var(--on-accent);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  transform: scale(0);
+  transition: transform var(--motion-state);
+}
+
+:where(input[type="checkbox"]:not([role="switch"]):checked, input[type="checkbox"]:not([role="switch"]):indeterminate) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+:where(input[type="checkbox"]:not([role="switch"]):checked)::before {
+  transform: scale(1);
+}
+
+:where(input[type="checkbox"]:not([role="switch"]):indeterminate)::before {
+  height: 0.125rem;
+  clip-path: none;
+  transform: scale(1);
+}
+
+:where(input[type="checkbox"]:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-1);
+  cursor: not-allowed;
+}
+
+.check .field-hint {
+  flex-basis: 100%;
+  margin-left: calc(1.125rem + var(--space-3));
+}
+
+.check {
+  flex-wrap: wrap;
+}

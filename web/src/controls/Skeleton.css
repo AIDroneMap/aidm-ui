@@ -1,0 +1,27 @@
+.skeleton {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.skeleton-line {
+  display: block;
+  height: 0.875rem;
+  background: linear-gradient(90deg, var(--surface-2) 0 40%, var(--surface-1) 50%, var(--surface-2) 60%) 0 0 / 300% 100%;
+  border-radius: var(--radius-control);
+  animation: skeleton-shimmer 1.6s linear infinite;
+}
+
+.skeleton-line:last-child {
+  width: 60%;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}

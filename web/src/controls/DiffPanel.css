@@ -1,0 +1,38 @@
+.diff-panel {
+  overflow-x: auto;
+}
+
+.diff-panel table {
+  width: 100%;
+}
+
+.diff-label {
+  margin: 0 0 var(--space-2);
+  font-weight: var(--weight-strong);
+}
+
+.diff-empty {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.diff-panel th[scope="row"] {
+  font-weight: var(--weight-regular);
+}
+
+.diff-name {
+  display: block;
+}
+
+.diff-code {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+.diff-from {
+  color: var(--text-2);
+}
+
+.diff-to {
+  font-weight: var(--weight-strong);
+}

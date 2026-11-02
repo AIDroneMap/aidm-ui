@@ -1,0 +1,21 @@
+.popover {
+  position: fixed;
+  inset: auto;
+  box-sizing: border-box;
+  max-width: min(24rem, calc(100vw - 1rem));
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-1);
+  background: var(--surface-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+}
+
+.popover p {
+  margin: 0 0 var(--space-2);
+}
+
+.popover p:last-child {
+  margin-bottom: 0;
+}

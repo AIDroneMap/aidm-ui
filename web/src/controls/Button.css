@@ -1,37 +1,67 @@
-button {
+:where(button, a.button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
   font: inherit;
-  font-weight: 600;
-  min-height: 2.75rem;
-  padding: 0.5rem 1.25rem;
-  color: var(--color-surface);
-  background: var(--color-link);
-  border: 2px solid var(--color-link);
-  border-radius: 0.375rem;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+  text-decoration: none;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
   cursor: pointer;
+  transition: background-color var(--motion-state), border-color var(--motion-state), color var(--motion-state);
 }
 
-button:disabled,
-button[aria-disabled="true"] {
-  color: var(--color-text);
-  background: var(--color-disabled);
-  border-color: var(--color-border);
+:where(button:hover, a.button:hover) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--text-1));
+}
+
+:where(button.secondary, a.button) {
+  color: var(--text-1);
+  background: var(--surface-0);
+  border-color: var(--border-2);
+}
+
+:where(button.secondary:hover, a.button:hover) {
+  background: var(--surface-1);
+}
+
+:where(button.quiet, button.icon-button) {
+  color: var(--text-1);
+  background: transparent;
+  border-color: transparent;
+}
+
+:where(button.quiet:hover, button.icon-button:hover) {
+  background: var(--surface-2);
+}
+
+:where(button.icon-button) {
+  width: var(--control-height);
+  padding: 0;
+}
+
+/* Only the confirming button of a destructive action is red. */
+:where(button.danger) {
+  color: var(--on-danger);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+:where(button.danger:hover) {
+  background: color-mix(in srgb, var(--danger) 85%, var(--text-1));
+}
+
+:where(button:disabled, button[aria-disabled="true"]) {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border-1);
   cursor: not-allowed;
-}
-
-button[aria-disabled="true"] {
-  color: var(--color-text);
-  background: var(--color-disabled);
-  border-color: var(--color-border);
-  cursor: not-allowed;
-}
-
-button.secondary {
-  color: var(--color-link);
-  background: var(--color-surface);
-}
-
-button.secondary:disabled,
-button.secondary[aria-disabled="true"] {
-  color: var(--color-text);
-  background: var(--color-disabled);
 }

@@ -1,0 +1,16 @@
+.confirm-dialog {
+  width: 30rem;
+}
+
+.confirm-danger {
+  border-top: 4px solid var(--danger);
+}
+
+.confirm-body p {
+  margin: 0 0 var(--space-2);
+}
+
+.confirm-body ul {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-6);
+}

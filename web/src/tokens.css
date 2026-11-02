@@ -1,29 +1,122 @@
+/*
+ * Design tokens. docs/design/design-system.md says what each one is for.
+ *
+ * Every colour is written once as light-dark(light value, dark value). The
+ * theme follows the system; an element with data-theme="light" or
+ * data-theme="dark" fixes it for itself and everything inside it. The
+ * contrast test in controls/tokens.test.ts reads the pairs from this file.
+ */
 :root {
-  --color-text: #1a1a1a;
-  --color-surface: #ffffff;
-  --color-badge: #e8eaed;
-  --color-muted: #f1f3f4;
-  --color-link: #0b4bb3;
-  --color-primary: #0b4bb3;
-  --color-inverse: #ffffff;
-  --color-disabled: #e0e0e0;
-  --color-warning-text: #5c3b00;
-  --color-warning: #fff4e0;
-  --color-error-text: #8c1d18;
-  --color-error: #fdecea;
-  --color-hint: #444746;
-  --color-success: #0d5c27;
-  --color-warning-marker: #7a4a00;
-  --color-border: #5f6368;
-  --color-focus: #0b57d0;
+  color-scheme: light dark;
+
+  --surface-0: light-dark(#ffffff, #141614);
+  --surface-1: light-dark(#f5f6f4, #1c1f1b);
+  --surface-2: light-dark(#ebede8, #262a26);
+  --text-1: light-dark(#1b1f1b, #edefea);
+  --text-2: light-dark(#4a514a, #b7bdb4);
+  --text-3: light-dark(#636a63, #90978f);
+  --border-1: light-dark(#d4d8d0, #333833);
+  --border-2: light-dark(#80887c, #6f776d);
+  --accent: light-dark(#2f6b3a, #7fc28b);
+  --accent-soft: light-dark(#e3f0e5, #22402a);
+  --on-accent: light-dark(#ffffff, #141614);
+  --ok: light-dark(#1e6e3a, #6fc48a);
+  --ok-soft: light-dark(#e4f2e8, #1a3324);
+  --warn: light-dark(#8a5a00, #f0b952);
+  --warn-soft: light-dark(#fff3dc, #3a2e12);
+  --danger: light-dark(#a3241c, #f0867e);
+  --danger-soft: light-dark(#fbe9e7, #3d1b19);
+  --on-danger: light-dark(#ffffff, #141614);
+  --info: light-dark(#2f5b8a, #8fb6e6);
+  --info-soft: light-dark(#e6eef7, #1b2a3a);
+  --running: light-dark(#6a4fb3, #b39df0);
+  --running-soft: light-dark(#eeeaf8, #2a2440);
+  --shadow-color: light-dark(#1b1f1b29, #00000099);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --leading-body: 1.4;
+  --leading-heading: 1.2;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
-  --font-small: 0.9rem;
-  --font-base: 1rem;
-  --font-large: 1.25rem;
-  --focus-ring: 3px solid var(--color-focus);
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --content-width: 80rem;
+  --control-height: 2.25rem;
+  --control-height-dense: 2rem;
+
+  --radius-control: 0.375rem;
+  --radius-card: 0.625rem;
+  --radius-pill: 999px;
+  --shadow-raised: 0 0.25rem 1rem var(--shadow-color);
+
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --focus-ring: var(--focus-width) solid var(--accent);
+
+  --motion-state: 120ms;
+  --motion-panel: 200ms;
+
+  /*
+   * Names the screens built before the design system still read. Each later
+   * ticket moves its screen to the tokens above; an alias goes when nothing
+   * reads it any more.
+   */
+  --color-text: var(--text-1);
+  --color-surface: var(--surface-0);
+  --color-badge: var(--surface-2);
+  --color-muted: var(--surface-1);
+  --color-link: var(--accent);
+  --color-primary: var(--accent);
+  --color-inverse: var(--on-accent);
+  --color-disabled: var(--surface-2);
+  --color-warning-text: var(--warn);
+  --color-warning: var(--warn-soft);
+  --color-error-text: var(--danger);
+  --color-error: var(--danger-soft);
+  --color-hint: var(--text-2);
+  --color-success: var(--ok);
+  --color-warning-marker: var(--warn);
+  --color-border: var(--border-2);
+  --color-focus: var(--accent);
+  --font-small: var(--text-sm);
+  --font-base: var(--text-md);
+  --font-large: var(--text-xl);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-height: 2.75rem;
+    --control-height-dense: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-state: 0ms;
+    --motion-panel: 0ms;
+  }
 }

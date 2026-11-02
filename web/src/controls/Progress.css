@@ -1,5 +1,55 @@
-progress {
+:where(progress) {
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
   width: 100%;
   max-width: 24rem;
-  height: 1.25rem;
+  height: 0.5rem;
+  overflow: hidden;
+  color: var(--accent);
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+}
+
+progress::-webkit-progress-bar {
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width var(--motion-panel);
+}
+
+progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+/* Without a value the bar has no end: a band of the accent moves along it. */
+progress:indeterminate {
+  background: linear-gradient(90deg, var(--surface-2) 0 35%, var(--accent) 35% 65%, var(--surface-2) 65%) 0 0 / 300% 100%;
+  animation: progress-sweep 1.4s linear infinite;
+}
+
+progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+
+progress:indeterminate::-moz-progress-bar {
+  background: transparent;
+}
+
+@keyframes progress-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  progress:indeterminate {
+    animation: none;
+    background-position: 50% 0;
+  }
 }

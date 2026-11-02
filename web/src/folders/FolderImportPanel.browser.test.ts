@@ -54,7 +54,7 @@ test("folder availability, relinking and stale page responses", async () => {
       await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
       if (await evalJs("document.activeElement.id === 'import-path'")) break;
     }
-    expect(await evalJs("document.activeElement.id === 'import-path' && document.activeElement.labels.length === 1 && getComputedStyle(document.activeElement).outlineWidth === '3px'")).toBe(true);
+    expect(await evalJs("document.activeElement.id === 'import-path' && document.activeElement.labels.length === 1 && getComputedStyle(document.activeElement).outlineWidth === '2px'")).toBe(true);
     await evalJs("document.querySelector('#project-name').focus(); document.querySelector('#project-name').select()"); await send("Input.insertText", { text: "Unsaved name" });
     await evalJs("document.querySelector('#project-notes').focus(); document.querySelector('#project-notes').select()"); await send("Input.insertText", { text: "Unsaved notes" });
     await evalJs("document.querySelector('#import-path').focus()"); await send("Input.insertText", { text: "/new" });

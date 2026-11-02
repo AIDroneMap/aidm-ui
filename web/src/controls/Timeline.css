@@ -1,0 +1,73 @@
+.timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 16rem) 1fr auto;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.timeline-text {
+  display: grid;
+  min-width: 0;
+}
+
+.timeline-label {
+  font-weight: var(--weight-medium);
+}
+
+.timeline-detail {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.timeline-track {
+  position: relative;
+  height: 0.75rem;
+  background: var(--surface-1);
+  border-radius: var(--radius-pill);
+}
+
+.timeline-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  background: var(--accent);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.timeline-muted .timeline-bar {
+  background: transparent;
+  border-color: var(--border-2);
+}
+
+.timeline-muted .timeline-label {
+  color: var(--text-2);
+}
+
+.timeline-more {
+  grid-column: 1 / -1;
+}
+
+.timeline-control .check {
+  margin: 0;
+}
+
+@media (max-width: 40rem) {
+  .timeline-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .timeline-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

@@ -1,0 +1,39 @@
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.125rem var(--space-3) 0.125rem var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+}
+
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.status-running { color: var(--running); background: var(--running-soft); }
+.status-ok { color: var(--ok); background: var(--ok-soft); }
+.status-warn { color: var(--warn); background: var(--warn-soft); }
+.status-danger { color: var(--danger); background: var(--danger-soft); }
+.status-info { color: var(--info); background: var(--info-soft); }
+
+.status-running .status-dot {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-running .status-dot {
+    animation: none;
+  }
+}

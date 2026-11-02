@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { MESSAGE_CODES } from "../../../shared/message-codes.ts";
 import en from "./en.json";
 import { UPLOAD_LOCAL_CODES } from "../upload/controller.ts";
@@ -30,6 +32,28 @@ test("no text uses an em dash or is empty", () => {
     expect(text.trim(), key).not.toBe("");
     expect(text, key).not.toContain("\u2014");
   }
+});
+
+const EM_DASH = "\u2014";
+const WRITTEN = /\.(ts|tsx|css|md)$/;
+
+/** The source, style and documentation files of the repository, tracked or new, that hold an em dash. */
+function filesWithEmDash(paths: string[], read: (path: string) => string): string[] {
+  return paths.filter((path) => WRITTEN.test(path) && read(path).includes(EM_DASH));
+}
+
+test("no source, style or documentation file uses an em dash", () => {
+  const root = new URL("../../../", import.meta.url).pathname;
+  const listed = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard"], { cwd: root });
+  expect(listed.exitCode).toBe(0);
+  const paths = listed.stdout.toString().split("\n").filter((path) => WRITTEN.test(path));
+  expect(paths.length).toBeGreaterThan(100);
+  expect(filesWithEmDash(paths, (path) => readFileSync(join(root, path), "utf8"))).toEqual([]);
+});
+
+test("the em dash check finds a dash in each kind of file and ignores other files", () => {
+  const files: Record<string, string> = { "a.ts": `x ${EM_DASH} y`, "b.tsx": EM_DASH, "c.css": `/* ${EM_DASH} */`, "d.md": EM_DASH, "e.json": EM_DASH, "f.ts": "x - y" };
+  expect(filesWithEmDash(Object.keys(files), (path) => files[path]!)).toEqual(["a.ts", "b.tsx", "c.css", "d.md"]);
 });
 
 import { OPTION_CATALOGUE, PRESET_IDS } from "../../../shared/option-catalogue.ts";
