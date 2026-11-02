@@ -1,15 +1,37 @@
-import type { ProjectView } from "../../../../shared/api-types.ts";
+import { useState } from "react";
+import type { ProjectView, RunView } from "../../../../shared/api-types.ts";
 import { PageHeader } from "../../controls/PageHeader.tsx";
 import { t } from "../../i18n/translate.ts";
 import { projectName } from "../../pages/ProjectsPage.tsx";
 import { SampleJobPage } from "../../pages/SampleJobPage.tsx";
-import { RunHistory } from "../../runs/RunHistory.tsx";
+import { RunStart } from "../../run-start/RunStart.tsx";
+import { RunsTable } from "./RunsTable.tsx";
+import "./RunsSection.css";
 
-/** The Runs section: the project's runs, newest first. The sample project also offers the sample job here, where the old sample page sent it. */
 export function RunsSection({ project, onAuthRequired }: { project: ProjectView; onAuthRequired(): void }) {
-  return <>
-    <PageHeader title={t("runs.title")} subtitle={projectName(project)} />
-    {project.builtin === "sample" && <SampleJobPage embedded onAuthRequired={onAuthRequired} />}
-    <RunHistory projectId={project.id} onAuthRequired={onAuthRequired} />
-  </>;
+  const [again, setAgain] = useState<{ runId: number; request: number } | null>(null);
+
+  function handleAgain(run: RunView) {
+    setAgain(previous => ({ runId: run.id, request: (previous?.request ?? 0) + 1 }));
+  }
+
+  return (
+    <>
+      <PageHeader title={t("runs.title")} subtitle={projectName(project)} />
+      {project.builtin === "sample" && <SampleJobPage embedded onAuthRequired={onAuthRequired} />}
+      <RunsTable
+        project={project}
+        onAgain={handleAgain}
+        onAuthRequired={onAuthRequired}
+      />
+      {again !== null && (
+        <RunStart
+          key={`again-${again.request}`}
+          projectId={project.id}
+          sourceRunId={again.runId}
+          onAuthRequired={onAuthRequired}
+        />
+      )}
+    </>
+  );
 }
