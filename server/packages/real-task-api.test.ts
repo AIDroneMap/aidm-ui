@@ -269,6 +269,9 @@ real(
     const engine = h.engineStore.get(engineId)!;
     const client = new TaskClient({ address: engine.address, token: engine.token });
     expect((await client.taskInfo(savedRun.taskUuid!)).ok).toBe(true);
+    // The sample job asks for map tiles, and the engine has them among the task's options.
+    const sampleInfo = await (await fetch(`${engine.address}/task/${encodeURIComponent(savedRun.taskUuid!)}/info?token=${encodeURIComponent(engine.token)}`)).json() as { options: Array<{ name: string; value: unknown }> };
+    expect(sampleInfo.options).toContainEqual({ name: "tiles", value: true });
     expect((await fetch(`${h.base}/api/runs/${run.id}/results`, { method: "DELETE" })).status).toBe(200);
     expect(await Bun.file(stored).exists()).toBe(false);
     const after = await (await fetch(`${h.base}/api/runs/${run.id}`)).json() as RunView;

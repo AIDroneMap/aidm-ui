@@ -215,7 +215,7 @@ test("a download that breaks reports its speed, how often it broke and why, like
 
 // Criterion: init, upload per image, commit.
 
-test("each image is uploaded with its own call, then the task is committed with the DSM option", async () => {
+test("each image is uploaded with its own call, then the task is committed with the DSM and tiles options", async () => {
   const { run, uuid } = await startAndQueue();
   expect(fake.uploads).toEqual([
     { uuid, fileName: "DJI_0001.JPG", size: 10 * "good-image-0-".length },
@@ -224,7 +224,7 @@ test("each image is uploaded with its own call, then the task is committed with 
   ]);
   expect(fake.tasks.get(uuid)).toMatchObject({
     name: "Sample job",
-    options: [{ name: "dsm", value: true }],
+    options: [{ name: "dsm", value: true }, { name: "tiles", value: true }],
     images: ["DJI_0001.JPG", "DJI_0002.JPG", "dji_0003.jpeg"],
     committed: true,
   });
