@@ -47,6 +47,6 @@ test("notes without the Mac disk image are refused", () => {
 });
 
 test("the notes use no em dash", () => {
-  expect(releaseNotes("0.1.0", "unsigned", all)).not.toContain("—");
-  expect(releaseNotes("0.1.0", "signed", all)).not.toContain("—");
+  expect(releaseNotes("0.1.0", "unsigned", all)).not.toContain("\u2014");
+  expect(releaseNotes("0.1.0", "signed", all)).not.toContain("\u2014");
 });
