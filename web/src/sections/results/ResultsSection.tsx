@@ -13,6 +13,7 @@ import { t } from "../../i18n/translate.ts";
 import { MapViewer } from "../../map/MapView.tsx";
 import { ModelViewer } from "../../model/ModelPanel.tsx";
 import { projectName } from "../../pages/ProjectsPage.tsx";
+import { parseRunEvent } from "../../runs.ts";
 import { resultsHash, type Viewer } from "../../router.ts";
 import { DeleteResults } from "./DeleteResults.tsx";
 import { RunOutputs } from "./RunOutputs.tsx";
@@ -114,6 +115,16 @@ function RunResults({ project, runId, onChange, onAuthRequired }: { project: Pro
   // When the results are deleted or fetched again, the switcher, the sidebar count and the Details storage come from a fresh read of the project.
   const shown = useRef<string | undefined>(undefined);
   const state = run?.results?.state;
+  // While the archive is fetched, the run's events say when it is ready or failed. The stream opens with the run as it is now.
+  useEffect(() => {
+    if (state !== "fetching") return;
+    const source = new EventSource(`/api/runs/${runId}/events`);
+    source.addEventListener("run", (event) => {
+      const next = parseRunEvent((event as MessageEvent<string>).data);
+      if (next?.id === runId) setRun(next);
+    });
+    return () => source.close();
+  }, [runId, state]);
   useEffect(() => {
     if (state === undefined) return;
     if (shown.current !== undefined && shown.current !== state) onChange();
