@@ -1,10 +1,8 @@
 import { readdir } from "node:fs/promises";
-import bundledOptions from "./fixtures/task-api-2.6.1-options.json";
 // Recorded from a released API 2.7.0 package (tag v2.7.0, commit 967a4e7) running the released
 // engine 0.2.0 in its CPU container image, live mode, on a disposable Linux x64 machine.
-// See docs/notes/0061-option-sources.md for how it differs from the bundled test-mode list.
+// See docs/notes/0061-option-sources.md for the list a test-mode package bundles instead.
 import engineOptions from "./fixtures/task-api-2.7.0-options.json";
-import { compareVersions } from "../server/engines/versions.ts";
 import type { EngineOption } from "../shared/engine-options.ts";
 
 // A stand-in for the engine's task API (aidm-api 2.5.0), for tests. It answers
@@ -59,19 +57,6 @@ export interface FakeTask {
   results: Uint8Array | null;
 }
 
-/**
- * The option list a released package of that version serves. The 2.6.1 and 2.7.0 test-mode
- * packages bundle the same older list, and a 2.7.0 package that reaches a real engine reports
- * the recorded one. Anything that is not a version keeps the older list, as before.
- */
-function optionsFor(version: string): EngineOption[] {
-  try {
-    return structuredClone(compareVersions(version, "2.7.0") >= 0 ? engineOptions : bundledOptions) as EngineOption[];
-  } catch {
-    return structuredClone(bundledOptions) as EngineOption[];
-  }
-}
-
 export const WRONG_TOKEN_MESSAGE = "Invalid authentication token: token does not match.";
 
 export interface FakeRequest {
@@ -82,7 +67,7 @@ export interface FakeRequest {
 
 export class FakeTaskApi {
   info: FakeInfo;
-  /** The option list of the API version it stands in for, chosen like the released packages. */
+  /** The option list the stand-in serves: the recorded 2.7.0 engine list, whatever version it stands in for. */
   options: EngineOption[];
   createError: string | null = null;
   token: string;
@@ -110,7 +95,7 @@ export class FakeTaskApi {
   constructor(options: { token?: string; info?: Partial<FakeInfo> } = {}) {
     this.token = options.token ?? "fake-token";
     this.info = { ...recordedInfo(), ...options.info };
-    this.options = optionsFor(this.info.version);
+    this.options = structuredClone(engineOptions) as EngineOption[];
   }
 
   get address(): string {
