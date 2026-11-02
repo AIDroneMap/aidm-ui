@@ -58,7 +58,7 @@ test("settings are searchable and editable with a keyboard at tablet width", asy
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
     await evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 4000; const check = () => document.querySelector('details summary') ? resolve(true) : Date.now() > end ? reject(Error('editor did not load')) : setTimeout(check, 20); check(); })`);
 
-    const group = texts["group.how-detailed"];
+    const group = texts["settings.group.matching-and-reconstruction"];
     await key("Tab", 9);
     await evaluate(`Array.from(document.querySelectorAll('summary')).find(el => el.textContent.includes(${JSON.stringify(group)})).focus()`);
     expect(await evaluate("document.activeElement.matches(':focus-visible')")).toBe(true);
@@ -70,10 +70,10 @@ test("settings are searchable and editable with a keyboard at tablet width", asy
     expect(await evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")).toBe(true);
 
     const names = OPTION_CATALOGUE.filter((option) => option.bin === "shown").map((option) => option.name);
-    expect(names).toHaveLength(63);
+    expect(names).toHaveLength(80);
     await evaluate("document.querySelectorAll('details').forEach(el => { el.open = true; })");
     for (const name of names) expect(await evaluate(`document.body.innerText.includes(${JSON.stringify(name)})`)).toBe(true);
-    for (const option of OPTION_CATALOGUE.filter((entry) => entry.bin !== "shown")) expect(await evaluate(`Array.from(document.querySelectorAll('code')).some(el => el.textContent === ${JSON.stringify(option.name)})`)).toBe(false);
+    for (const option of OPTION_CATALOGUE.filter((entry) => entry.bin === "not-offered")) expect(await evaluate(`Array.from(document.querySelectorAll('code')).some(el => el.textContent === ${JSON.stringify(option.name)})`)).toBe(false);
     expect(await evaluate("document.body.innerText.includes('<img src=x onerror=alert(1)> & engine help')")).toBe(true);
     expect(await evaluate("document.querySelector('img[src=x]') === null")).toBe(true);
     expect(await evaluate("Array.from(document.querySelectorAll('input, select, textarea')).every(el => el.labels?.length || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby'))")).toBe(true);

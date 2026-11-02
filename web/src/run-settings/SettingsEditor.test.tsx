@@ -10,7 +10,9 @@ const options: ReconciledOption[] = OPTION_CATALOGUE.flatMap((option) => option.
 
 test("shows catalogue groups, preset changes, and invalid edits", () => {
   const html = renderToStaticMarkup(<SettingsEditor options={options} preset="quick-map" draft={{ "orthophoto-resolution": "bad" }} facts={{ bands: null, videos: null }} onChange={() => {}} onApply={() => {}} onCancel={() => {}} />);
-  expect(html).toContain("What to produce");
+  expect([...html.matchAll(/<summary>([^<]+)<\/summary>/g)].map((match) => match[1]).filter((label) => label !== "More")).toEqual([
+    "Photos and cameras", "Matching and reconstruction", "Point cloud", "Mesh and texture", "Elevation models", "Orthophoto", "Outputs and formats", "Performance and limits", "Expert",
+  ]);
   expect(html).toContain("Quick orthophoto");
   expect(html).toContain("bad");
   expect(html).toContain('aria-invalid="true"');
@@ -27,7 +29,7 @@ test("keeps invalid inactive settings visible and blocks apply", () => {
 });
 
 test("renders unexplained engine help as text and preserves enum value types", () => {
-  const extra: ReconciledOption = { name: "new-option", bin: "shown", group: "unexplained", type: "enum", domain: [1, "1", true], defaultValue: 1, presets: {}, dependencies: [], costTag: null, unexplained: true, changes: ["domain"], help: "<img src=x>" };
+  const extra: ReconciledOption = { name: "new-option", bin: "shown", group: "unexplained", type: "enum", domain: [1, "1", true], defaultValue: 1, presets: {}, dependencies: [], costTag: null, affects: [], locked: null, unexplained: true, changes: ["domain"], help: "<img src=x>" };
   const html = renderToStaticMarkup(<SettingsEditor options={[extra]} preset="custom" draft={{ "new-option": "1" }} facts={{ bands: null, videos: null }} onChange={() => {}} onApply={() => {}} onCancel={() => {}} />);
   expect(html).toContain("This setting comes from the engine");
   expect(html).toContain("&lt;img src=x&gt;");

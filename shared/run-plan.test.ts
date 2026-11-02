@@ -13,7 +13,7 @@ test("the six presets use catalogue deltas and derive outputs", () => {
     ["map-with-heights", [["dsm", true]], ["orthophoto", "dsm", "3d-model", "report"]],
     ["3d-model", [], ["orthophoto", "3d-model", "report"]],
     ["ground-model", [["dsm", true], ["dtm", true]], ["orthophoto", "dsm", "dtm", "3d-model", "report"]],
-    ["multispectral-map", [["texturing-skip-global-seam-leveling", true], ["radiometric-calibration", "camera"]], ["orthophoto", "3d-model", "report"]],
+    ["multispectral-map", [["radiometric-calibration", "camera"], ["texturing-skip-global-seam-leveling", true]], ["orthophoto", "3d-model", "report"]],
     ["custom", [], ["orthophoto", "3d-model", "report"]],
   ];
   for (const [preset, departures, outputs] of cases) {

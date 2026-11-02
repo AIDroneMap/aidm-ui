@@ -11,10 +11,10 @@ test("a settings file round trips only option values, preset name and engine ver
 });
 
 test("file reconciliation reports unsupported and invalid values without coercion", () => {
-  const options = reconcileOptions([{ name: "dsm", type: "bool", domain: "", value: "false", help: "" }, { name: "orthophoto-resolution", type: "float", domain: "float: 1 <= x <= 5", value: "5", help: "" }, { name: "tiles", type: "bool", domain: "", value: "false", help: "" }]);
-  const result = reconcileSettingsFile({ preset: "Old map", engineVersion: "older", options: [{ name: "dsm", value: true }, { name: "missing", value: 9 }, { name: "tiles", value: true }, { name: "orthophoto-resolution", value: 8 }] }, options);
+  const options = reconcileOptions([{ name: "dsm", type: "bool", domain: "", value: "false", help: "" }, { name: "orthophoto-resolution", type: "float", domain: "float: 1 <= x <= 5", value: "5", help: "" }, { name: "gcp", type: "string", domain: "path", value: "", help: "" }]);
+  const result = reconcileSettingsFile({ preset: "Old map", engineVersion: "older", options: [{ name: "dsm", value: true }, { name: "missing", value: 9 }, { name: "gcp", value: "points.txt" }, { name: "orthophoto-resolution", value: 8 }] }, options);
   expect(result.values).toEqual([{ name: "dsm", value: true }]);
-  expect(result.dropped).toEqual([{ name: "missing", value: 9, reason: "unavailable" }, { name: "tiles", value: true, reason: "unavailable" }, { name: "orthophoto-resolution", value: 8, reason: "domain" }]);
+  expect(result.dropped).toEqual([{ name: "missing", value: 9, reason: "unavailable" }, { name: "gcp", value: "points.txt", reason: "unavailable" }, { name: "orthophoto-resolution", value: 8, reason: "domain" }]);
   expect(reconcileSettingsFile({ preset: "Map", engineVersion: null, options: [{ name: "dsm", value: "true" }] }, options).dropped).toEqual([{ name: "dsm", value: "true", reason: "type" }]);
 });
 

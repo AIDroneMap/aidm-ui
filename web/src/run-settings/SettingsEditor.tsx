@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { ReconciledOption } from "../../../shared/engine-options.ts";
-import { OPTION_CATALOGUE, type OptionDependency, type OptionValue, type PresetId } from "../../../shared/option-catalogue.ts";
+import { OPTION_GROUPS, type OptionDependency, type OptionValue, type PresetId } from "../../../shared/option-catalogue.ts";
 import { resolveSettings, type SettingsDraft, type SettingsFacts } from "../../../shared/run-settings.ts";
 import { Button } from "../controls/Button.tsx";
 import { Disclosure } from "../controls/Disclosure.tsx";
@@ -22,7 +22,6 @@ export type SettingsEditorProps = {
   baselineOptions?: readonly { name: string; value: OptionValue }[];
 };
 
-const groups = [...new Set(OPTION_CATALOGUE.flatMap((option) => option.bin === "shown" ? [option.group] : []))];
 const fields = ["name", "description", "when", "cost", "example"] as const;
 const nameOf = (option: ReconciledOption) => option.unexplained ? option.name : t(`option.${option.name}.name`);
 
@@ -85,13 +84,13 @@ export function SettingsEditor({ options, preset, draft, facts, onChange, onAppl
     <section aria-label={t("run_settings.changed")}><h3>{t("run_settings.changed")}</h3>
       {changed.length === 0 ? <p>{t("run_settings.no_changes")}</p> : <><ul>{changed.map((option) => <li key={option.name}>{nameOf(option)}{" "}<code>{String(draft[option.name])}</code> <Button disabled={disabled} onClick={() => reset(option.name)} aria-label={t("run_settings.reset_one", { name: nameOf(option) })}>{t("run_settings.reset")}</Button></li>)}</ul><Button disabled={disabled} onClick={() => onChange({})}>{t("run_settings.reset_all")}</Button></>}
     </section>
-    {[...groups, "unexplained"].map((group) => {
+    {[...OPTION_GROUPS, "unexplained" as const].map((group) => {
       const members = options.filter((option) => (option.unexplained ? "unexplained" : option.group) === group);
       const visible = members.filter(matches);
       if (!members.length || !visible.length) return null;
       const parentFor = (option: ReconciledOption) => option.dependencies.flatMap(optionParents).find((name) => name !== option.name && members.some((candidate) => candidate.name === name && candidate.dependencies.flatMap(optionParents).length === 0));
       const ordered = visible.filter((option) => !parentFor(option) || !visible.some((candidate) => candidate.name === parentFor(option))).flatMap((option) => [row(option), ...visible.filter((child) => parentFor(child) === option.name).map((child) => row(child, true))]);
-      return <Group key={`${preset}-${group}`} label={group === "unexplained" ? t("catalogue.unexplained") : t(`group.${group}`)} initialOpen={members.some((option) => resolved.baseline[option.name] !== option.defaultValue)} searching={Boolean(query)}>{ordered}</Group>;
+      return <Group key={`${preset}-${group}`} label={group === "unexplained" ? t("catalogue.unexplained") : t(`settings.group.${group}`)} initialOpen={members.some((option) => resolved.baseline[option.name] !== option.defaultValue)} searching={Boolean(query)}>{ordered}</Group>;
     })}
     <div className="settings-editor-actions"><Button disabled={disabled} onClick={onCancel}>{t("run_settings.cancel")}</Button><Button disabled={disabled || Object.keys(resolved.errors).length > 0} onClick={onApply}>{t("run_settings.apply")}</Button></div>
   </section>;

@@ -12,7 +12,7 @@ function sameDomain(left: string | readonly string[], right: EngineOption["domai
   return left.length === right.length && left.every((choice, index) => choice === right[index]);
 }
 
-/** Catalogue order first, then unknown engine options. Hidden names never reappear. */
+/** Catalogue order first, then unknown engine options. A name the catalogue keeps as not offered by the task API never becomes a row. */
 export function reconcileOptions(engine: readonly EngineOption[]): ReconciledOption[] {
   const reported = new Map(engine.map((option) => [option.name, option]));
   const known = new Set(OPTION_CATALOGUE.map((option) => option.name));
@@ -24,14 +24,14 @@ export function reconcileOptions(engine: readonly EngineOption[]): ReconciledOpt
     const changes: ReconciledOption["changes"] = [];
     if (option.type !== catalogue.type) changes.push("type");
     if (!sameDomain(catalogue.domain, option.domain)) changes.push("domain");
-    if (value !== catalogue.defaultValue) changes.push("defaultValue");
+    if (value !== catalogue.defaultValue && !catalogue.machineDefault) changes.push("defaultValue");
     result.push({ ...catalogue, type: option.type, domain: option.domain, defaultValue: value, changes, unexplained: false });
   }
   for (const option of engine) {
     if (known.has(option.name)) continue;
     result.push({
       name: option.name, bin: "shown", group: "unexplained", type: option.type, domain: option.domain,
-      defaultValue: defaultValue(option), presets: {}, dependencies: [], costTag: null,
+      defaultValue: defaultValue(option), presets: {}, dependencies: [], costTag: null, affects: [], locked: null,
       unexplained: true, changes: [], help: option.help,
     });
   }
