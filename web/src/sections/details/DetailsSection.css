@@ -1,0 +1,48 @@
+.details-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.details-storage {
+  width: 100%;
+  margin-top: var(--space-8);
+  table-layout: fixed;
+}
+
+.details-storage th,
+.details-storage td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.details-storage th {
+  width: 40%;
+  text-align: start;
+}
+
+.details-storage td {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.details-storage td p {
+  margin-bottom: 0;
+  color: var(--text-2);
+}
+
+.details-storage tr:last-child {
+  font-weight: var(--weight-strong);
+}
+
+.details-danger {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+  margin-top: var(--space-12);
+}
+
+.details-danger h2 {
+  margin-top: 0;
+}

@@ -54,7 +54,7 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
     await wait(deleteButton);
     await evaluate(`${deleteButton}.click(); true`);
     await wait("document.querySelector('dialog[open]')");
-    await evaluate("[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === 'Delete results').click(); true");
+    await evaluate("[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === 'Delete results and 1 KiB').click(); true");
     await wait("document.body.textContent.includes('Results deleted.')");
     expect(deleted).toBe(true);
     if (start === "the Results section") {
