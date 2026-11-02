@@ -130,3 +130,17 @@ test("after the engine restarts the run, only the stages of its new start count"
   await eventually(async () => stage(await view(id), "dataset")?.state === "running");
   expect(stage(await view(id), "opensfm")?.state).toBe("waiting");
 });
+
+test("a restart forgets the processing time of the attempt before it until the new one reports its own", async () => {
+  const { id, uuid } = await queuedRun();
+  api.setTask(uuid, { statusCode: 20, processingTime: 9000, output: ["[INFO]    Running dataset stage", "reading"] });
+  await eventually(async () => (await view(id)).processingTime === 9000);
+  // Queued again with no output: the engine started the task over and has no time for it yet.
+  api.setTask(uuid, { statusCode: 10, processingTime: -1, output: [] });
+  await eventually(async () => (await view(id)).restartedAtLine === 2);
+  expect((await view(id)).processingTime).toBeNull();
+  await h.stop(); h = openHarness({ dataFolder: folder, runPollMs: 10 });
+  expect((await view(id)).processingTime).toBeNull();
+  api.setTask(uuid, { statusCode: 20, processingTime: 2000 });
+  await eventually(async () => (await view(id)).processingTime === 2000);
+});

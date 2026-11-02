@@ -375,7 +375,13 @@ export class RunTracker {
   }
 
   /** The engine started the task over, so its output begins again from its line 0, at the end of what we hold. */
+  /** The processing time of the attempt before it no longer counts, until the new one reports its own. */
   private markRestart(runId: number): void {
+    const timing = this.timingOf(runId);
+    if (timing.processingTime !== null) {
+      timing.processingTime = null;
+      this.saveTiming(runId);
+    }
     this.update(runId, { restarted: true, restartedAtLine: this.lineCount(runId) });
   }
 
@@ -507,9 +513,6 @@ export class RunTracker {
     const queue = state === "queued" ? await client.info() : null;
     const processingTime = info.value.processingTime;
     if (processingTime !== null && processingTime >= 0) following.engineMs = processingTime;
-    const timing = this.timingOf(runId);
-    const timeMoved = processingTime !== null && processingTime >= 0 && timing.processingTime !== processingTime;
-    if (timeMoved) timing.processingTime = processingTime;
     // The engine started the task over, and its log starts again too. The run's own state cannot tell:
     // polls that got no answer may have turned it into engine_unreachable in between.
     // A processing time that went down is a restart. Queued again after processing is only a hint,
@@ -544,6 +547,10 @@ export class RunTracker {
       // The whole output was asked for; keep only what follows the last line held, as on any other poll.
       output = { ok: true, value: output.value.slice(held - 1) };
     }
+    // Taken after the restart checks, which forget the time of the attempt before.
+    const timing = this.timingOf(runId);
+    const timeMoved = processingTime !== null && processingTime >= 0 && timing.processingTime !== processingTime;
+    if (timeMoved) timing.processingTime = processingTime;
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
