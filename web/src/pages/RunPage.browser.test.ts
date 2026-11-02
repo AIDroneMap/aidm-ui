@@ -49,12 +49,12 @@ test("project archive links open the requested run, including after a reload", a
       try { return await evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 3000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(new Error('condition timed out')) : setTimeout(check, 20); check(); })`); }
       catch (error) { throw new Error(`Waiting for ${expression}: ${JSON.stringify(requests)} ${await evaluate("document.body.innerText")}`, { cause: error }); }
     };
-    await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1` });
+    await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/details` });
     await wait("document.querySelector('a[href=\"#/runs/7\"]')");
     await evaluate("document.querySelector('a[href=\"#/runs/7\"]').click()");
     await wait("document.body.textContent.includes('Flight 7')");
     expect(await evaluate("document.querySelector('a[href=\"/api/runs/7/outputs/glb\"]') !== null")).toBe(true);
-    expect(await evaluate("document.querySelector('a[href=\"#/projects/1\"]')?.textContent")).toBe("Back to project");
+    expect(await evaluate("document.querySelector('main a[href=\"#/projects/1/runs\"]')?.textContent")).toBe("Back to project");
     expect(await evaluate("!document.body.textContent.includes('Start again')")).toBe(true);
     expect(requests).toContain("/api/runs/7");
     expect(await evaluate("Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Open the 3D model')")).toBe(true);

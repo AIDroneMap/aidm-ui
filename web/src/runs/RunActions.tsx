@@ -6,6 +6,7 @@ import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { Button } from "../controls/Button.tsx";
 import { Dialog } from "../controls/Dialog.tsx";
 import { t } from "../i18n/translate.ts";
+import { sectionHash } from "../router.ts";
 
 export function RunActions({ run, onAuthRequired, onAgain }: { run: RunView; onAuthRequired(): void; onAgain(): void }) {
   const [working, setWorking] = useState(false), [asking, setAsking] = useState(false);
@@ -20,7 +21,7 @@ export function RunActions({ run, onAuthRequired, onAgain }: { run: RunView; onA
     try {
       if (action === "delete") {
         await api<void>("DELETE", `/api/runs/${run.id}`);
-        window.location.hash = `#/projects/${run.projectId}`;
+        window.location.hash = sectionHash(run.projectId, "runs");
       } else {
         const next = await api<RunView>("POST", `/api/runs/${run.id}/retry`);
         window.location.hash = `#/runs/${next.id}`;

@@ -1,8 +1,10 @@
-import { RUN_STATES, type ProjectView } from "../../shared/api-types.ts";
+import { FINISHED_RUN_STATES, RUN_STATES, type ProjectView } from "../../shared/api-types.ts";
 import type { Database } from "bun:sqlite";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 
 export type Project = ProjectView;
+
+const FINISHED = FINISHED_RUN_STATES.map((state) => `'${state}'`).join(", ");
 
 export class ProjectStore {
   constructor(private readonly db: Database, private readonly sampleCount = SAMPLE_DATASET.imageCount) {}
@@ -12,6 +14,7 @@ export class ProjectStore {
       CASE WHEN EXISTS (SELECT 1 FROM project_links l WHERE l.project_id = p.id) THEN NULL ELSE p.photo_count END AS photoCount,
       (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id) AS runCount,
       (SELECT state FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS latestState,
+      (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id AND r.state NOT IN (${FINISHED})) AS activeRunCount,
       MAX(p.updated_at, COALESCE((SELECT MAX(updated_at) FROM runs r WHERE r.project_id = p.id), p.updated_at)) AS lastChange
       FROM projects p WHERE p.builtin IS NULL OR EXISTS (SELECT 1 FROM runs r WHERE r.project_id = p.id)
       ORDER BY lastChange DESC, p.id DESC`).all() as Project[];

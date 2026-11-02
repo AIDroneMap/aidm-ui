@@ -53,7 +53,7 @@ The current built-in offer is the published API 2.7.0 package with engine 0.2.0 
 2. Check the offered package version before approving its download. The offer must show 2.7.0 or a later released package for the in-place import test. Record what your installation actually offers; later releases can be newer.
 3. Follow any container runtime setup prompts. The wizard supports Podman or Docker on Linux and Apple's container tool on a supported Mac. Approve only the installation you chose. Wait for the engine to become ready.
 4. Open **Engines** and check the reported API and engine versions. They should match the package you selected.
-5. If this is an existing test installation with an older engine, open **Engines** and use its **Update** action while it is idle. The corrected UI offers the built-in current package without a manual release check. Rebuilding the UI preserves existing data and does not silently interrupt work by replacing its installed engine. **Settings**, **Engine updates**, **Look for a newer engine now** remains available for later releases.
+5. If this is an existing test installation with an older engine, open **Engines** and use its **Update** action while it is idle. The corrected UI offers the built-in current package without a manual release check. Rebuilding the UI preserves existing data and does not silently interrupt work by replacing its installed engine. **Preferences**, **Engine updates**, **Look for a newer engine now** remains available for later releases.
 
 Signature, compatibility or installation errors are failures to investigate, not checks to bypass. The [milestone record](../milestones/0002-own-flight.md) names what has actually been exercised on each platform.
 
@@ -63,7 +63,7 @@ Open **Engines**, choose **Add an engine**, and enter its name, task API address
 
 ## First check: the sample job
 
-1. Open **Sample job**. Check the dataset information, then select the ready engine.
+1. The setup wizard offers the sample job as its last step. Once the sample has run, it is in **Projects**, **Sample project**, **Runs**; before that, open **Preferences** and choose **Run the setup wizard again**. Check the dataset information, then select the ready engine.
 2. Start the sample and approve the dataset download. Follow its reported state and log.
 3. Wait for the run to finish **and for the result downloads to become available**. An engine finishing does not mean the server has finished saving its archive.
 4. Download the archive and an individual output. Check that the ZIP opens and its files are present. Open the orthophoto in a program that reads GeoTIFF, if available.
@@ -78,11 +78,11 @@ Start with the [public vineyard dataset](https://huggingface.co/datasets/AIDrone
 
 ### Browser upload
 
-Create a project, give it a name and notes, and select or drop the photos in its upload area. Wait for preparation to finish. Check the photo count, camera and GPS facts, and any exclusions. Choose **Quick map**, check the selected engine and review, then start the run. Reload while uploading to check that already received chunks resume instead of starting over. After completion, repeat the archive and available-viewer checks above.
+On **Projects**, choose **New project** and give it a name. The project opens on **Photos**: select or drop the photos in its upload area. Notes are in **Details**. Wait for preparation to finish. Check the photo count, camera and GPS facts, and any exclusions. In **Settings**, choose **Quick map**, check the selected engine and review, then start the run. Reload while uploading to check that already received chunks resume instead of starting over. After completion, repeat the archive and available-viewer checks above.
 
 ### Import a folder
 
-On the computer running the UI server, create an empty project and choose **Import a folder**. Enter the full path to the folder holding the photos, not the UI's data folder. Check the included files and photo facts.
+On the computer running the UI server, create an empty project and choose **Import a folder** in **Photos**. Enter the full path to the folder holding the photos, not the UI's data folder. Check the included files and photo facts.
 
 With a capable same-machine API, review offers **Let the engine read the photos where they are**. If sharing a new folder requires restarting the local engine, the review says so. Start only while that engine is idle. The imported folder is mounted read-only for a container engine. An engine elsewhere uses a copy instead.
 
@@ -90,7 +90,7 @@ Complete a Quick map run. Repeat with **Copy the photos to the engine** if you w
 
 ### Link a ZIP
 
-Create another project, choose **Link a ZIP archive**, and enter a public ZIP URL that the engine can reach. Use **Check and save link** before starting. The pinned sample archive used by this version is:
+Create another project, choose **Link a ZIP archive** in **Photos**, and enter a public ZIP URL that the engine can reach. Use **Check and save link** before starting. The pinned sample archive used by this version is:
 
 ```text
 https://huggingface.co/datasets/AIDroneMap/aidm-vineyard-small/resolve/6af198c9a327e187e088ede6d7c632eb77b50eaa/aidm-vineyard-small-v1.zip

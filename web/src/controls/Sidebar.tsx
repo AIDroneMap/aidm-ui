@@ -5,9 +5,9 @@ import { useId, type ReactElement, type ReactNode } from "react";
  * reaches every item and no key needs handling of its own. Below 64 rem it
  * folds to icons, and an item shows its words on hover and focus.
  */
-export function Sidebar({ label, header, children }: { label: string; header?: ReactNode; children: ReactNode }) {
+export function Sidebar({ label, header, expanded, children }: { label: string; header?: ReactNode; /** Keeps the words at any width, for a sidebar that slides over the content. */ expanded?: boolean; children: ReactNode }) {
   return (
-    <nav className="sidebar" aria-label={label}>
+    <nav className={expanded ? "sidebar sidebar-expanded" : "sidebar"} aria-label={label}>
       {header ? <div className="sidebar-header">{header}</div> : null}
       {children}
     </nav>

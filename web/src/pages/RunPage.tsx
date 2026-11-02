@@ -9,13 +9,14 @@ import { useRun } from "../useRun.ts";
 import { RunActions } from "../runs/RunActions.tsx";
 import { RunStart } from "../run-start/RunStart.tsx";
 import { MapPanel } from "../map/MapView.tsx";
+import { sectionHash } from "../router.ts";
 
-export function RunPage({ runId, onAuthRequired }: { runId: string; onAuthRequired: () => void }) {
+export function RunPage({ runId, onProject, onAuthRequired }: { runId: string; /** Told the run's project once the run has loaded, so the sidebar shows that project. */ onProject?: (projectId: number) => void; onAuthRequired: () => void }) {
   const { run, setRun, log, stage, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel } = useRun(onAuthRequired);
   useEffect(() => {
     let current = true;
     api<RunView>("GET", `/api/runs/${runId}`).then(
-      value => { if (current) setRun(value); },
+      value => { if (current) { setRun(value); onProject?.(value.projectId); } },
       error => { if (current) setFailure(fail(error)); },
     );
     return () => { current = false; };
@@ -23,7 +24,7 @@ export function RunPage({ runId, onAuthRequired }: { runId: string; onAuthRequir
   const [again, setAgain] = useState<string | null>(null);
   const model = run?.id === Number(runId) && run.results?.state === "ready" ? run.results.outputs.find(output => output.name === "glb") : undefined;
   return <>
-    {run && <a href={`#/projects/${run.projectId}`}>{t("run.back_to_project")}</a>}
+    {run && <a href={sectionHash(run.projectId, "runs")}>{t("run.back_to_project")}</a>}
     <h1>{t("run.title", { id: runId })}</h1>
     {run ? <RunProgress run={run} stage={stage} lines={log.lines} lineCount={log.count} restartedAtLine={restartedAtLine} connectionLost={connectionLost} cancelling={cancelling} failure={failure} onCancel={() => void cancel()} />
       : failure ? <ErrorMessage failure={failure} /> : <p>{t("run.loading")}</p>}

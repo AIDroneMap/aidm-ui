@@ -528,6 +528,8 @@ export interface ProjectView {
   photoCount: number | null;
   runCount: number;
   latestState: RunState | null;
+  /** How many of the project's runs have not finished, on any engine. The latest run may have finished while an older one still runs. */
+  activeRunCount?: number;
   /** Latest persisted metadata, source, or run update. */
   lastChange: string;
 }

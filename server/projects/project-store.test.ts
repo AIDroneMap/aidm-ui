@@ -47,3 +47,18 @@ test("an unrecognised stored run state is reported as unknown", () => {
   expect(projects.get(project.id)?.latestState).toBe("unknown");
   db.close();
 });
+
+test("a project counts every unfinished run, not only its latest", () => {
+  const db = new Database(":memory:");
+  applyMigrations(db, migrations);
+  const projects = new ProjectStore(db);
+  const project = projects.create("Two engines", "");
+  const insert = db.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', ?, ?, ?)");
+  insert.run(project.id, "completed", "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z");
+  insert.run(project.id, "processing", "2024-02-01T00:00:00.000Z", "2024-02-01T00:00:00.000Z");
+  insert.run(project.id, "failed", "2024-03-01T00:00:00.000Z", "2024-03-01T00:00:00.000Z");
+  expect(projects.get(project.id)).toMatchObject({ latestState: "failed", activeRunCount: 1 });
+  insert.run(project.id, "queued", "2024-04-01T00:00:00.000Z", "2024-04-01T00:00:00.000Z");
+  expect(projects.get(project.id)?.activeRunCount).toBe(2);
+  db.close();
+});

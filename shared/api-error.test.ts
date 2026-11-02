@@ -9,6 +9,6 @@ test("an error response carries the status and a code", async () => {
 });
 
 test("an error response can carry data next to the code", async () => {
-  const response = errorResponse(400, "settings.port_invalid", { min: 1, max: 65535 });
-  expect(await response.json()).toEqual({ error: { code: "settings.port_invalid", data: { min: 1, max: 65535 } } });
+  const response = errorResponse(400, "preferences.port_invalid", { min: 1, max: 65535 });
+  expect(await response.json()).toEqual({ error: { code: "preferences.port_invalid", data: { min: 1, max: 65535 } } });
 });

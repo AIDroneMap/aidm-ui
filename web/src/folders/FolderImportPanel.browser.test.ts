@@ -47,7 +47,7 @@ test("folder availability, relinking and stale page responses", async () => {
     const evalJs = async (expression: string) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
     const wait = async (condition: string) => { await evalJs(`new Promise((resolve, reject) => { const end = Date.now() + 10000; const check = () => { if (${condition}) resolve(true); else if (Date.now() > end) reject(Error('condition timed out')); else setTimeout(check, 20); }; check(); })`); };
     await send("Emulation.setDeviceMetricsOverride", { width: 768, height: 1024, deviceScaleFactor: 1, mobile: false });
-    await send("Page.enable"); await send("Page.navigate", { url: `http://127.0.0.1:${address.port}/#/projects/1` });
+    await send("Page.enable"); await send("Page.navigate", { url: `http://127.0.0.1:${address.port}/#/projects/1/photos` });
     await wait("document.querySelector('#import-path')");
     for (let index = 0; index < 20; index++) {
       await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
@@ -69,12 +69,12 @@ test("folder availability, relinking and stale page responses", async () => {
     await wait("document.querySelector('#import-path').value === '/new'");
     await new Promise<void>((resolve, reject) => { const end = Date.now() + 5000; const check = () => held ? resolve() : Date.now() > end ? reject(Error("page request missing")) : setTimeout(check, 20); check(); });
     available = false; state = "missing";
-    await evalJs("location.hash = '#/projects/2'"); await wait("document.body.textContent.includes('folder is missing')");
+    await evalJs("location.hash = '#/projects/2/photos'"); await wait("document.body.textContent.includes('folder is missing')");
     expect(await evalJs("!!document.querySelector('#import-path')")).toBe(false);
     held!(); await wait("document.body.textContent.includes('folder is missing')");
     expect(await evalJs("document.body.textContent.includes('second.jpg')")).toBe(false);
     available = true; state = "changed";
-    await evalJs("location.hash = '#/projects/1'"); await wait("document.body.textContent.includes('folder has changed')");
+    await evalJs("location.hash = '#/projects/1/photos'"); await wait("document.body.textContent.includes('folder has changed')");
     expect(await evalJs("!!document.querySelector('#import-path') && document.body.textContent.includes('Relink folder')")).toBe(true);
     expect(await evalJs("document.querySelector('#import-path').value")).toBe("/new");
   } finally { socket?.close(); await browser?.stop(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(dir, { recursive: true, force: true }); }

@@ -36,7 +36,7 @@ test("basemap is opt-in, uses saved numbering and attribution, and fails without
     if (path === "/map-worker.mjs") return new Response(Bun.file("node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs"), { headers: { "content-type": "text/javascript" } });
     if (path === "/api/settings/basemap") {
       if (request.method === "PUT") {
-        if (rejectSave) return Response.json({ error: { code: "settings.basemap_invalid", data: {} } }, { status: 400 });
+        if (rejectSave) return Response.json({ error: { code: "preferences.basemap_invalid", data: {} } }, { status: 400 });
         stored = await request.json() as BasemapSettings;
       }
       if (request.method === "GET" && settingsGate) await settingsGate;

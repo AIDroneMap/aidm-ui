@@ -1,4 +1,5 @@
 import { BasemapSettings } from "../basemap/BasemapSettings.tsx";
+import { ThemePreference } from "../preferences/ThemePreference.tsx";
 import { Toggle } from "../controls/Toggle.tsx";
 import { Button } from "../controls/Button.tsx";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -29,7 +30,7 @@ import {
 
 export type Section = "load" | "port" | "lan" | "wizard" | "updates" | "dataset";
 
-export interface SettingsFormProps {
+export interface PreferencesFormProps {
   /** Null while the settings are loading. */
   settings: SettingsData | null;
   /** The last failure and the section it belongs to, so it shows next to the cause. */
@@ -74,16 +75,16 @@ export interface SettingsFormProps {
   onDatasetImport: (file: File) => void;
 }
 
-function Failure({ props, section, id }: { props: SettingsFormProps; section: Section; id?: string }) {
+function Failure({ props, section, id }: { props: PreferencesFormProps; section: Section; id?: string }) {
   return props.failure?.section === section ? <ErrorMessage failure={props.failure.error} id={id} /> : null;
 }
 
-function updatesStatus(props: SettingsFormProps): string {
+function updatesStatus(props: PreferencesFormProps): string {
   const result = props.refreshResult;
-  if (props.refreshing) return t("settings.updates.refreshing");
+  if (props.refreshing) return t("preferences.updates.refreshing");
   if (props.updateSaving) return t("updates.saving");
   if (props.updateSaved) return t("updates.saved");
-  if (result?.ok) return result.replaced ? t("settings.updates.found", { tag: result.tag }) : t("settings.updates.none");
+  if (result?.ok) return result.replaced ? t("preferences.updates.found", { tag: result.tag }) : t("preferences.updates.none");
   return "";
 }
 
@@ -92,31 +93,31 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus(), []);
   return (
-    <div role="group" aria-label={t("settings.dataset.delete_ask")} className="actions">
-      <p>{t("settings.dataset.delete_ask")}</p>
+    <div role="group" aria-label={t("preferences.dataset.delete_ask")} className="actions">
+      <p>{t("preferences.dataset.delete_ask")}</p>
       <Button ref={first} type="button" onClick={onConfirm}>
-        {t("settings.dataset.delete_confirm")}
+        {t("preferences.dataset.delete_confirm")}
       </Button>
       <Button type="button" className="secondary" onClick={onKeep}>
-        {t("settings.dataset.delete_keep")}
+        {t("preferences.dataset.delete_keep")}
       </Button>
     </div>
   );
 }
 
-export function SettingsForm(props: SettingsFormProps) {
+export function PreferencesForm(props: PreferencesFormProps) {
   const { settings } = props;
   if (!settings) {
     return (
       <>
-        <h1>{t("settings.title")}</h1>
-        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <p>{t("settings.loading")}</p>}
+        <h1>{t("preferences.title")}</h1>
+        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <p>{t("preferences.loading")}</p>}
       </>
     );
   }
 
   const lanOn = settings.lan.enabled;
-  const portInvalid = props.failure?.section === "port" && props.failure.error.code === "settings.port_invalid";
+  const portInvalid = props.failure?.section === "port" && props.failure.error.code === "preferences.port_invalid";
   const submitPort = (event: FormEvent) => {
     event.preventDefault();
     props.onSavePort();
@@ -128,14 +129,14 @@ export function SettingsForm(props: SettingsFormProps) {
 
   return (
     <>
-      <h1>{t("settings.title")}</h1>
+      <h1>{t("preferences.title")}</h1>
 
       <section aria-labelledby="settings-port-title">
-        <h2 id="settings-port-title">{t("settings.port.title")}</h2>
-        <p>{t("settings.port.current", { port: settings.listeningPort })}</p>
+        <h2 id="settings-port-title">{t("preferences.port.title")}</h2>
+        <p>{t("preferences.port.current", { port: settings.listeningPort })}</p>
         <form onSubmit={submitPort}>
           <div className="field">
-            <label htmlFor="settings-port">{t("settings.port.label")}</label>
+            <label htmlFor="settings-port">{t("preferences.port.label")}</label>
             <input
               id="settings-port"
               type="number"
@@ -149,23 +150,23 @@ export function SettingsForm(props: SettingsFormProps) {
               onChange={(event) => props.onPortDraftChange(event.target.value)}
             />
             <p id="settings-port-hint" className="hint">
-              {t("settings.port.hint", { port: DEFAULT_PORT })}
+              {t("preferences.port.hint", { port: DEFAULT_PORT })}
             </p>
           </div>
           <Failure props={props} section="port" id="settings-port-error" />
           <Button type="submit" disabled={props.saving === "port"}>
-            {props.saving === "port" ? t("common.saving") : t("settings.port.save")}
+            {props.saving === "port" ? t("common.saving") : t("preferences.port.save")}
           </Button>
-          <p role="status">{props.saved === "port" ? t("settings.port.saved") : ""}</p>
+          <p role="status">{props.saved === "port" ? t("preferences.port.saved") : ""}</p>
         </form>
       </section>
 
       <section aria-labelledby="settings-lan-title">
-        <h2 id="settings-lan-title">{t("settings.lan.title")}</h2>
-        <p>{t("settings.lan.explain")}</p>
+        <h2 id="settings-lan-title">{t("preferences.lan.title")}</h2>
+        <p>{t("preferences.lan.explain")}</p>
         <Toggle
             id="settings-lan"
-            label={t("settings.lan.switch")}
+            label={t("preferences.lan.switch")}
             checked={lanOn || props.lanWantsOn}
             disabled={props.saving === "lan"}
             onChange={(event) => {
@@ -177,7 +178,7 @@ export function SettingsForm(props: SettingsFormProps) {
         {!lanOn && props.lanWantsOn && (
           <form onSubmit={submitLan}>
             <div className="field">
-              <label htmlFor="settings-passphrase">{t("settings.lan.passphrase_label")}</label>
+              <label htmlFor="settings-passphrase">{t("preferences.lan.passphrase_label")}</label>
               <input
                 id="settings-passphrase"
                 type="password"
@@ -189,12 +190,12 @@ export function SettingsForm(props: SettingsFormProps) {
                 onChange={(event) => props.onPassphraseChange(event.target.value)}
               />
               <p id="settings-passphrase-hint" className="hint">
-                {t("settings.lan.passphrase_hint", { min: PASSPHRASE_MIN_LENGTH })}
+                {t("preferences.lan.passphrase_hint", { min: PASSPHRASE_MIN_LENGTH })}
               </p>
             </div>
             <Failure props={props} section="lan" />
             <Button type="submit" disabled={props.saving === "lan"}>
-              {props.saving === "lan" ? t("common.saving") : t("settings.lan.save")}
+              {props.saving === "lan" ? t("common.saving") : t("preferences.lan.save")}
             </Button>
           </form>
         )}
@@ -203,7 +204,7 @@ export function SettingsForm(props: SettingsFormProps) {
           <>
             {settings.lan.addresses.length > 0 ? (
               <>
-                <p>{t("settings.lan.addresses_title")}</p>
+                <p>{t("preferences.lan.addresses_title")}</p>
                 <ul>
                   {settings.lan.addresses.map((address) => (
                     <li key={address}>
@@ -213,21 +214,21 @@ export function SettingsForm(props: SettingsFormProps) {
                 </ul>
               </>
             ) : (
-              <p>{t("settings.lan.no_addresses")}</p>
+              <p>{t("preferences.lan.no_addresses")}</p>
             )}
             <Failure props={props} section="lan" />
             <Button type="button" disabled={props.saving === "lan"} onClick={props.onTurnLanOff}>
-              {t("settings.lan.turn_off")}
+              {t("preferences.lan.turn_off")}
             </Button>
           </>
         )}
         <p role="status">
-          {props.saved === "lan-on" ? t("settings.lan.saved_on") : props.saved === "lan-off" ? t("settings.lan.saved_off") : ""}
+          {props.saved === "lan-on" ? t("preferences.lan.saved_on") : props.saved === "lan-off" ? t("preferences.lan.saved_off") : ""}
         </p>
       </section>
 
       <section aria-labelledby="settings-updates-title">
-        <h2 id="settings-updates-title">{t("settings.updates.title")}</h2>
+        <h2 id="settings-updates-title">{t("preferences.updates.title")}</h2>
         <UpdateCheckQuestion
           idPrefix="settings"
           value={props.packages?.updateCheck ?? null}
@@ -249,21 +250,21 @@ export function SettingsForm(props: SettingsFormProps) {
               if (!props.refreshing) props.onRefresh();
             }}
           >
-            {props.refreshing ? t("settings.updates.refreshing") : t("settings.updates.refresh")}
+            {props.refreshing ? t("preferences.updates.refreshing") : t("preferences.updates.refresh")}
           </Button>
         </div>
         <p role="status">{updatesStatus(props)}</p>
       </section>
 
       <section aria-labelledby="settings-dataset-title">
-        <h2 id="settings-dataset-title">{t("settings.dataset.title")}</h2>
-        <p>{t("settings.dataset.explain")}</p>
+        <h2 id="settings-dataset-title">{t("preferences.dataset.title")}</h2>
+        <p>{t("preferences.dataset.explain")}</p>
         {props.dataset === null ? (
-          <p>{t("settings.dataset.loading")}</p>
+          <p>{t("preferences.dataset.loading")}</p>
         ) : props.dataset.present ? (
-          <p>{t("settings.dataset.kept", { name: props.dataset.fileName, size: formatBytes(props.dataset.size ?? 0) })}</p>
+          <p>{t("preferences.dataset.kept", { name: props.dataset.fileName, size: formatBytes(props.dataset.size ?? 0) })}</p>
         ) : (
-          <p>{t("settings.dataset.absent")}</p>
+          <p>{t("preferences.dataset.absent")}</p>
         )}
         {props.dataset?.present &&
           (props.datasetAsking ? (
@@ -271,12 +272,12 @@ export function SettingsForm(props: SettingsFormProps) {
           ) : (
             <div className="actions">
               <BusyButton busy={props.datasetWorking !== null} className="secondary" onClick={props.onDatasetAskDelete}>
-                {props.datasetWorking === "delete" ? t("settings.dataset.deleting") : t("settings.dataset.delete")}
+                {props.datasetWorking === "delete" ? t("preferences.dataset.deleting") : t("preferences.dataset.delete")}
               </BusyButton>
             </div>
           ))}
         <div className="field">
-          <label htmlFor="settings-dataset-import">{t("settings.dataset.import_label")}</label>
+          <label htmlFor="settings-dataset-import">{t("preferences.dataset.import_label")}</label>
           <input
             id="settings-dataset-import"
             type="file"
@@ -291,43 +292,43 @@ export function SettingsForm(props: SettingsFormProps) {
             }}
           />
           <p id="settings-dataset-import-hint" className="hint">
-            {t("settings.dataset.import_hint")}
+            {t("preferences.dataset.import_hint")}
           </p>
         </div>
         <Failure props={props} section="dataset" />
         <p role="status">
           {props.datasetWorking === "import"
-            ? t("settings.dataset.importing")
+            ? t("preferences.dataset.importing")
             : props.datasetDone === "deleted"
-              ? t("settings.dataset.deleted")
+              ? t("preferences.dataset.deleted")
               : props.datasetDone === "imported"
-                ? t("settings.dataset.imported")
+                ? t("preferences.dataset.imported")
                 : ""}
         </p>
       </section>
 
       <section aria-labelledby="settings-local-title">
-        <h2 id="settings-local-title">{t("settings.local.title")}</h2>
-        <p>{t("settings.local.explain")}</p>
-        <a href="#/engines">{t("settings.local.link")}</a>
+        <h2 id="settings-local-title">{t("preferences.local.title")}</h2>
+        <p>{t("preferences.local.explain")}</p>
+        <a href="#/engines">{t("preferences.local.link")}</a>
       </section>
 
       <section aria-labelledby="settings-wizard-title">
-        <h2 id="settings-wizard-title">{t("settings.wizard.title")}</h2>
-        <p>{t("settings.wizard.explain")}</p>
+        <h2 id="settings-wizard-title">{t("preferences.wizard.title")}</h2>
+        <p>{t("preferences.wizard.explain")}</p>
         <Failure props={props} section="wizard" />
         <div className="actions">
           <Button type="button" disabled={props.saving === "wizard"} onClick={props.onRunWizard}>
-            {props.saving === "wizard" ? t("settings.wizard.running") : t("settings.wizard.run")}
+            {props.saving === "wizard" ? t("preferences.wizard.running") : t("preferences.wizard.run")}
           </Button>
-          <a href="#/wizard/check">{t("settings.wizard.check_link")}</a>
+          <a href="#/wizard/check">{t("preferences.wizard.check_link")}</a>
         </div>
       </section>
     </>
   );
 }
 
-export function SettingsPage({
+export function PreferencesPage({
   onAuthRequired,
   onWizardReopened,
 }: {
@@ -336,9 +337,9 @@ export function SettingsPage({
   onWizardReopened: () => void;
 }) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
-  const [failure, setFailure] = useState<SettingsFormProps["failure"]>(null);
-  const [saving, setSaving] = useState<SettingsFormProps["saving"]>(null);
-  const [saved, setSaved] = useState<SettingsFormProps["saved"]>(null);
+  const [failure, setFailure] = useState<PreferencesFormProps["failure"]>(null);
+  const [saving, setSaving] = useState<PreferencesFormProps["saving"]>(null);
+  const [saved, setSaved] = useState<PreferencesFormProps["saved"]>(null);
   const [portDraft, setPortDraft] = useState("");
   const [lanWantsOn, setLanWantsOn] = useState(false);
   const [passphrase, setPassphrase] = useState("");
@@ -349,8 +350,8 @@ export function SettingsPage({
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
   const [dataset, setDataset] = useState<SampleDatasetFileView | null>(null);
   const [datasetAsking, setDatasetAsking] = useState(false);
-  const [datasetWorking, setDatasetWorking] = useState<SettingsFormProps["datasetWorking"]>(null);
-  const [datasetDone, setDatasetDone] = useState<SettingsFormProps["datasetDone"]>(null);
+  const [datasetWorking, setDatasetWorking] = useState<PreferencesFormProps["datasetWorking"]>(null);
+  const [datasetDone, setDatasetDone] = useState<PreferencesFormProps["datasetDone"]>(null);
 
   const fail = (section: Section, error: unknown) => {
     const failure = asApiFailure(error);
@@ -399,7 +400,7 @@ export function SettingsPage({
     section: "port" | "lan",
     path: string,
     body: PortSettingRequest | LanSettingRequest,
-    done: NonNullable<SettingsFormProps["saved"]>,
+    done: NonNullable<PreferencesFormProps["saved"]>,
   ) => {
     setSaving(section);
     setFailure(null);
@@ -489,7 +490,7 @@ export function SettingsPage({
   };
 
   return (<>
-    <SettingsForm
+    <PreferencesForm
       settings={settings}
       failure={failure}
       saving={saving}
@@ -524,6 +525,7 @@ export function SettingsPage({
       onDatasetDelete={() => void changeDataset("delete", "deleted", () => api<SampleDatasetFileView>("DELETE", "/api/sample/dataset"))}
       onDatasetImport={(file) => void changeDataset("import", "imported", () => upload<SampleDatasetFileView>("/api/sample/dataset", file))}
     />
+    <ThemePreference />
     <BasemapSettings onAuthRequired={onAuthRequired} />
   </>);
 }

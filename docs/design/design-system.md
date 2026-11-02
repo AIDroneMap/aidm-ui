@@ -104,7 +104,7 @@ Each component is a styled native element wherever HTML has one, so keyboard use
 | Notice | A message in a box: info, ok, warn or danger. The icon repeats the tone the words carry. | four tones | none |
 | Progress | A bar with a label. Without a value a band moves along it. | value, no value | none |
 | Tabs | Views of one thing. | selected | arrows, Home, End (WAI-ARIA tabs) |
-| Sidebar, NavSection, NavItem | The navigation: lists of links with icons and badges. Below 64 rem only the icons show, and an item shows its words on hover and focus. | current, badge, folded | Tab |
+| Sidebar, NavSection, NavItem | The navigation: lists of links with icons and badges. Below 64 rem only the icons show, and an item shows its words on hover and focus. An expanded sidebar keeps its words at any width. | current, badge, folded, expanded | Tab |
 | PageHeader | The title of a screen, a line under it and its actions. The title takes the focus when the screen opens. | with and without subtitle | none |
 | Card | A panel that groups what belongs together. With a title it is a named region. | with and without title | none |
 | StatusPill | A state in words with a dot in its colour. `RUN_STATE_TONES` and `ENGINE_STATE_TONES` give the tone of every run and engine state. | neutral, running, ok, warn, danger, info | none |
@@ -131,6 +131,25 @@ An icon next to words is hidden from screen readers. An icon that stands alone t
 To add an icon, copy the elements inside its `<svg>` from the same Lucide release into a new export in `icons.tsx`, and add its name to the list on this page. Keep one release for all of them.
 
 The icons: ArrowLeft, Box, Check, ChevronDown, ChevronRight, Circle, CircleCheck, CircleDashed, CircleX, ClipboardCheck, Clock, Copy, Cpu, Download, Ellipsis, Folder, FolderOpen, Image, Images, Info, Layers, Link, LoaderCircle, Lock, Map, Menu, Pause, Play, Plus, RefreshCw, RotateCcw, Save, Search, Settings, SlidersHorizontal, TriangleAlert, Trash2, Upload, X.
+
+## Screens and sections
+
+The shell in `web/src/shell/` puts the sidebar around every screen except the wizard and the login. Inside a project it lists the six sections with their badges: the photo count, a spinner while the latest run is unfinished, and the number of runs with results. Below 64 rem the sidebar keeps its icons. On a window under 64 rem that is much taller than wide, such as a tablet held upright, it hides behind a menu button and slides over the screen with its words; following a link or pressing Escape closes it.
+
+Every address is in `ROUTE_MAP` in `web/src/router.ts`, with the screen it opens, and old addresses are in `redirectFromHash`. The router test and the sidebar journey in `web/src/shell/Shell.browser.test.ts` walk that list.
+
+Each section has a folder of its own, and its words sit under its own prefix in `en.json`, so work on different sections touches different files and different lines:
+
+| Section | Folder | Prefix |
+| --- | --- | --- |
+| Photos | `web/src/sections/photos/` | `photos.visual` |
+| Settings | `web/src/sections/settings/` | `settings` |
+| Review | `web/src/sections/review/` | `review` |
+| Runs | `web/src/sections/runs/` | `runs` |
+| Results | `web/src/sections/results/` | `results` |
+| Details | `web/src/sections/details/` | `details` |
+
+`danger`, `affects` and `warn` hold the words of the danger area, the option tags and the option warnings. `nav` holds the sidebar's, `projects` the Projects screen's and `preferences` the Preferences screen's. Each prefix is one block of keys in `en.json`; add a key next to the others of its prefix.
 
 ## States
 

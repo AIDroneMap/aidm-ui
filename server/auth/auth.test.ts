@@ -245,7 +245,7 @@ lanTest("only the operator's own computer can change the LAN switch, even with a
   for (const body of [{ enabled: false }, { enabled: true, passphrase: "another long passphrase" }]) {
     const response = await fetch(`${remote}/api/settings/lan`, { method: "PUT", body: JSON.stringify(body), headers: { cookie } });
     expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: { code: "settings.lan_local_only", data: {} } });
+    expect(await response.json()).toEqual({ error: { code: "preferences.lan_local_only", data: {} } });
   }
   expect(harness.settings.get("lan.enabled")).toBe(true);
   expect((await fetch(`${remote}/api/settings`, { headers: { cookie } })).status).toBe(200);

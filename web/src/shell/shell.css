@@ -1,0 +1,132 @@
+/*
+ * The application frame: the sidebar on the left, the screen on the right.
+ * The sidebar stays in view while the screen scrolls.
+ */
+.shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.shell-bar,
+.shell-backdrop {
+  display: none;
+}
+
+.shell-nav {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.shell-main {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: var(--space-8) var(--space-6);
+}
+
+/* Forms keep a readable line length; the viewers take the whole width. */
+.shell-main > * {
+  max-width: 60rem;
+}
+
+.shell-main-wide > * {
+  max-width: none;
+}
+
+.shell-spinner {
+  width: 0.875rem;
+  height: 0.875rem;
+  vertical-align: -0.125rem;
+  animation: shell-spin 1s linear infinite;
+}
+
+/*
+ * Folded to icons, the rail is short enough to fit the window, and each
+ * item's words show beside it on hover and focus. A scroll container would
+ * clip them, so the folded rail does not scroll.
+ */
+@media (max-width: 64rem) {
+  .shell-nav {
+    height: auto;
+    min-height: 100vh;
+    max-height: 100vh;
+    overflow: visible;
+  }
+}
+
+@keyframes shell-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-spinner {
+    animation: none;
+  }
+}
+
+/*
+ * A tablet held upright, or any window much taller than wide and under
+ * 64 rem: the sidebar hides behind a menu button and slides over the screen
+ * when opened, with its words. Closed, it is out of the Tab order.
+ */
+@media (max-width: 64rem) and (max-aspect-ratio: 4/5) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-1);
+  }
+
+  .shell-bar-name {
+    font-weight: var(--weight-strong);
+  }
+
+  .shell-nav {
+    display: none;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    height: 100vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-raised);
+  }
+
+  .shell[data-menu="open"] .shell-nav {
+    display: block;
+    animation: shell-slide var(--motion-panel) ease-out;
+  }
+
+  .shell-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    /* The same backdrop as a dialog's, the one colour outside the tokens (docs/design/design-system.md). */
+    background: rgb(0 0 0 / 0.45);
+  }
+
+  .shell-main {
+    padding: var(--space-6) var(--space-4);
+  }
+}
+
+@keyframes shell-slide {
+  from {
+    transform: translateX(-100%);
+  }
+}

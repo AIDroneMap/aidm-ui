@@ -22,9 +22,9 @@ test("the interface-only code has a translation", () => {
 });
 
 test("the placeholders the server fills are in the text", () => {
-  expect(messages["settings.port_invalid"]).toContain("{min}");
-  expect(messages["settings.port_invalid"]).toContain("{max}");
-  expect(messages["settings.passphrase_too_short"]).toContain("{min}");
+  expect(messages["preferences.port_invalid"]).toContain("{min}");
+  expect(messages["preferences.port_invalid"]).toContain("{max}");
+  expect(messages["preferences.passphrase_too_short"]).toContain("{min}");
 });
 
 test("no text uses an em dash or is empty", () => {
@@ -117,4 +117,54 @@ test("all thirteen engine stages have a name and explanation", () => {
     expect(messages[`run.stage.${stage}.description`]).toBeTruthy();
   }
   expect(Object.keys(messages).filter((key) => key.startsWith("run.stage."))).toHaveLength(26);
+});
+
+/** The prefixes later work adds words under, each with the title it starts with. */
+const RESERVED: Record<string, string> = {
+  nav: "nav.label",
+  "photos.visual": "photos.visual.title",
+  settings: "settings.title",
+  review: "review.title",
+  runs: "runs.title",
+  results: "results.title",
+  details: "details.title",
+  danger: "danger.title",
+  affects: "affects.title",
+  warn: "warn.title",
+};
+
+/** Prefixes whose keys do not sit together as one block of the file. */
+function scatteredPrefixes(keys: string[], prefixes: string[]): string[] {
+  return prefixes.filter((prefix) => {
+    const places = keys.flatMap((key, index) => (key.startsWith(`${prefix}.`) ? [index] : []));
+    return places.length === 0 || places[places.length - 1]! - places[0]! !== places.length - 1;
+  });
+}
+
+test("every reserved prefix has its title and is one block of keys, with other keys between blocks", () => {
+  for (const key of Object.values(RESERVED)) expect(messages[key]?.trim(), key).toBeTruthy();
+  const keys = Object.keys(messages);
+  expect(scatteredPrefixes(keys, Object.keys(RESERVED))).toEqual([]);
+  // A block is never the last one of the file, so a new key there never changes the line before it.
+  const last = keys[keys.length - 1]!;
+  expect(Object.keys(RESERVED).some((prefix) => last.startsWith(`${prefix}.`))).toBe(false);
+  // No two blocks touch, so changes under two prefixes never touch the same lines.
+  const prefixOf = (key: string) => Object.keys(RESERVED).find((prefix) => key.startsWith(`${prefix}.`)) ?? null;
+  const touching = keys.slice(1).flatMap((key, index) => {
+    const [before, after] = [prefixOf(keys[index]!), prefixOf(key)];
+    return before && after && before !== after ? [`${keys[index]} ${key}`] : [];
+  });
+  expect(touching).toEqual([]);
+});
+
+test("the block check finds a prefix split in two", () => {
+  expect(scatteredPrefixes(["a.one", "a.two", "b.one", "a.three"], ["a", "b"])).toEqual(["a"]);
+  expect(scatteredPrefixes(["a.one", "b.one"], ["a", "b", "c"])).toEqual(["c"]);
+});
+
+test("Preferences is the application's page and never calls itself settings", () => {
+  expect(messages["nav.preferences"]).toBe("Preferences");
+  expect(messages["preferences.title"]).toBe("Preferences");
+  const wrong = Object.entries(messages).filter(([key, text]) => key.startsWith("preferences.") && /\bsettings?\b/i.test(text)).map(([key]) => key);
+  expect(wrong).toEqual([]);
 });

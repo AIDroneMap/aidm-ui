@@ -10,7 +10,7 @@ beforeAll(() => {
     async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/coded") {
-        return Response.json({ error: { code: "settings.port_invalid", data: { min: 1, max: 65535 } } }, { status: 400 });
+        return Response.json({ error: { code: "preferences.port_invalid", data: { min: 1, max: 65535 } } }, { status: 400 });
       }
       if (path === "/empty") return new Response(null, { status: 204 });
       if (path === "/crash") return new Response("<html>oops</html>", { status: 500 });
@@ -46,7 +46,7 @@ async function failureOf(call: Promise<unknown>): Promise<ApiFailure> {
 test("a coded error keeps its status, code and data", async () => {
   const failure = await failureOf(api("GET", "/coded"));
   expect(failure.status).toBe(400);
-  expect(failure.code).toBe("settings.port_invalid");
+  expect(failure.code).toBe("preferences.port_invalid");
   expect(failure.data).toEqual({ min: 1, max: 65535 });
 });
 

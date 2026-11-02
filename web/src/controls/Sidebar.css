@@ -84,15 +84,15 @@
   background: var(--surface-0);
 }
 
-/* Below 64 rem: icons only. The words stay readable to screen readers and appear beside the icon on hover and focus. */
+/* Below 64 rem: icons only. The words stay readable to screen readers and appear beside the icon on hover and focus. An expanded sidebar keeps its words. */
 @media (max-width: 64rem) {
-  .sidebar {
+  .sidebar:not(.sidebar-expanded) {
     width: 3.5rem;
     padding-inline: var(--space-1);
   }
 
-  .sidebar-header,
-  .nav-section-title {
+  .sidebar:not(.sidebar-expanded) .sidebar-header,
+  .sidebar:not(.sidebar-expanded) .nav-section-title {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -101,12 +101,12 @@
     white-space: nowrap;
   }
 
-  .nav-item {
+  .sidebar:not(.sidebar-expanded) .nav-item {
     justify-content: center;
     padding: 0;
   }
 
-  .nav-label {
+  .sidebar:not(.sidebar-expanded) .nav-label {
     position: absolute;
     left: calc(100% + var(--space-2));
     z-index: 10;
@@ -116,8 +116,8 @@
     clip-path: inset(50%);
   }
 
-  .nav-item:hover .nav-label,
-  .nav-item:focus-visible .nav-label {
+  .sidebar:not(.sidebar-expanded) .nav-item:hover .nav-label,
+  .sidebar:not(.sidebar-expanded) .nav-item:focus-visible .nav-label {
     width: auto;
     height: auto;
     padding: var(--space-1) var(--space-2);
@@ -129,7 +129,7 @@
     box-shadow: var(--shadow-raised);
   }
 
-  .nav-badge {
+  .sidebar:not(.sidebar-expanded) .nav-badge {
     position: absolute;
     top: 0;
     right: 0;
