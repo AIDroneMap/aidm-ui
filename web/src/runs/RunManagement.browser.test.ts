@@ -65,10 +65,9 @@ test("run history, keyboard retry, changed settings and deletion use production 
       await send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
       await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
     };
-    await send("Page.navigate", { url: h.base+`/#/projects/${project}` });
+    await send("Page.navigate", { url: h.base+`/#/projects/${project}/runs` });
     await wait(`document.querySelector('a[href="#/runs/${original.id}"]')`);
     expect(await evaluate("document.body.textContent.includes('Selected engine')")).toBe(true);
-    await field("#project-notes", "Keep these notes while the project refreshes");
     await evaluate("new Promise(resolve => requestAnimationFrame(() => resolve(true)))");
     expect(await evaluate("document.querySelectorAll('#run-history-title').length")).toBe(1);
     await evaluate(`location.hash='#/runs/${original.id}';true`);
@@ -92,7 +91,7 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await wait("document.querySelector('dialog[open]')");
     await activate("Keep run"); expect(engine.tasks.size).toBe(1);
     await activate("Delete run"); await activate("Delete this run");
-    await wait(`location.hash==='#/projects/${project}'&&document.querySelector('a[href="#/runs/${original.id}"]')`);
+    await wait(`location.hash==='#/projects/${project}/runs'&&document.querySelector('a[href="#/runs/${original.id}"]')`);
     expect(engine.tasks.size).toBe(0);
     await evaluate(`location.hash='#/runs/${original.id}';true`);
     await activate("Run again with other settings"); await wait("document.querySelector('.settings-editor')");

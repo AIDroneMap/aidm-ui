@@ -84,7 +84,7 @@ test("resumes after a connection cut and reload through the upload panel", async
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No test server address");
-  const url = `http://127.0.0.1:${address.port}/#/projects/1`;
+  const url = `http://127.0.0.1:${address.port}/#/projects/1/photos`;
   let browser: Awaited<ReturnType<typeof startBrowser>> | undefined;
   let socket: WebSocket | undefined;
   try {
@@ -192,7 +192,7 @@ test("resumes after a connection cut and reload through the upload panel", async
       const check = () => { if (projectRequests > beforeRefresh) resolve(); else if (Date.now() > deadline) reject(new Error("Project did not refresh")); else setTimeout(check, 20); };
       check();
     });
-    await wait("document.querySelector('h1')?.textContent === 'Survey updated'");
+    await wait("document.querySelector('.page-header-subtitle')?.textContent === 'Survey updated'");
     expect(await evaluate("document.querySelector('#project-name').value + '|' + document.querySelector('#project-notes').value")).toBe("Unsaved name|Unsaved notes");
     expect(await evaluate("document.querySelector('table').textContent.includes('2 MiB')")).toBe(true);
     await evaluate(`(() => { const data = new DataTransfer(); data.items.add(new File(['x'], 'notes.txt')); data.items.add(new File(['x'], 'archive.zip')); document.querySelector('#upload-files').closest('section').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
@@ -240,10 +240,10 @@ test("resumes after a connection cut and reload through the upload panel", async
       document.querySelector('#upload-files').closest('section').dispatchEvent(event);
     })()`);
     expect(await evaluate("typeof window.finishDrop")).toBe("function");
-    await evaluate("location.hash = '#/projects/new'");
-    await wait("document.querySelector('#project-name') && !document.querySelector('#upload-files')");
+    await evaluate("location.hash = '#/'");
+    await wait("!document.querySelector('#upload-files')");
     expect(await evaluate("new Promise(resolve => { window.finishDrop(); setTimeout(() => resolve(window.staleFileReads), 0); })")).toBe(0);
-    await evaluate("location.hash = '#/projects/2'");
+    await evaluate("location.hash = '#/projects/2/photos'");
     await wait("document.body.textContent.includes('Sample project') && !document.querySelector('#upload-files')");
   } finally {
     socket?.close();

@@ -44,7 +44,7 @@ test("project switches sources without losing edits and ignores stale link reads
     const wait = (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 5000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(Error('timeout: ' + ${JSON.stringify(expression)})) : setTimeout(check, 20); check(); })`);
     const type = async (selector: string, text: string) => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus(); document.querySelector(${JSON.stringify(selector)}).select()`); await send("Input.insertText", { text }); };
     const pressButton = async (text: string) => { await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(text)}).focus()`); await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); };
-    await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1` });
+    await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/photos` });
     await wait("document.querySelector('#link-url') && document.querySelector('#import-path') && document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')");
     expect(await evaluate("document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')")).toBe(true);
     await type("#project-name", "Unsaved name"); await type("#project-notes", "Unsaved notes");

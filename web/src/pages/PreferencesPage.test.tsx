@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApiFailure } from "../api.ts";
 import type { PackagesView, SettingsView as SettingsData } from "../../../shared/api-types.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
-import { SettingsForm, type SettingsFormProps } from "./SettingsPage.tsx";
+import { PreferencesForm, type PreferencesFormProps } from "./PreferencesPage.tsx";
 
 const lanOff: SettingsData = { port: null, listeningPort: 8823, lan: { enabled: false, addresses: [] } };
 
@@ -15,8 +15,8 @@ const packages: PackagesView = {
   lastCheck: null,
 };
 
-function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsData | null = lanOff): string {
-  const props: SettingsFormProps = {
+function render(overrides: Partial<PreferencesFormProps> = {}, settings: SettingsData | null = lanOff): string {
+  const props: PreferencesFormProps = {
     settings,
     failure: null,
     saving: null,
@@ -48,7 +48,7 @@ function render(overrides: Partial<SettingsFormProps> = {}, settings: SettingsDa
     onDatasetImport: () => {},
     ...overrides,
   };
-  return renderToStaticMarkup(<SettingsForm {...props} />);
+  return renderToStaticMarkup(<PreferencesForm {...props} />);
 }
 
 test("with the local network off, the port field is labelled and there is no passphrase field", () => {
@@ -86,7 +86,7 @@ test("with the local network on, the addresses to open are listed", () => {
 });
 
 test("a port error shows its text with the numbers filled in", () => {
-  const failure = new ApiFailure(400, "settings.port_invalid", { min: 1, max: 65535 });
+  const failure = new ApiFailure(400, "preferences.port_invalid", { min: 1, max: 65535 });
   const html = render({ failure: { section: "port", error: failure }, portDraft: "99999" });
   expect(html).toContain('role="alert"');
   expect(html).toContain("Enter a port between 1 and 65535, or leave it empty.");
@@ -94,14 +94,14 @@ test("a port error shows its text with the numbers filled in", () => {
 });
 
 test("a passphrase error shows next to the passphrase field", () => {
-  const failure = new ApiFailure(400, "settings.passphrase_too_short", { min: 8 });
+  const failure = new ApiFailure(400, "preferences.passphrase_too_short", { min: 8 });
   const html = render({ failure: { section: "lan", error: failure }, lanWantsOn: true });
   expect(html).toContain("The passphrase needs at least 8 characters.");
 });
 
 test("while loading, the page says so", () => {
   const html = render({}, null);
-  expect(html).toContain("Loading the settings...");
+  expect(html).toContain("Loading the preferences...");
   expect(untranslatedText(html)).toEqual([]);
 });
 
@@ -125,7 +125,7 @@ test("each section has a status area that is in the page even when empty, and a 
 });
 
 test("a bad port marks the field invalid and points it at the hint and the error", () => {
-  const failure = new ApiFailure(400, "settings.port_invalid", { min: 1, max: 65535 });
+  const failure = new ApiFailure(400, "preferences.port_invalid", { min: 1, max: 65535 });
   const html = render({ failure: { section: "port", error: failure }, portDraft: "99999" });
   expect(html).toContain('aria-invalid="true"');
   expect(html).toContain('aria-describedby="settings-port-hint settings-port-error"');
@@ -222,7 +222,7 @@ test("a saved answer is said in the status area", () => {
   expect(html).toContain('<p role="status">Your answer is saved.</p>');
 });
 
-test("the settings point to the advanced options of the engine on this computer", () => {
+test("Preferences point to the advanced options of the engine on this computer", () => {
   const html = render();
   expect(html).toContain("<h2 id=\"settings-local-title\">Engine on this computer</h2>");
   expect(html).toContain('<a href="#/engines">Open the advanced options for the engine on this computer</a>');

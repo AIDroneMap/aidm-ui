@@ -1,30 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import { api, asApiFailure, type ApiFailure } from "./api.ts";
 import { ErrorMessage } from "./components/ErrorMessage.tsx";
-import { Layout } from "./components/Layout.tsx";
 import { VersionWatch } from "./components/VersionBanner.tsx";
 import { firstRunRedirect } from "./firstRun.ts";
 import { t } from "./i18n/translate.ts";
 import { EnginesPage } from "./pages/EnginesPage.tsx";
-import { HomePage } from "./pages/HomePage.tsx";
-import { ProjectPage } from "./pages/ProjectPage.tsx";
-import { RunPage } from "./pages/RunPage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
-import { SampleJobPage } from "./pages/SampleJobPage.tsx";
-import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { PreferencesPage } from "./pages/PreferencesPage.tsx";
+import { ProjectsPage } from "./pages/ProjectsPage.tsx";
+import { RunPage } from "./pages/RunPage.tsx";
 import { WizardPage } from "./pages/WizardPage.tsx";
-import { useRoute, useRunKey } from "./router.ts";
-import type { SessionView, WizardView } from "../../shared/api-types.ts";
+import { redirectFromHash, routeFromHash, SAMPLE_HASH, sectionHash, useHash, wizardHash } from "./router.ts";
+import { ProjectScreen } from "./shell/ProjectScreen.tsx";
+import { Shell } from "./shell/Shell.tsx";
+import { useWorkspaceProject } from "./shell/useWorkspaceProject.ts";
+import type { SampleView, SessionView, WizardView } from "../../shared/api-types.ts";
 
 type Session = "loading" | "login" | "ready";
 
 function Screens() {
-  const route = useRoute();
-  const runKey = useRunKey();
+  const hash = useHash();
+  const route = routeFromHash(hash);
   const [session, setSession] = useState<Session>("loading");
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   // Null until the server says whether the first-run wizard is done.
   const [wizardDone, setWizardDone] = useState<boolean | null>(null);
+  // The project of the open run, once the run has loaded, so the sidebar can show its sections.
+  const [runProject, setRunProject] = useState<{ runId: number; projectId: number } | null>(null);
+  const authRequired = () => setSession("login");
 
   useEffect(() => {
     let current = true;
@@ -58,34 +61,62 @@ function Screens() {
     };
   }, [session]);
 
-  // First run: a page that opens on the home page goes to the wizard, once. After that the operator is free to leave.
+  // Saved links to old addresses keep working. Replacing the address keeps the old one out of the history.
+  const moved = redirectFromHash(hash);
+  useEffect(() => {
+    if (moved !== null) window.location.replace(moved);
+  }, [moved]);
+
+  // The sample job page became the sample project's Runs section. Before its first run that project has no
+  // workspace yet, so the address goes to the wizard step that offers the sample job.
+  const sample = hash === SAMPLE_HASH;
+  useEffect(() => {
+    if (!sample || session !== "ready") return;
+    let current = true;
+    api<SampleView>("GET", "/api/sample").then(
+      (view) => {
+        if (current) window.location.replace(view.run ? sectionHash(view.run.projectId, "runs") : wizardHash("sample"));
+      },
+      () => {
+        if (current) window.location.replace("#/");
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [sample, session]);
+
+  const projectId = route.screen === "project" ? route.projectId
+    : route.screen === "run" && runProject?.runId === route.runId ? runProject.projectId : null;
+  const workspace = useWorkspaceProject(session === "ready" ? projectId : null, authRequired);
+
+  // First run: a page that opens on the Projects screen goes to the wizard, once. After that the operator is free to leave.
   const redirect = useRef(firstRunRedirect());
   useEffect(() => {
-    if (redirect.current(route, wizardDone)) window.location.replace("#/wizard");
-  }, [route, wizardDone]);
+    if (moved === null && !sample && redirect.current(route.screen, wizardDone)) window.location.replace(wizardHash("welcome"));
+  }, [route.screen, wizardDone, moved, sample]);
 
   if (session === "login") return <LoginPage onSignedIn={() => setSession("ready")} />;
-  if (session === "loading") {
+  if (session === "loading" || moved !== null || sample) {
     return <main>{failure ? <ErrorMessage failure={failure} /> : <p>{t("app.loading")}</p>}</main>;
   }
+  if (route.screen === "wizard") {
+    return <main><WizardPage onAuthRequired={authRequired} onCompleted={() => setWizardDone(true)} /></main>;
+  }
   return (
-    <Layout route={route}>
-      {route === "wizard" ? (
-        <WizardPage onAuthRequired={() => setSession("login")} onCompleted={() => setWizardDone(true)} />
-      ) : route === "project" ? (
-        <ProjectPage onAuthRequired={() => setSession("login")} />
-      ) : route === "run" ? (
-        <RunPage key={runKey} runId={runKey} onAuthRequired={() => setSession("login")} />
-      ) : route === "settings" ? (
-        <SettingsPage onAuthRequired={() => setSession("login")} onWizardReopened={() => setWizardDone(false)} />
-      ) : route === "engines" ? (
-        <EnginesPage onAuthRequired={() => setSession("login")} />
-      ) : route === "sample" ? (
-        <SampleJobPage onAuthRequired={() => setSession("login")} />
+    <Shell route={route} project={workspace.project} wide={route.screen === "project" && route.viewer !== undefined}>
+      {route.screen === "project" ? (
+        <ProjectScreen route={route} workspace={workspace} onAuthRequired={authRequired} />
+      ) : route.screen === "run" ? (
+        <RunPage key={route.runId} runId={String(route.runId)} onProject={(id) => setRunProject({ runId: route.runId, projectId: id })} onAuthRequired={authRequired} />
+      ) : route.screen === "preferences" ? (
+        <PreferencesPage onAuthRequired={authRequired} onWizardReopened={() => setWizardDone(false)} />
+      ) : route.screen === "engines" ? (
+        <EnginesPage onAuthRequired={authRequired} />
       ) : (
-        <HomePage onAuthRequired={() => setSession("login")} />
+        <ProjectsPage onAuthRequired={authRequired} />
       )}
-    </Layout>
+    </Shell>
   );
 }
 

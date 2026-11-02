@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SettingsPage } from "../pages/SettingsPage.tsx";
+import { PreferencesPage } from "../pages/PreferencesPage.tsx";
 import { BasemapForm } from "./BasemapSettings.tsx";
 
 test("basemap settings start empty and label the optional source", () => {
@@ -15,6 +15,6 @@ test("basemap settings start empty and label the optional source", () => {
 });
 
 test("the settings page includes the basemap section", () => {
-  const html = renderToStaticMarkup(<SettingsPage onAuthRequired={() => {}} onWizardReopened={() => {}} />);
+  const html = renderToStaticMarkup(<PreferencesPage onAuthRequired={() => {}} onWizardReopened={() => {}} />);
   expect(html).toContain('id="basemap-title"');
 });

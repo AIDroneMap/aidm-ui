@@ -61,12 +61,12 @@ test("invalid basemap settings are rejected without changing the saved value", a
   ]) {
     const response = await put(harness, "/api/settings/basemap", value);
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: { code: "settings.basemap_invalid", data: {} } });
+    expect(await response.json()).toEqual({ error: { code: "preferences.basemap_invalid", data: {} } });
   }
   expect(await (await fetch(`${harness.base}/api/settings/basemap`)).json()).toEqual({ enabled: false, url: "", scheme: "xyz", attribution: "" });
   expect((await put(harness, "/api/settings/basemap", valid)).status).toBe(200);
   const malformed = await fetch(`${harness.base}/api/settings/basemap`, { method: "PUT", body: "{" });
-  expect(await malformed.json()).toEqual({ error: { code: "settings.basemap_invalid", data: {} } });
+  expect(await malformed.json()).toEqual({ error: { code: "preferences.basemap_invalid", data: {} } });
 });
 
 test("settings show the stored port, the port in use and the local network addresses", async () => {
@@ -100,7 +100,7 @@ test("a port outside 1 to 65535 or not a whole number is refused with the limits
     const response = await put(harness, "/api/settings/port", { port });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: { code: "settings.port_invalid", data: { min: 1, max: 65535 } },
+      error: { code: "preferences.port_invalid", data: { min: 1, max: 65535 } },
     });
   }
   expect(harness.settings.get("server.port")).toBeNull();
@@ -120,7 +120,7 @@ test("the LAN switch needs a passphrase of the minimum length", async () => {
   const response = await put(harness, "/api/settings/lan", { enabled: true, passphrase: "short" });
   expect(response.status).toBe(400);
   expect(await response.json()).toEqual({
-    error: { code: "settings.passphrase_too_short", data: { min: PASSPHRASE_MIN_LENGTH } },
+    error: { code: "preferences.passphrase_too_short", data: { min: PASSPHRASE_MIN_LENGTH } },
   });
   expect(harness.settings.get("lan.enabled")).toBe(false);
 

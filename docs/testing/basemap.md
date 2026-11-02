@@ -10,7 +10,7 @@ Only the enabled source's fixed origin is added to the page's image and connecti
 
 - `server/settings/routes.test.ts` checks empty defaults, save and reload, database reopening, invalid templates and rejection without changing saved settings.
 - `server/http/security-headers.test.ts` and `server/http/routes.test.ts` check the default policy and the enabled origin on page, API and error responses. Paths and query values are never added to the policy.
-- `web/src/basemap/BasemapSettings.test.tsx` checks the empty labelled form and its entry point on the settings page.
+- `web/src/basemap/BasemapSettings.test.tsx` checks the empty labelled form and its entry point on the Preferences page.
 - `web/src/basemap/map-request.test.ts` checks that external reads match the saved tile template and resource type.
 - `web/src/basemap/Basemap.browser.test.ts` uses Chromium with actual page security headers and a controlled tile server. It checks no external tile requests with empty or disabled settings, default-policy blocking, save errors, policy reload, both numbering schemes, literal attribution, delayed settings, source failures and visible result pixels after failure.
 - `web/src/map/MapView.browser.test.ts` retains the offline map controls and result-request checks.

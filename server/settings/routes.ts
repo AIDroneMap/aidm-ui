@@ -52,8 +52,8 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
       GET: () => Response.json(ctx.settings.get("map.basemap")),
       PUT: async (req) => {
         const parsed = await readJson(req);
-        if (!parsed.ok) return parsed.response.status === 400 ? errorResponse(400, "settings.basemap_invalid") : parsed.response;
-        if (!isBasemapSettings(parsed.body)) return errorResponse(400, "settings.basemap_invalid");
+        if (!parsed.ok) return parsed.response.status === 400 ? errorResponse(400, "preferences.basemap_invalid") : parsed.response;
+        if (!isBasemapSettings(parsed.body)) return errorResponse(400, "preferences.basemap_invalid");
         const { enabled, url, scheme, attribution } = parsed.body;
         const value = { enabled, url, scheme, attribution };
         ctx.settings.set("map.basemap", value);
@@ -68,7 +68,7 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
         if (!("port" in parsed.body)) return errorResponse(400, "api.invalid_body");
         const { port } = parsed.body;
         if (port !== null && !isValidPort(port)) {
-          return errorResponse(400, "settings.port_invalid", { min: PORT_MIN, max: PORT_MAX });
+          return errorResponse(400, "preferences.port_invalid", { min: PORT_MIN, max: PORT_MAX });
         }
         ctx.settings.set("server.port", port);
         return Response.json(settingsView(ctx));
@@ -79,7 +79,7 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
       PUT: async (req, { client }) => {
         // A device on the network that knows the passphrase must not be able to
         // open the door wider, or lock the operator's own computer out of the switch.
-        if (!isLoopbackAddress(client.address)) return errorResponse(403, "settings.lan_local_only");
+        if (!isLoopbackAddress(client.address)) return errorResponse(403, "preferences.lan_local_only");
         const parsed = await readJson(req);
         if (!parsed.ok) return parsed.response;
         const { enabled, passphrase } = parsed.body;
@@ -91,7 +91,7 @@ export function settingsRoutes(ctx: RouteContext): RouteTable {
             return errorResponse(400, "api.invalid_body");
           }
           if ([...passphrase].length < PASSPHRASE_MIN_LENGTH) {
-            return errorResponse(400, "settings.passphrase_too_short", { min: PASSPHRASE_MIN_LENGTH });
+            return errorResponse(400, "preferences.passphrase_too_short", { min: PASSPHRASE_MIN_LENGTH });
           }
           newHash = await Bun.password.hash(passphrase, "argon2id");
         }
