@@ -422,24 +422,41 @@ test("engine options reconcile facts, hide internal names and keep unknown optio
   expect(refreshed.options.map((option: { name: string }) => option.name)).toEqual(["dtm"]);
 });
 
-test("the 2.6.1 compatibility baseline detects new and missing options through the route", async () => {
+test("the drift check permits exactly four differences for the bundled test list and none for a real engine's", async () => {
   const { assertCatalogueDrift } = await import("../../test-support/catalogue-drift.ts");
-  fake.info.version = "2.6.1";
+  const recorded = (await import("../../test-support/fixtures/task-api-2.7.0-options.json")).default;
   const engine = await addEngine();
   const options = async () => (await (await send("GET", `/api/engines/${engine.id}/options`)).json()).options;
-  expect(() => assertCatalogueDrift([], "2.6.1")).toThrow("Catalogue drift");
-  expect(() => assertCatalogueDrift([], "2.6.2")).toThrow("Catalogue drift");
-  const baseline = await options();
-  expect(() => assertCatalogueDrift(baseline, "2.6.1")).not.toThrow();
-  expect(() => assertCatalogueDrift(baseline, "2.7.0")).not.toThrow();
-  expect(() => assertCatalogueDrift(baseline, "2.7.1")).toThrow("Catalogue drift");
-  expect(() => assertCatalogueDrift(baseline, "2.6.2")).toThrow("Catalogue drift");
+
+  // The stand-in's default list is the one the test-mode packages of both 2.6.1 and 2.7.0 bundle.
+  expect(() => assertCatalogueDrift([], "2.6.1", "test-mode")).toThrow("Catalogue drift");
+  const bundled = await options();
+  expect(() => assertCatalogueDrift(bundled, "2.6.1", "test-mode")).not.toThrow();
+  expect(() => assertCatalogueDrift(bundled, "2.7.0", "test-mode")).not.toThrow();
+  // The same list is not an engine's: its four differences are drift there.
+  expect(() => assertCatalogueDrift(bundled, "2.7.0", "engine")).toThrow("Catalogue drift");
+  // One of the permitted differences going away is drift too.
+  fake.options.push({ name: "report-units", type: "enum", value: "m", domain: ["m", "ft"], help: "Back again" });
+  const returned = await options();
+  expect(() => assertCatalogueDrift(returned, "2.6.1", "test-mode")).toThrow("report-units");
+  fake.options.pop();
+  // So is one name too many on either side.
   fake.options.push({ name: "brand-new-option", type: "bool", value: "false", domain: "", help: "New help" });
   const added = await options();
-  expect(() => assertCatalogueDrift(added, "2.6.1")).toThrow("brand-new-option");
-  expect(() => assertCatalogueDrift(added, "2.7.0")).toThrow("brand-new-option");
+  expect(() => assertCatalogueDrift(added, "2.6.1", "test-mode")).toThrow("brand-new-option");
   fake.options = fake.options.filter((option) => option.name !== "brand-new-option" && option.name !== "dsm");
-  const missing = await options();
-  expect(() => assertCatalogueDrift(missing, "2.6.1")).toThrow("dsm");
-  expect(() => assertCatalogueDrift(missing, "2.7.0")).toThrow("dsm");
+  const removed = await options();
+  expect(() => assertCatalogueDrift(removed, "2.6.1", "test-mode")).toThrow("dsm");
+
+  // The list a released 2.7.0 package reports behind a real engine matches the catalogue exactly.
+  fake.options = structuredClone(recorded) as typeof fake.options;
+  const exact = await options();
+  expect(exact.map((option: { name: string }) => option.name)).not.toContain("build-overviews");
+  expect(() => assertCatalogueDrift(exact, "2.7.0", "engine")).not.toThrow();
+  fake.options.push({ name: "brand-new-option", type: "bool", value: "false", domain: "", help: "New help" });
+  const engineAdded = await options();
+  expect(() => assertCatalogueDrift(engineAdded, "2.7.0", "engine")).toThrow("brand-new-option");
+  fake.options = fake.options.filter((option) => option.name !== "brand-new-option" && option.name !== "dsm");
+  const engineRemoved = await options();
+  expect(() => assertCatalogueDrift(engineRemoved, "2.7.0", "engine")).toThrow("dsm");
 });

@@ -206,7 +206,8 @@ real(
     const reconciled = await fetch(`${h.base}/api/engines/${engineId}/options`);
     expect(reconciled.status).toBe(200);
     const catalogue = (await reconciled.json()) as { options: ReconciledOption[] };
-    assertCatalogueDrift(catalogue.options, version as string);
+    // The package runs in test mode, so it serves the list bundled in its release, whatever version it is.
+    assertCatalogueDrift(catalogue.options, version as string, "test-mode");
 
     const events: RunView[] = [];
     const unsubscribe = h.tracker.subscribe(1, (event) => { if (event.type === "run") events.push(event.run); });

@@ -61,6 +61,34 @@ test("the info a test changes is what the next request sees", async () => {
   expect(body.cpuCores).toBe(8);
 });
 
+test("the options route serves the bundled test list to 2.6.1 and the recorded engine list to 2.7.0", async () => {
+  const namesOf = async (instance: FakeTaskApi) => {
+    const list = (await (await fetch(`${instance.address}/options?token=fake-token`)).json()) as Array<{ name: string }>;
+    return list.map((option) => option.name);
+  };
+  fake = new FakeTaskApi({ info: { version: "2.6.1" } });
+  await fake.start();
+  const bundled = await namesOf(fake);
+  await fake.stop();
+  fake = new FakeTaskApi({ info: { version: "2.7.0" } });
+  await fake.start();
+  const recorded = await namesOf(fake);
+  expect(bundled).toHaveLength(80);
+  expect(recorded).toHaveLength(80);
+  // The four retired names the bundled list still carries, and the four current ones it lacks.
+  for (const retired of ["build-overviews", "pc-rectify", "pc-tile", "texturing-skip-local-seam-leveling"]) {
+    expect(bundled).toContain(retired);
+    expect(recorded).not.toContain(retired);
+  }
+  for (const current of ["gps-z-offset", "matcher-order", "report-units", "sfm-no-partial"]) {
+    expect(bundled).not.toContain(current);
+    expect(recorded).toContain(current);
+  }
+  // Changing the version later does not change the list the instance serves.
+  fake.info.version = "2.6.1";
+  expect(await namesOf(fake)).toEqual(recorded);
+});
+
 // The task routes.
 
 async function post(path: string, body: FormData | URLSearchParams, token = "fake-token"): Promise<unknown> {
