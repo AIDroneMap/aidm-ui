@@ -1,7 +1,7 @@
 # Proposal: a desktop-class interface for AIDM UI
 
-Status: proposal for maintainer review. No code until it is approved.
-Date: 1 November 2026.
+Status: approved by the maintainer on 2 November 2026, question by question (section 10). No code until the specification issue carries the `ready-for-agent` label.
+Date: 1 November 2026, decisions recorded 2 November 2026.
 Replaces: the interface Sprint 2 delivered (specification #58, milestone `docs/milestones/0002-own-flight.md`).
 Keeps: the aidm-api contract, the data model, the six presets, the three ways in, the sample project. No feature is removed; some move.
 
@@ -380,22 +380,22 @@ Small server additions the design needs. None touches the aidm-api contract, the
 
 ADR changes: 0009 (hidden bins) superseded in part by a new ADR "every option the task API offers is shown"; 0010 (viewers) superseded in part by "the map renders the orthophoto when there are no tiles"; 0011 stands. `GLOSSARY.md` gains Preferences, Section, Workspace, Danger area.
 
-## 10. Open questions for the maintainer
+## 10. Decisions
 
-Each has a recommendation. The order is the order to settle them in.
+The maintainer settled every question on 2 November 2026, one per message. Each answer below is the decision; the recommendation it accepted is in the proposal above.
 
-1. **Naming the application page.** Rename today's Settings page to Preferences so that Settings means run settings only. Recommended: yes.
-2. **Showing the 17 hidden options.** Confirm that the editor shows them as in section 6.1, including the three locked ones the task API forces, and that ADR 0009 is superseded in part. Recommended: yes, all 17, locked ones read-only with the reason.
-3. **CI pin to API 2.7.0.** The live schema count needs the test-mode API at 2.7.0; the workflow pins 2.6.1. This is a `.github/` change that lands alone. Recommended: yes, before the options ticket.
-4. **Rendering the orthophoto without tiles.** Add the `geotiff` dependency and render the Cloud Optimized GeoTIFF in the browser from the archive in place, superseding part of ADR 0010. The alternative is to only fix the sample job's options, which leaves "whether or not tiles were requested" unmet. Recommended: geotiff, plus the sample fix.
-5. **Icons.** Vendor a subset of Lucide (ISC) as inline SVG components, or draw our own. Recommended: Lucide subset, with its licence file in the repository.
-6. **Accent colour.** Field green as above, or another family. It needs one decision before the tokens ticket. Recommended: green; blue is excluded by the brief.
-7. **Dark theme in the first delivery.** Both themes from the start doubles the contrast checks and the screenshots, and the brief asks for both. Recommended: both from the start, with the tokens test covering both.
-8. **Delete confirmation strength.** A dialog that names what goes with sizes, or additionally typing the project name. Recommended: the dialog alone; one operator, no shared installation.
-9. **Thumbnails from EXIF only.** Photos without an embedded thumbnail (TIFF multispectral, some RAW) show a neutral tile. The alternative is a server-side decoder, a heavy dependency. Recommended: EXIF only.
-10. **Where Review lives.** A screen of its own in the project (`/review`) as proposed, or the last step inside Settings. Recommended: its own screen, so a run can be reviewed from a saved link.
-11. **Order of delivery.** Proposed: design tokens and components; navigation shell and Projects; Photos; options workspace; Run screen; Results and viewers; Engines and Preferences restyle; Wizard restyle. The options workspace is the brief's highest priority but depends on the component set. Recommended: as listed, with the options workspace starting as soon as the controls merge.
+1. **Preferences.** The application page is renamed Preferences; "Settings" means run settings only. `GLOSSARY.md` records the term.
+2. **The 17 hidden options.** All 17 appear as in section 6.1. The three the task API forces (`pc-ept`, `cog`, `gltf`) are locked with the reason. ADR 0012 supersedes ADR 0009 in part.
+3. **CI pin.** The test-mode task API in CI moves to 2.7.0 in a pull request of its own, before the options workspace; the 2.6.1 exception table goes with it.
+4. **Orthophoto without tiles.** The map renders the cloud-optimised GeoTIFF from the archive with the `geotiff` dependency when no tiles exist, and the sample job requests tiles. ADR 0013 supersedes ADR 0010 in part.
+5. **Icons.** A vendored subset of Lucide, committed as inline SVG components with its licence file, no runtime dependency.
+6. **Accent.** Field green; the contrast test decides the exact values.
+7. **Themes.** Light and dark from the tokens ticket onwards. The theme override is kept in the browser, not in the server's settings, because it belongs to the device.
+8. **Delete confirmation.** The dialog with sizes and Keep focused by default; no typed name.
+9. **Thumbnails.** From the EXIF-embedded image only; a neutral tile where there is none.
+10. **Review.** Its own screen at `#/projects/:id/review`.
+11. **Order of delivery.** CI pin; tokens, themes, icons and components; navigation shell with Projects and Preferences; options workspace; then Photos, Run screen, Results and viewers, Details and the delete dialogs in parallel; Engines, Preferences and Wizard restyled last.
 
-## 11. What this proposal does not do
+## 11. Next steps
 
-It writes no code, changes no screen and opens no issue. On approval, it becomes a specification issue with the `ready-for-agent` label and is split into tickets, one per pull request, as `AGENTS.md` requires.
+This document, ADRs 0012 and 0013 and the glossary terms land in one documentation pull request. A specification issue written from this proposal follows; the maintainer approves it with `ready-for-agent`, and it is then split into the tickets of decision 11, one pull request each, as `AGENTS.md` requires. No ticket starts before that label.
