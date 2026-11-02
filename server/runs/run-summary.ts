@@ -76,10 +76,7 @@ export function summaryFromOutput(lines: string[], stageSeen: Array<{ name: stri
   };
 }
 
-/** The name of the stage a line of the engine's output starts, if it starts one (aidm: modules/types.py, "Running %s stage"). */
-export function stageStarted(line: string): string | null {
-  return /^\s*\[INFO\]\s+Running (\S+) stage\s*$/.exec(line)?.[1] ?? null;
-}
+export { stageStarted } from "../../shared/run-stages.ts";
 
 /** The engine's log.json in a task's folder, when aidm-ui can read it there. */
 export function readLogJson(taskFolder: string | null): RunSummary | null {

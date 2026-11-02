@@ -1,4 +1,5 @@
 import type { ApiError } from "./api-error.ts";
+import type { RunFailureView, RunStageView } from "./run-stages.ts";
 
 // Shapes of the JSON the server and the interface exchange.
 
@@ -187,6 +188,12 @@ export interface RunView {
   resultsAvailable: boolean;
   results?: RunResultsView;
   createdAt: string;
+  /** The engine's own processing time in milliseconds, once it reports one. */
+  processingTime?: number | null;
+  /** The engine's stages in order, each with its state and when aidm-ui saw it start. */
+  stages?: RunStageView[];
+  /** Where a failed run stopped, and which lines of its log show it. Null unless the run failed. */
+  failure?: RunFailureView | null;
 }
 
 export interface SampleDatasetView {
