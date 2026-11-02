@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record the option list a released API 2.7.0 package reports behind a real engine 0.2.0, serve it from the stand-in task API for versions from 2.7.0 on, and key the option drift exception by the list the check ran against instead of by API version. The bundled test-mode list of 2.6.1 and 2.7.0 keeps its exact exception of four missing and four unexplained options; the recorded engine list matches the catalogue with no exception. Evidence: the recorded fixture `test-support/fixtures/task-api-2.7.0-options.json` with its source named in `docs/notes/0061-option-sources.md`, the version-keyed serving test in `test-support/fake-task-api.test.ts`, and the exactness tests in `server/engines/routes.test.ts`. Closes #135.
+
 - Record the approved design proposal for the desktop-class interface, with the screen inventory, the sidebar navigation, the nine option groups placing all 80 task API options, the design system outline and the maintainer's eleven decisions. ADR 0012 shows every option the task API offers, superseding part of ADR 0009; ADR 0013 renders the orthophoto without tiles, superseding part of ADR 0010; the glossary gains Workspace, Section, Preferences and Danger area. Evidence: `docs/proposals/0001-desktop-class-interface.md`, `docs/adr/0012-every-option-the-task-api-offers-is-shown.md`, `docs/adr/0013-the-map-renders-the-orthophoto-without-tiles.md`.
 
 ## 0.1.0
