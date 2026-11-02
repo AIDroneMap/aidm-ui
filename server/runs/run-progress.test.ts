@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
+import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
 import type { RunView } from "../../shared/api-types.ts";
 import type { RunReviewView } from "../../shared/run-review.ts";
@@ -143,4 +144,29 @@ test("a restart forgets the processing time of the attempt before it until the n
   expect((await view(id)).processingTime).toBeNull();
   api.setTask(uuid, { statusCode: 20, processingTime: 2000 });
   await eventually(async () => (await view(id)).processingTime === 2000);
+});
+
+test("a restart seen only in the output keeps the time of the info read before it out of the run", async () => {
+  // The engine restarts the task between the poll's two requests: the info still shows the old attempt.
+  let restartAfterInfo: string | null = null;
+  class RestartingClient extends TaskClient {
+    override async taskInfo(uuid: string) {
+      const answer = await super.taskInfo(uuid);
+      if (restartAfterInfo === uuid) {
+        restartAfterInfo = null;
+        api.setTask(uuid, { statusCode: 10, processingTime: -1, output: [] });
+      }
+      return answer;
+    }
+  }
+  await h.stop();
+  h = openHarness({ dataFolder: folder, runPollMs: 10, runClientFor: (endpoint) => new RestartingClient(endpoint) });
+  const { id, uuid } = await queuedRun();
+  api.setTask(uuid, { statusCode: 20, processingTime: 9000, output: ["[INFO]    Running dataset stage", "reading"] });
+  await eventually(async () => (await view(id)).processingTime === 9000);
+  restartAfterInfo = uuid;
+  await eventually(async () => (await view(id)).restartedAtLine === 2);
+  expect((await view(id)).processingTime).toBeNull();
+  await Bun.sleep(100);
+  expect((await view(id)).processingTime).toBeNull();
 });

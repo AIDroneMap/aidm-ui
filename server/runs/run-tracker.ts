@@ -547,9 +547,10 @@ export class RunTracker {
       // The whole output was asked for; keep only what follows the last line held, as on any other poll.
       output = { ok: true, value: output.value.slice(held - 1) };
     }
-    // Taken after the restart checks, which forget the time of the attempt before.
+    // Taken after the restart checks, which forget the time of the attempt before. When the output shows a
+    // restart the info did not, the info was read before the restart and its time belongs to the old attempt.
     const timing = this.timingOf(runId);
-    const timeMoved = processingTime !== null && processingTime >= 0 && timing.processingTime !== processingTime;
+    const timeMoved = !shorter && processingTime !== null && processingTime >= 0 && timing.processingTime !== processingTime;
     if (timeMoved) timing.processingTime = processingTime;
     const before = this.current(runId, following);
     if (before === null) return;
