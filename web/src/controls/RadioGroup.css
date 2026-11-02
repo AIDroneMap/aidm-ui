@@ -1,0 +1,30 @@
+/* Every radio button: a ring that fills with an accent dot. */
+:where(input[type="radio"]) {
+  appearance: none;
+  flex: none;
+  box-sizing: border-box;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  background: var(--surface-0);
+  border: 1px solid var(--border-2);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: box-shadow var(--motion-state), border-color var(--motion-state);
+}
+
+:where(input[type="radio"]:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 0.25rem var(--surface-0);
+}
+
+:where(input[type="radio"]:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-1);
+  cursor: not-allowed;
+}
+
+.radio-group .check {
+  margin: var(--space-2) 0;
+}

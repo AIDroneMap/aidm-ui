@@ -1,0 +1,140 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-sizing: border-box;
+  width: 15rem;
+  min-height: 100%;
+  padding: var(--space-3) var(--space-2);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-1);
+}
+
+.sidebar-header {
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--weight-strong);
+}
+
+.nav-section + .nav-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-1);
+}
+
+.nav-section-title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.nav-list {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  color: var(--text-1);
+  text-decoration: none;
+  border-radius: var(--radius-control);
+}
+
+.nav-item:hover {
+  background: var(--surface-2);
+}
+
+.nav-item[aria-current="page"] {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+  background: var(--accent-soft);
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-badge {
+  min-width: 1.25rem;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.25rem;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+}
+
+.nav-item[aria-current="page"] .nav-badge {
+  color: var(--text-1);
+  background: var(--surface-0);
+}
+
+/* Below 64 rem: icons only. The words stay readable to screen readers and appear beside the icon on hover and focus. */
+@media (max-width: 64rem) {
+  .sidebar {
+    width: 3.5rem;
+    padding-inline: var(--space-1);
+  }
+
+  .sidebar-header,
+  .nav-section-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nav-label {
+    position: absolute;
+    left: calc(100% + var(--space-2));
+    z-index: 10;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .nav-item:hover .nav-label,
+  .nav-item:focus-visible .nav-label {
+    width: auto;
+    height: auto;
+    padding: var(--space-1) var(--space-2);
+    clip-path: none;
+    color: var(--text-1);
+    background: var(--surface-0);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-control);
+    box-shadow: var(--shadow-raised);
+  }
+
+  .nav-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    min-width: 0;
+    padding: 0 0.25rem;
+    line-height: 1rem;
+  }
+}

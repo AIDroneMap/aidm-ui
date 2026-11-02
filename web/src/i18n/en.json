@@ -1226,5 +1226,19 @@
   "run_manage.waiting": "Waiting. The engine reports {count} running or waiting runs.",
   "run.restart_unconfirmed": "The engine did not confirm the restart. Check its connection, then retry this run.",
   "run.action_unavailable": "Wait for the current run action to finish, then try again.",
-  "run.photos_unavailable": "The original photos were not recorded for this run. Start a new run from the project."
+  "run.photos_unavailable": "The original photos were not recorded for this run. Start a new run from the project.",
+  "ui.loading": "Loading",
+  "ui.search.clear": "Clear the search",
+  "ui.search.matches_one": "1 match",
+  "ui.search.matches_other": "{count} matches",
+  "ui.stage.waiting": "Waiting",
+  "ui.stage.running": "Running",
+  "ui.stage.done": "Done",
+  "ui.stage.skipped": "Skipped",
+  "ui.stage.failed": "Failed",
+  "ui.stage.progress": "Progress of {name}",
+  "ui.diff.reset": "Reset",
+  "ui.diff.actions": "Actions",
+  "ui.drop.release": "Let go to add them",
+  "ui.confirm.keep": "Keep"
 }

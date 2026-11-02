@@ -1,0 +1,36 @@
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-card);
+}
+
+.empty-state-icon {
+  display: grid;
+  place-content: center;
+  width: 3rem;
+  height: 3rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 50%;
+}
+
+.empty-state-icon .icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.empty-state-text {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--text-2);
+}

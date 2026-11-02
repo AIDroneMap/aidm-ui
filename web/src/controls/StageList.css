@@ -1,0 +1,79 @@
+.stage-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.stage-icon {
+  margin-top: 0.0625rem;
+  color: var(--text-3);
+}
+
+.stage-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  min-width: 0;
+}
+
+.stage-name {
+  font-weight: var(--weight-medium);
+}
+
+.stage-state {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.stage-description {
+  flex-basis: 100%;
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+}
+
+.stage-text .field {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+}
+
+.stage-time {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.stage-waiting .stage-name,
+.stage-skipped .stage-name {
+  color: var(--text-2);
+  font-weight: var(--weight-regular);
+}
+
+.stage-running .stage-icon { color: var(--running); }
+.stage-running .stage-state { color: var(--running); }
+.stage-done .stage-icon { color: var(--ok); }
+.stage-failed .stage-icon,
+.stage-failed .stage-state { color: var(--danger); }
+
+.stage-running .stage-icon {
+  animation: stage-spin 1.2s linear infinite;
+}
+
+@keyframes stage-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-running .stage-icon {
+    animation: none;
+  }
+}
