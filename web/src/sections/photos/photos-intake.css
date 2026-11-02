@@ -1,0 +1,51 @@
+.photos-intake {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.photos-intake .card {
+  margin: 0;
+}
+
+/* The three ways in sit side by side inside the drop zone and stack on a narrow screen. */
+.photos-intake-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+  margin-top: var(--space-4);
+  text-align: left;
+}
+
+.photos-intake-bar progress {
+  max-width: none;
+}
+
+.photos-intake-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+.photos-intake-actions,
+.photos-intake-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.photos-intake-summary {
+  justify-content: space-between;
+}
+
+.photos-intake-summary > p {
+  margin: 0;
+}
+
+.photos-intake-wrap {
+  overflow-wrap: anywhere;
+}

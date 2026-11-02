@@ -6,16 +6,18 @@ import { PRESET_IDS } from "../../../shared/option-catalogue.ts";
 import { browserPath } from "../controls/browser-path.ts";
 import { startBrowser } from "../controls/browser-start.ts";
 import { findBrowserPage } from "../controls/browser-target.ts";
+import { buildPhotosPage } from "../sections/photos/browser-build.ts";
 
 test("project switches sources without losing edits and ignores stale link reads", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-project-link-"));
-  const fixture = await Bun.build({ entrypoints: [new URL("./project-browser-fixture.tsx", import.meta.url).pathname], target: "browser" });
+  const { script, styles } = await buildPhotosPage(new URL("./project-browser-fixture.tsx", import.meta.url).pathname);
   let stored: string | null = null;
   const facts = { photoCount: 2, withoutGps: 1, cameras: [{ make: "Camera", model: "One", photoCount: 2 }], dimensions: [{ width: 4000, height: 3000, photoCount: 2 }] };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
     const path = new URL(request.url).pathname;
-    if (path === "/") return new Response('<div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } });
-    if (path === "/fixture.js") return new Response(await fixture.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
+    if (path === "/") return new Response('<link rel="stylesheet" href="/fixture.css"><div id="root"></div><script type="module" src="/fixture.js"></script>', { headers: { "content-type": "text/html" } });
+    if (path === "/fixture.css") return new Response(styles, { headers: { "content-type": "text/css" } });
+    if (path === "/fixture.js") return new Response(script, { headers: { "content-type": "text/javascript" } });
     if (path.endsWith("/runs")) return Response.json({ runs: [], nextOffset: null });
     if (path === "/api/projects/1") return Response.json({ id: 1, name: "Survey", notes: "Saved", builtin: null, photoCount: 0, runCount: 0, latestState: null, lastChange: "2024-01-01T00:00:00Z" });
     if (path.endsWith("/link")) {
@@ -25,6 +27,8 @@ test("project switches sources without losing edits and ignores stale link reads
       return Response.json({ url: snapshot, size: null, facts: snapshot?.includes("second") ? facts : null, factsRunId: snapshot?.includes("second") ? 7 : null });
     }
     if (path.endsWith("/import")) return Response.json({ available: true, state: "none", path: null, acceptedCount: 0, skippedCount: 0, groundControlCount: 0, files: [], nextOffset: null });
+    // Empty photo reads return no photos. A linked project reads its facts from the archive instead.
+    if (path.endsWith("/photo-positions")) { await Bun.sleep(1000); return Response.json({ photos: [], nextOffset: null, pendingMetadata: 0, localImportAllowed: true }); }
     if (path.endsWith("/photos")) { await Bun.sleep(1000); return Response.json({ files: [], nextOffset: null }); }
     if (path.endsWith("/photo-facts")) { await Bun.sleep(1000); return Response.json({ photoCount: 0, photoBytes: 0, duplicates: 0, videoCount: 0, withoutGps: 0, cameras: [], bands: [], dateSpans: [], flights: [], flightCount: 0, unassignedCount: 0, pendingMetadata: 0, nextOffset: null }); }
     if (path === "/api/engines") return Response.json([{ id: 1, name: "Engine", enabled: true }]);
@@ -45,18 +49,19 @@ test("project switches sources without losing edits and ignores stale link reads
     const type = async (selector: string, text: string) => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus(); document.querySelector(${JSON.stringify(selector)}).select()`); await send("Input.insertText", { text }); };
     const pressButton = async (text: string) => { await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(text)}).focus()`); await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 }); };
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/photos` });
-    await wait("document.querySelector('#link-url') && document.querySelector('#import-path') && document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')");
-    expect(await evaluate("document.body.textContent.includes('Project files') && document.body.textContent.includes('Photo facts')")).toBe(true);
+    await wait("document.querySelector('#photos-intake-url') && document.querySelector('#photos-intake-path') && document.querySelector('.drop-zone-title')");
+    // An empty project offers three ways in, and has no photo facts until it has photos.
+    expect(await evaluate("document.querySelector('.drop-zone-title').textContent === 'Add the photos of your flight' && ['Drop or choose files', 'Use a folder on this computer', 'Give the address of a ZIP file'].every(title => document.body.textContent.includes(title)) && !document.body.textContent.includes('Photo facts') && !document.body.textContent.includes('Photos arrived')")).toBe(true);
     await type("#project-name", "Unsaved name"); await type("#project-notes", "Unsaved notes");
     await evaluate("window.holdLinkRead = true");
-    await type("#link-url", "https://example.test/first.zip"); await pressButton("Check and save link");
+    await type("#photos-intake-url", "https://example.test/first.zip"); await pressButton("Check and save link");
     await wait("document.body.textContent.includes('1 KiB') && document.body.textContent.includes('Remove link')");
-    expect(await evaluate("!document.querySelector('#import-path') && !document.body.textContent.includes('Project files') && !document.body.textContent.includes('Photo facts')")).toBe(true);
-    await wait("document.querySelector('#link-url').value.includes('first')");
-    await type("#link-url", "https://example.test/second.zip?x=A%2Fb");
+    expect(await evaluate("!document.querySelector('#photos-intake-path') && !document.querySelector('.drop-zone') && !document.querySelector('input[webkitdirectory]') && !document.body.textContent.includes('Use a folder on this computer') && !document.body.textContent.includes('Photo facts')")).toBe(true);
+    await wait("document.querySelector('#photos-intake-url').value.includes('first')");
+    await type("#photos-intake-url", "https://example.test/second.zip?x=A%2Fb");
     expect(await evaluate("document.body.textContent.includes('1 KiB')")).toBe(false);
     await wait("window.linkReadHeld");
-    expect(await evaluate("document.querySelector('#link-url').value")).toBe("https://example.test/second.zip?x=A%2Fb");
+    expect(await evaluate("document.querySelector('#photos-intake-url').value")).toBe("https://example.test/second.zip?x=A%2Fb");
     expect(await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent === 'Check and save link').disabled")).toBe(false);
     await pressButton("Check and save link");
     await wait("document.body.textContent.includes('second.zip')");
@@ -72,14 +77,14 @@ test("project switches sources without losing edits and ignores stale link reads
     expect(await evaluate("document.body.textContent.includes('engine checks its photo limit') && !document.body.textContent.includes('NaN') && !document.body.textContent.includes('Previous') && !document.body.textContent.includes('Next')")).toBe(true);
     await send("Page.reload");
     await wait("document.body.textContent.includes('Camera One') && document.body.textContent.includes('Remove link')");
-    expect(await evaluate("!document.querySelector('#import-path') && !document.body.textContent.includes('1 KiB')")).toBe(true);
+    expect(await evaluate("!document.querySelector('#photos-intake-path') && !document.body.textContent.includes('1 KiB')")).toBe(true);
     await type("#project-name", "Other unsaved name"); await type("#project-notes", "Other unsaved notes");
     await pressButton("Remove link");
-    await wait("document.querySelector('#import-path') && document.body.textContent.includes('Project files')");
+    await wait("document.querySelector('#photos-intake-path') && document.body.textContent.includes('Use a folder on this computer')");
     expect(await evaluate("document.querySelector('#project-name').value + '|' + document.querySelector('#project-notes').value")).toBe("Other unsaved name|Other unsaved notes");
     expect(stored as string | null).toBeNull();
     await send("Page.reload");
-    await wait("document.querySelector('#import-path') && document.body.textContent.includes('Photo facts')");
+    await wait("document.querySelector('#photos-intake-path') && document.body.textContent.includes('Give the address of a ZIP file')");
     expect(await evaluate("document.body.textContent.includes('Remove link')")).toBe(false);
   } finally { socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }
 }, 30000);

@@ -1,8 +1,12 @@
 import type { ImportStore } from "../projects/import-store.ts";
 import type { Database } from "bun:sqlite";
+import { constants } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import type { ProjectPhotoFactsView } from "../../shared/api-types.ts";
+import type { PhotoPosition, ProjectPhotoFactsView, ProjectPhotoPositionsView } from "../../shared/api-types.ts";
+import { embeddedThumbnail, photoBytes } from "./embedded-thumbnail.ts";
 import { captureMoment, detectFlights, type FlightPhoto } from "./flights.ts";
+import { ThumbnailCache } from "./thumbnail-cache.ts";
 import { readPhotoMetadata, type PhotoMetadata } from "./metadata.ts";
 
 interface PhotoRow {
@@ -18,6 +22,7 @@ interface PhotoRow {
 /** Caches bounded metadata reads. Images and pixel data never enter a response. */
 export class PhotoStore {
   private readonly preparing = new Map<number, Promise<void>>();
+  private readonly thumbnails = new ThumbnailCache();
   constructor(private readonly db: Database, private readonly folder: string, private readonly imports?: ImportStore) {}
 
   private rows(projectId: number): PhotoRow[] {
@@ -124,5 +129,54 @@ export class PhotoStore {
       pendingMetadata: rows.filter(row => row.facts === null || row.readerKind !== this.kind(row.name)).length,
       nextOffset: offset + limit < detected.flights.length ? offset + limit : null,
     };
+  }
+
+  /** One page of the photos, in checksum order, with the facts already read. Flight ids are the ones of `facts`. */
+  async positions(projectId: number, offset: number, limit: number): Promise<Omit<ProjectPhotoPositionsView, "localImportAllowed">> {
+    await this.prepare(projectId);
+    const rows = this.rows(projectId);
+    const flightOf = new Map<string, string>();
+    for (const flight of this.flights(rows).flights) for (const sha256 of flight.checksums) flightOf.set(sha256, flight.id);
+    const photos = rows.slice(offset, offset + limit).map((row): PhotoPosition => {
+      const facts = row.facts === null ? null : JSON.parse(row.facts) as PhotoMetadata;
+      return {
+        sha256: row.sha256, name: row.name, make: facts?.make ?? null, model: facts?.model ?? null, flightId: flightOf.get(row.sha256) ?? null,
+        latitude: facts?.latitude ?? null, longitude: facts?.longitude ?? null, altitude: facts?.altitude ?? null,
+        captureTime: facts?.captureTime ?? null, excluded: row.excluded === 1,
+      };
+    });
+    return {
+      photos, nextOffset: offset + limit < rows.length ? offset + limit : null,
+      pendingMetadata: rows.filter(row => row.facts === null || row.readerKind !== this.kind(row.name)).length,
+    };
+  }
+
+  /**
+   * The preview the camera embedded in a photo of this project, or null. The photo is never decoded.
+   * A preview is cached under the checksum of its photo. An imported photo is checked against its folder
+   * before the cache is read, so a changed file never gets a cached answer.
+   */
+  async thumbnail(projectId: number, sha256: string): Promise<Buffer | null> {
+    const cached = (): Buffer | null | undefined => this.thumbnails.get(sha256);
+    const extract = async (file: FileHandle, size: number): Promise<Buffer | null> => {
+      const known = cached();
+      if (known !== undefined) return known;
+      const found = await embeddedThumbnail(photoBytes(file, size));
+      this.thumbnails.set(sha256, found);
+      return found;
+    };
+    if (this.imports?.has(projectId)) return this.imports.withPhoto(projectId, sha256, extract);
+    const row = this.db.query(`SELECT f.size, f.storage_id AS storageId FROM project_upload_files f
+      WHERE f.project_id = ? AND f.sha256 = ? AND EXISTS (SELECT 1 FROM project_upload_aliases a WHERE a.project_id = f.project_id AND a.sha256 = f.sha256 AND a.kind = 'photo')`)
+      .get(projectId, sha256) as { size: number; storageId: string } | null;
+    if (row === null) return null;
+    const known = cached();
+    if (known !== undefined) return known;
+    const file = await open(join(this.folder, "projects", String(projectId), "files", row.storageId), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.size !== row.size) return null;
+      return await extract(file, info.size);
+    } finally { await file.close(); }
   }
 }
