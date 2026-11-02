@@ -1,23 +1,77 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 1rem;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
 
 .field label,
 .check label {
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
-input[type="number"],
-input[type="text"],
-input[type="password"] {
-  font: inherit;
-  padding: 0.6rem 0.75rem;
+.field-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.field-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+:where(input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="search"], input[type="url"], input[type="email"], textarea, select) {
+  box-sizing: border-box;
+  min-height: var(--control-height);
   max-width: 24rem;
-  border: 2px solid var(--color-border);
-  border-radius: 0.375rem;
-  color: var(--color-text);
-  background: var(--color-surface);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text-1);
+  background: var(--surface-0);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  transition: border-color var(--motion-state);
+}
+
+:where(textarea) {
+  width: min(100%, 36rem);
+  max-width: none;
+  min-height: 8rem;
+  padding: var(--space-2) var(--space-3);
+}
+
+:where(input, textarea, select):hover {
+  border-color: var(--text-3);
+}
+
+:where(input, textarea, select)[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+:where(input, textarea, select):disabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border-1);
+  cursor: not-allowed;
+}
+
+::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+/* The file picker's own button looks like a secondary button. */
+::file-selector-button {
+  min-height: var(--control-height-dense);
+  margin-right: var(--space-3);
+  padding: 0 var(--space-3);
+  font: inherit;
+  color: var(--text-1);
+  background: var(--surface-0);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  cursor: pointer;
 }

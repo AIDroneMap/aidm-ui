@@ -1,20 +1,41 @@
-.warning {
-  padding: 0.75rem 1rem;
-  color: var(--color-warning-text);
-  background: var(--color-warning);
-  border: 2px solid var(--color-warning-text);
-  border-radius: 0.375rem;
+/* .warning and .error are the names the screens built before the design system use. */
+.notice,
+.warning,
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--info);
+  background: var(--info-soft);
+  border: 1px solid currentColor;
+  border-left-width: 4px;
+  border-radius: var(--radius-control);
 }
 
+.warning,
+.error {
+  display: block;
+}
+
+.notice-body {
+  min-width: 0;
+}
+
+.notice .icon {
+  margin-top: 0.0625rem;
+}
+
+.notice-ok { color: var(--ok); background: var(--ok-soft); }
+.notice-warn, .warning { color: var(--warn); background: var(--warn-soft); }
+.notice-danger, .error { color: var(--danger); background: var(--danger-soft); }
+
+.notice p,
 .error p,
 .warning p {
   margin: 0;
 }
 
-.error {
-  padding: 0.75rem 1rem;
-  color: var(--color-error-text);
-  background: var(--color-error);
-  border: 2px solid var(--color-error-text);
-  border-radius: 0.375rem;
+.notice p + p {
+  margin-top: var(--space-2);
 }

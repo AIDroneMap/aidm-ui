@@ -1,3 +1,31 @@
-table { border-collapse: collapse; }
-caption { text-align: left; font-weight: 600; }
-th, td { padding: var(--space-2); text-align: left; border-bottom: 1px solid var(--color-border); }
+:where(table) {
+  border-collapse: collapse;
+}
+
+:where(caption) {
+  padding-bottom: var(--space-2);
+  text-align: left;
+  font-weight: var(--weight-strong);
+}
+
+:where(th, td) {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-1);
+}
+
+:where(thead th) {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  border-bottom-color: var(--border-2);
+}
+
+:where(tbody tr:hover) {
+  background: var(--surface-1);
+}
+
+.table-dense :where(th, td) {
+  padding: var(--space-1) var(--space-2);
+}

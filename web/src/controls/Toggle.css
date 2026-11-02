@@ -1,11 +1,50 @@
 .check {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin: 1rem 0;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
 }
 
-.check input {
-  width: 1.5rem;
-  height: 1.5rem;
+/* A switch is a native checkbox with role="switch": a track with a knob. */
+:where(input[type="checkbox"][role="switch"]) {
+  appearance: none;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 2.25rem;
+  height: 1.25rem;
+  margin: 0;
+  background: var(--border-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background-color var(--motion-state), border-color var(--motion-state);
+}
+
+:where(input[type="checkbox"][role="switch"])::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: calc(1.25rem - 4px);
+  height: calc(1.25rem - 4px);
+  background: var(--surface-0);
+  border-radius: 50%;
+  transition: transform var(--motion-state);
+}
+
+:where(input[type="checkbox"][role="switch"]:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+:where(input[type="checkbox"][role="switch"]:checked)::before {
+  background: var(--on-accent);
+  transform: translateX(1rem);
+}
+
+:where(input[type="checkbox"][role="switch"]:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-1);
+  cursor: not-allowed;
 }
