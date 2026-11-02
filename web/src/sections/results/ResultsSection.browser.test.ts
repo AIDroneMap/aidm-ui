@@ -26,6 +26,7 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
     if (path === "/api/projects/1") return Response.json(project());
     if (path === "/api/runs/7/results" && request.method === "DELETE") { deleted = true; return new Response(null, { status: 204 }); }
     if (path === "/api/runs/7") return Response.json(run());
+    if (path === "/api/projects/1/runs") return Response.json({ runs: [run()], nextOffset: null });
     if (path.endsWith("/events")) return new Response("", { headers: { "content-type": "text/event-stream" } });
     return new Response(null, { status: 404 });
   } });
@@ -43,24 +44,32 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
       try { return await evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 5000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(new Error('timeout')) : setTimeout(check, 20); check(); })`); }
       catch { throw new Error(`Waiting for ${expression}: ${await evaluate("document.body.innerText")}`); }
     };
-    const deleteButton = "[...document.querySelectorAll('main button')].find(element => element.textContent === 'Delete results')";
+    const deleteButton = `[...document.querySelectorAll('main button')].find(element => element.textContent === ${JSON.stringify(start === "the Results section" ? "Delete the results of this run" : "Delete results")})`;
+    const confirmLabel = start === "the Results section" ? "Delete results (1 KiB)" : "Delete results and 1 KiB";
     const sidebarResults = "document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]')?.textContent ?? ''";
 
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/results` });
-    await wait("document.querySelector('main a[href=\"#/projects/1/results/7\"]')");
+    // The section opens on the latest run with results, named in the switcher, with its downloads.
+    await wait("document.querySelector('#results-run option')?.textContent.startsWith('Flight 7, started')");
+    await wait("document.querySelector('main a[href=\"/api/runs/7/outputs/orthophoto\"]')");
     expect(await evaluate(sidebarResults)).toContain("Runs with results: 1");
-    if (start === "the Results section") await evaluate("document.querySelector('main a[href=\"#/projects/1/results/7\"]').click(); true");
-    else await evaluate("location.hash = '#/runs/7'; true");
+    if (start === "the run page") await evaluate("location.hash = '#/runs/7'; true");
     await wait(deleteButton);
     await evaluate(`${deleteButton}.click(); true`);
     await wait("document.querySelector('dialog[open]')");
-    await evaluate("[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === 'Delete results and 1 KiB').click(); true");
-    await wait("document.body.textContent.includes('Results deleted.')");
-    expect(deleted).toBe(true);
+    // The run page asks with the shared deletion dialog: Keep has the focus, and the archive and its size are named.
+    if (start === "the run page") {
+      expect(await evaluate("document.activeElement?.textContent")).toBe("Keep results");
+      expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Delete the results of "Flight 7"?');
+      expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Local result archive: 1 KiB');
+    }
+    await evaluate(`[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === ${JSON.stringify(confirmLabel)}).click(); true`);
     if (start === "the Results section") {
       await wait(`!(${sidebarResults}).includes('Runs with results')`);
-      await evaluate("document.querySelector('main a[href=\"#/projects/1/results\"]').click(); true");
+      expect(deleted).toBe(true);
     } else {
+      await wait("document.body.textContent.includes('Results deleted.')");
+      expect(deleted).toBe(true);
       await evaluate("document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]').click(); true");
       await wait(`!(${sidebarResults}).includes('Runs with results')`);
     }

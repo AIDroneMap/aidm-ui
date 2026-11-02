@@ -14,12 +14,21 @@ function row(latitude: number, count: number): number {
   return (1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * count;
 }
 
-/** Match file numbering to the raster, since archives can contain either tile scheme. */
+/**
+ * The layers the map can draw. Tiles are matched to the raster, since archives
+ * can contain either tile scheme. An orthophoto without usable tiles becomes
+ * a GeoTIFF layer the browser reads in place (ADR 0013).
+ */
 export async function readMapMetadata(path: string, entries: readonly ArchiveEntry[]): Promise<RunMapView> {
   const layers: MapLayer[] = [];
   for (const definition of LAYERS) {
     const raster = entries.find(entry => entry.name === definition.raster);
     if (!raster) continue;
+    const georeference = await readGeoreference(path, raster);
+    if (!georeference) continue;
+    const bounds = georeference.bounds;
+    const [west, south, east, north] = bounds;
+    if (south < -MERCATOR_LIMIT || north > MERCATOR_LIMIT) continue;
     const tiles = entries.flatMap(entry => {
       if (!entry.name.startsWith(`${definition.root}/`)) return [];
       const match = /^(\d{1,2})\/(\d{1,10})\/(\d{1,10})\.png$/.exec(entry.name.slice(definition.root.length + 1));
@@ -28,12 +37,16 @@ export async function readMapMetadata(path: string, entries: readonly ArchiveEnt
       if (z > 30 || x >= 2 ** z || y >= 2 ** z) return [];
       return [{ z, x, y }];
     });
-    if (!tiles.length) continue;
-    const georeference = await readGeoreference(path, raster);
-    if (!georeference) continue;
-    const bounds = georeference.bounds;
+    const layer = tiles.length ? tileLayer(definition.name, bounds, tiles) : null;
+    if (layer) layers.push(layer);
+    // Without usable tiles the browser reads the orthophoto itself, which needs range requests into a stored entry.
+    else if (definition.name === "orthophoto" && raster.method === 0) layers.push({ kind: "cog", name: "orthophoto", bounds, corners: georeference.corners });
+  }
+  return { state: layers.length ? "ready" : "unavailable", layers };
+}
+
+function tileLayer(name: MapLayerName, bounds: [number, number, number, number], tiles: Array<{ z: number; x: number; y: number }>): MapLayer | null {
     const [west, south, east, north] = bounds;
-    if (south < -MERCATOR_LIMIT || north > MERCATOR_LIMIT) continue;
     let xyz = true, tms = true;
     for (const tile of tiles) {
       const count = 2 ** tile.z;
@@ -43,10 +56,8 @@ export async function readMapMetadata(path: string, entries: readonly ArchiveEnt
       xyz &&= overlaps(tile.y);
       tms &&= overlaps(count - 1 - tile.y);
     }
-    if (!xyz && !tms) continue;
+    if (!xyz && !tms) return null;
     // At zoom zero the schemes address the same file. Otherwise ambiguity hides the layer.
-    if (xyz && tms && tiles.some(tile => tile.z !== 0)) continue;
-    layers.push({ name: definition.name, bounds, scheme: xyz ? "xyz" : "tms", minZoom: tiles.reduce((min, tile) => Math.min(min, tile.z), 30), maxZoom: tiles.reduce((max, tile) => Math.max(max, tile.z), 0) });
-  }
-  return { state: layers.length ? "ready" : "unavailable", layers };
+    if (xyz && tms && tiles.some(tile => tile.z !== 0)) return null;
+    return { kind: "tiles", name, bounds, scheme: xyz ? "xyz" : "tms", minZoom: tiles.reduce((min, tile) => Math.min(min, tile.z), 30), maxZoom: tiles.reduce((max, tile) => Math.max(max, tile.z), 0) };
 }

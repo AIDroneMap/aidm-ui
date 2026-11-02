@@ -67,8 +67,9 @@ Open **Engines**, choose **Add an engine**, and enter its name, task API address
 2. Start the sample and approve the dataset download. Follow its reported state and log.
 3. Wait for the run to finish **and for the result downloads to become available**. An engine finishing does not mean the server has finished saving its archive.
 4. Download the archive and an individual output. Check that the ZIP opens and its files are present. Open the orthophoto in a program that reads GeoTIFF, if available.
-5. Open the map if the run produced tiles. Pan and zoom, and try the available layers. A run without tiles correctly has no map.
-6. Open the 3D model if a GLB was produced. Orbit and zoom, close it and reopen it. Leave the basemap off to check that the viewers need no external tile service.
+5. Open the project's **Results**. It opens on the latest run with results. Check the two viewer tiles and their sizes, and the downloads with the whole archive first.
+6. Choose **Open the map**. The sample asks for tiles, so the orthophoto and the surface model are layers. Pan and zoom, try the layers, and go back with the toolbar. A run with an orthophoto but no tiles also opens on the map.
+7. Choose **Open the 3D model** if a GLB was produced. It opens seen from the south, filling most of the view. Orbit and zoom, then choose **Reset view**. Leave the basemap off to check that the viewers need no external tile service.
 
 Do not expect every preset to produce every output. The interface should show the files the engine actually made, or explain that a viewer is unavailable.
 

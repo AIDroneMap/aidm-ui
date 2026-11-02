@@ -107,7 +107,7 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
     await request("POST", `/api/projects/${projectId}/uploads/${upload.id}/complete`);
     const body = { engineId, preset: "quick-map", options: [] };
     const review = await (await request("POST", `/api/projects/${projectId}/run-review`, body)).json() as { revision: string };
-    const run = await (await request("POST", `/api/projects/${projectId}/runs`, { ...body, name: "First", revision: review.revision })).json() as { id: number };
+    const run = await (await request("POST", `/api/projects/${projectId}/runs`, { ...body, name: "First", revision: review.revision })).json() as { id: number; name: string };
     await eventually(async () => h.runs.get(run.id)?.state === "queued");
 
     // Inside the project the sidebar shows the badges: photos and an active run.
@@ -154,6 +154,7 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
       }
       // A loaded run is titled by its name; its number shows only while it loads.
       const title = route.screen === "projects" ? "Projects" : route.screen === "engines" ? "Engines" : route.screen === "preferences" ? "Preferences" : route.screen === "run" ? "First"
+        : route.viewer === "map" ? `Map of ${run.name}` : route.viewer === "model" ? `3D model of ${run.name}`
         : { photos: "Photos", settings: "Settings", review: "Review", runs: "Runs", results: "Results", details: "Details" }[route.section];
       await wait(`location.hash === ${JSON.stringify(address)} && document.querySelector('main h1')?.textContent === ${JSON.stringify(title)} && document.querySelector('nav.sidebar')`);
       if (route.screen === "project" && route.viewer) await wait(`document.querySelector('main a[href="#/projects/${projectId}/results/${run.id}"]')`);

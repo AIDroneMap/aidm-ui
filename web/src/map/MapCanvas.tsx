@@ -5,11 +5,25 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { BasemapSettings } from "../../../shared/basemap.ts";
 import { mapRequest } from "../basemap/map-request.ts";
 import type { MapLayer } from "../../../shared/map.ts";
+import { Toolbar } from "../controls/Toolbar.tsx";
+import { IconArrowLeft } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
 import { sameOriginRequest } from "./MapView.tsx";
+import { drawOrthophoto, ORTHOPHOTO_DETAIL, type OrthophotoState } from "./orthophoto-layer.ts";
 import "./map.css";
 
-export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: string; layers: MapLayer[]; basemap: BasemapSettings | null; onRetry: () => void }) {
+const BASEMAP = "operator-basemap";
+
+type Props = {
+  runId: string;
+  layers: MapLayer[];
+  basemap: BasemapSettings | null;
+  onRetry: () => void;
+  /** The address of the run's results. Given, the map takes the whole content area under one toolbar that leads back there. */
+  back?: string;
+};
+
+export default function MapCanvas({ runId, layers, basemap, onRetry, back }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const camera = useRef<{ runId: string; center: [number, number]; zoom: number; bearing: number; pitch: number } | null>(null);
@@ -18,17 +32,33 @@ export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: 
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [basemapFailed, setBasemapFailed] = useState(false);
+  const [basemapShown, setBasemapShown] = useState(true);
+  const [orthophoto, setOrthophoto] = useState<OrthophotoState | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
     maplibregl.setWorkerUrl(sameOriginRequest(workerUrl, location.origin).url);
     const bounds: [number, number, number, number] = [Math.min(...layers.map(layer => layer.bounds[0])), Math.min(...layers.map(layer => layer.bounds[1])), Math.max(...layers.map(layer => layer.bounds[2])), Math.max(...layers.map(layer => layer.bounds[3]))];
-    setFailed(false); setBasemapFailed(false); setLoaded(false);
-    const sources: Record<string, maplibregl.SourceSpecification> = Object.fromEntries(layers.map(layer => [layer.name, { type: "raster", tiles: [`${location.origin}/api/runs/${encodeURIComponent(runId)}/tiles/${layer.name}/{z}/{x}/{y}.png`], bounds: layer.bounds, minzoom: layer.minZoom, maxzoom: layer.maxZoom, scheme: layer.scheme, tileSize: 256 }]));
-    const styleLayers: maplibregl.LayerSpecification[] = layers.map((layer, index) => ({ id: layer.name, type: "raster", source: layer.name, layout: { visibility: (visible[layer.name] ?? index === 0) ? "visible" : "none" } }));
+    setFailed(false); setBasemapFailed(false); setLoaded(false); setOrthophoto(null);
+    const sources: Record<string, maplibregl.SourceSpecification> = {};
+    const styleLayers: maplibregl.LayerSpecification[] = [];
+    layers.forEach((layer, index) => {
+      const visibility = (visible[layer.name] ?? index === 0) ? "visible" : "none";
+      if (layer.kind === "cog") {
+        // Two images on the raster's corners: the whole orthophoto from an overview, and the part in view, sharper.
+        const coordinates = layer.corners.map(point => [...point]) as maplibregl.Coordinates;
+        sources[layer.name] = { type: "image", coordinates };
+        sources[ORTHOPHOTO_DETAIL] = { type: "image", coordinates };
+        styleLayers.push({ id: layer.name, type: "raster", source: layer.name, layout: { visibility }, paint: { "raster-fade-duration": 0 } });
+        styleLayers.push({ id: ORTHOPHOTO_DETAIL, type: "raster", source: ORTHOPHOTO_DETAIL, layout: { visibility }, paint: { "raster-fade-duration": 0 } });
+      } else {
+        sources[layer.name] = { type: "raster", tiles: [`${location.origin}/api/runs/${encodeURIComponent(runId)}/tiles/${layer.name}/{z}/{x}/{y}.png`], bounds: layer.bounds, minzoom: layer.minZoom, maxzoom: layer.maxZoom, scheme: layer.scheme, tileSize: 256 };
+        styleLayers.push({ id: layer.name, type: "raster", source: layer.name, layout: { visibility } });
+      }
+    });
     if (basemap?.enabled) {
-      sources["operator-basemap"] = { type: "raster", tiles: [basemap.url], scheme: basemap.scheme, tileSize: 256 };
-      styleLayers.unshift({ id: "operator-basemap", type: "raster", source: "operator-basemap" });
+      sources[BASEMAP] = { type: "raster", tiles: [basemap.url], scheme: basemap.scheme, tileSize: 256 };
+      styleLayers.unshift({ id: BASEMAP, type: "raster", source: BASEMAP, layout: { visibility: basemapShown ? "visible" : "none" } });
     }
     const savedCamera = camera.current?.runId === runId ? camera.current : null;
     const instance = new maplibregl.Map({
@@ -39,6 +69,9 @@ export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: 
       attributionControl: false,
     });
     map.current = instance;
+    const stop = new AbortController();
+    const geoTiff = layers.find(layer => layer.kind === "cog");
+    if (geoTiff) drawOrthophoto(instance, geoTiff, `${location.origin}/api/runs/${encodeURIComponent(runId)}/outputs/orthophoto`, stop.signal, setOrthophoto);
     instance.getCanvas().setAttribute("aria-label", t("map.canvas"));
     instance.addControl(new maplibregl.ScaleControl(), "bottom-left");
     const update = () => {
@@ -49,11 +82,12 @@ export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: 
     instance.on("move", update);
     instance.on("load", () => setLoaded(true));
     instance.on("error", event => {
-      if ("sourceId" in event && event.sourceId === "operator-basemap") setBasemapFailed(true);
+      if ("sourceId" in event && event.sourceId === BASEMAP) setBasemapFailed(true);
       else setFailed(true);
     });
     update();
     return () => {
+      stop.abort();
       const center = instance.getCenter();
       camera.current = { runId, center: [center.lng, center.lat], zoom: instance.getZoom(), bearing: instance.getBearing(), pitch: instance.getPitch() };
       map.current = null; instance.remove();
@@ -63,15 +97,47 @@ export default function MapCanvas({ runId, layers, basemap, onRetry }: { runId: 
   function toggle(layer: MapLayer) {
     const next = !visible[layer.name];
     setVisible(current => ({ ...current, [layer.name]: next }));
-    if (map.current?.getLayer(layer.name)) map.current.setLayoutProperty(layer.name, "visibility", next ? "visible" : "none");
+    for (const id of layer.kind === "cog" ? [layer.name, ORTHOPHOTO_DETAIL] : [layer.name]) {
+      if (map.current?.getLayer(id)) map.current.setLayoutProperty(id, "visibility", next ? "visible" : "none");
+    }
   }
 
-  return <div className={coordinates ? undefined : "map-outside"}>
-    <fieldset disabled={!loaded}><legend>{t("map.layers")}</legend>{layers.map(layer => <label key={layer.name}><input type="checkbox" checked={visible[layer.name] ?? false} onChange={() => toggle(layer)} /> {t(`map.layer.${layer.name}`)}</label>)}</fieldset>
+  function toggleBasemap() {
+    const next = !basemapShown;
+    setBasemapShown(next);
+    if (map.current?.getLayer(BASEMAP)) map.current.setLayoutProperty(BASEMAP, "visibility", next ? "visible" : "none");
+  }
+
+  const layerChoice = <fieldset disabled={!loaded}><legend>{t("map.layers")}</legend>{layers.map(layer => <label key={layer.name}><input type="checkbox" checked={visible[layer.name] ?? false} onChange={() => toggle(layer)} /> {t(`map.layer.${layer.name}`)}</label>)}</fieldset>;
+  const notices = <>
     {basemapFailed && basemap && <p role="alert">{t("basemap.failed", { url: basemap.url })}</p>}
     {failed && <div role="alert"><p>{t("map.tile_error")}</p><button onClick={onRetry}>{t("map.retry")}</button></div>}
-    <div ref={container} className="result-map" />
-    {basemap?.enabled && <p className="basemap-attribution" aria-label={t("basemap.attribution")}>{basemap.attribution}</p>}
+    {(orthophoto === "compression" || orthophoto === "format" || orthophoto === "error") && <p role="alert">{t(`results.map.orthophoto_${orthophoto}`)}</p>}
+    {orthophoto === "reading" && <p role="status">{t("results.map.orthophoto_reading")}</p>}
+  </>;
+  const canvas = <div ref={container} className={back ? "result-map result-map-full" : "result-map"} data-orthophoto={orthophoto ?? undefined} />;
+  const attribution = basemap?.enabled && basemapShown && <p className="basemap-attribution" aria-label={t("basemap.attribution")}>{basemap.attribution}</p>;
+
+  if (back) return <div className={coordinates ? "map-viewer" : "map-viewer map-outside"}>
+    <Toolbar label={t("results.map.toolbar")}>
+      <a className="button" href={back}><IconArrowLeft /> {t("results.back")}</a>
+      <span className="toolbar-separator" />
+      {layerChoice}
+      {basemap?.enabled && <label className="map-basemap-choice"><input type="checkbox" checked={basemapShown} disabled={!loaded} onChange={toggleBasemap} /> {t("results.map.basemap")}</label>}
+      <span className="toolbar-spacer" />
+      <span className="map-coordinates" aria-live="off">{coordinates ?? t("results.map.outside")}</span>
+    </Toolbar>
+    {notices}
+    {canvas}
+    {attribution}
+    <p className="visually-hidden">{t("map.keyboard")}</p>
+  </div>;
+
+  return <div className={coordinates ? undefined : "map-outside"}>
+    {layerChoice}
+    {notices}
+    {canvas}
+    {attribution}
     {coordinates && <p aria-live="off">{coordinates}</p>}
     <p>{t("map.keyboard")}</p>
   </div>;

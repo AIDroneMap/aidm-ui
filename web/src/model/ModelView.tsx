@@ -5,7 +5,10 @@ import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import dracoJs from "three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?url";
 import dracoWasm from "three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Toolbar } from "../controls/Toolbar.tsx";
+import { IconArrowLeft, IconRotateCcw } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
+import { framedPosition, UP } from "./framing.ts";
 
 function validateGlb(data: ArrayBuffer) {
   const view = new DataView(data);
@@ -47,7 +50,8 @@ function disposeObject(root: THREE.Object3D) {
   });
 }
 
-export default function ModelView({ runId }: { runId: string; size: number }) {
+/** The engine's 3D model. With `back`, it takes the whole content area under one toolbar that leads back there. */
+export default function ModelView({ runId, back }: { runId: string; size: number; back?: string }) {
   const container = useRef<HTMLDivElement>(null);
   const reset = useRef<() => void>(() => {});
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -117,17 +121,22 @@ export default function ModelView({ runId }: { runId: string; size: number }) {
         renderer.setPixelRatio(window.devicePixelRatio);
         const canvas = renderer.domElement;
         canvas.tabIndex = 0; canvas.setAttribute("aria-label", t("model.canvas"));
-        canvas.style.cssText = "display:block;width:100%;height:400px;touch-action:none;outline-offset:2px";
+        canvas.style.cssText = `display:block;width:100%;height:${back ? "100%" : "400px"};touch-action:none;outline-offset:2px`;
         host.appendChild(canvas);
         const scene = new THREE.Scene(); scene.background = new THREE.Color(0xdddddd); scene.add(model);
         scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2));
         const camera = new THREE.PerspectiveCamera(45, 1, extent / 10000, extent * 10000);
+        // The engine's model has its height along z, so the orbit turns around z.
+        camera.up.set(...UP);
         controls = new OrbitControls(camera, canvas);
-        const initialPosition = center.clone().add(new THREE.Vector3(extent * 1.5, extent, extent * 1.5));
-        const resetView = () => { camera.position.copy(initialPosition); controls!.target.copy(center); controls!.update(); };
-        reset.current = resetView; resetView();
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
         const resize = () => { if (!renderer) return; const width = Math.max(canvas.clientWidth, 1); const height = Math.max(canvas.clientHeight, 1); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); };
         observer = new ResizeObserver(resize); observer.observe(canvas); resize();
+        const resetView = () => {
+          camera.position.set(...framedPosition([center.x, center.y, center.z], sphere.radius, camera.fov, camera.aspect));
+          controls!.target.copy(center); controls!.update();
+        };
+        reset.current = resetView; resetView();
         const keyboard = (event: KeyboardEvent) => {
           if (!controls) return;
           const arrows = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
@@ -140,10 +149,12 @@ export default function ModelView({ runId }: { runId: string; size: number }) {
             const delta = right.multiplyScalar(event.key === "ArrowLeft" ? -distance : event.key === "ArrowRight" ? distance : 0).add(up.multiplyScalar(event.key === "ArrowUp" ? distance : event.key === "ArrowDown" ? -distance : 0));
             camera.position.add(delta); controls.target.add(delta);
           } else if (arrows.includes(event.key)) {
-            const spherical = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+            // Spherical angles are measured around y, so turn the camera's up axis onto y and back.
+            const toYUp = new THREE.Quaternion().setFromUnitVectors(camera.up, new THREE.Vector3(0, 1, 0));
+            const spherical = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target).applyQuaternion(toYUp));
             spherical.theta += event.key === "ArrowLeft" ? -0.1 : event.key === "ArrowRight" ? 0.1 : 0;
             spherical.phi = THREE.MathUtils.clamp(spherical.phi + (event.key === "ArrowUp" ? -0.1 : event.key === "ArrowDown" ? 0.1 : 0), 0.01, Math.PI - 0.01);
-            camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+            camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical).applyQuaternion(toYUp.invert()));
           } else camera.position.sub(controls.target).multiplyScalar(event.key === "+" || event.key === "=" ? 0.9 : 1.1).add(controls.target);
           controls.update();
         };
@@ -156,7 +167,18 @@ export default function ModelView({ runId }: { runId: string; size: number }) {
     };
     void load();
     return () => { stopped = true; cleanup(); reset.current = () => {}; };
-  }, [runId]);
+  }, [runId, back]);
+  if (back) return <div className="model-viewer">
+    <Toolbar label={t("results.model.toolbar")}>
+      <a className="button" href={back}><IconArrowLeft /> {t("results.back")}</a>
+      <span className="toolbar-separator" />
+      <button type="button" className="secondary" disabled={state !== "ready"} onClick={() => reset.current()}><IconRotateCcw /> {t("model.reset")}</button>
+    </Toolbar>
+    {state === "loading" && <p role="status">{t("model.loading")}</p>}
+    {state === "error" && <p role="alert">{t("model.error")}</p>}
+    <div ref={container} className="model-viewer-canvas" />
+    <p className="model-viewer-instructions">{t("model.instructions")}</p>
+  </div>;
   return <div>
     {state === "loading" && <p role="status">{t("model.loading")}</p>}
     {state === "error" && <p role="alert">{t("model.error")}</p>}

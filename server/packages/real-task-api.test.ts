@@ -253,7 +253,7 @@ real(
     const map = await mapResponse.json() as import("../../shared/map.ts").RunMapView;
     expect(map.state).toBe("ready");
     const mapOrthophoto = map.layers.find(layer => layer.name === "orthophoto");
-    expect(mapOrthophoto).toMatchObject({ scheme: "tms", minZoom: 16, maxZoom: 18 });
+    expect(mapOrthophoto).toMatchObject({ kind: "tiles", scheme: "tms", minZoom: 16, maxZoom: 18 });
     // Independent projection of the pinned fixture's EPSG:32615 raster corners.
     const expectedBounds = [-91.99451323800885, 46.842167553856164, -91.9931045333495, 46.843133788493624];
     expectedBounds.forEach((value, index) => expect(mapOrthophoto!.bounds[index]).toBeCloseTo(value, 7));

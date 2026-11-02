@@ -20,17 +20,14 @@ export function sameOriginRequest(url: string, origin: string): { url: string } 
   return { url: parsed.href };
 }
 
-export function MapPanel({ runId }: { runId: string }) {
-  const [open, setOpen] = useState(false);
-  const [attempt, setAttempt] = useState(0);
+/** The run's map layers and the operator's basemap, read while `open` is true. A new attempt reads them again. */
+function useMapData(runId: string, open: boolean, attempt: number) {
   const [view, setView] = useState<RunMapView | null>(null);
   const [failed, setFailed] = useState(false);
-  const [mapAttempt, setMapAttempt] = useState(0);
   const [basemap, setBasemap] = useState<BasemapSettings | null>(null);
   const [basemapFailed, setBasemapFailed] = useState(false);
 
   useEffect(() => {
-    setOpen(false);
     setView(null);
     setFailed(false);
   }, [runId]);
@@ -52,13 +49,37 @@ export function MapPanel({ runId }: { runId: string }) {
     return () => controller.abort();
   }, [runId, open, attempt]);
 
+  return { view, failed, basemap, basemapFailed };
+}
+
+function MapStates({ runId, back, open }: { runId: string; back?: string; open: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  const [mapAttempt, setMapAttempt] = useState(0);
+  const { view, failed, basemap, basemapFailed } = useMapData(runId, open, attempt);
+  const retry = () => setAttempt(value => value + 1);
+  return <>
+    {open && !view && !failed && <p role="status">{t("map.loading")}</p>}
+    {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><button onClick={retry}>{t("basemap.retry")}</button></div>}
+    {failed && <div role="alert"><p>{t("map.error")}</p><button onClick={retry}>{t("map.retry")}</button></div>}
+    {view?.state === "unavailable" && <p role="status">{t("map.unavailable")}</p>}
+    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} back={back} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
+    {view?.state === "ready" && view.layers.length === 0 && <p role="status">{t("map.unavailable")}</p>}
+  </>;
+}
+
+/** The map of a run behind an open button, as the run page shows it. */
+export function MapPanel({ runId }: { runId: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [runId]);
   return <section aria-label={t("map.title")}>
     {!open && <button onClick={() => setOpen(true)}>{t("map.open")}</button>}
-    {open && !view && !failed && <p role="status">{t("map.loading")}</p>}
-    {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><button onClick={() => setAttempt(value => value + 1)}>{t("basemap.retry")}</button></div>}
-    {failed && <div role="alert"><p>{t("map.error")}</p><button onClick={() => setAttempt(value => value + 1)}>{t("map.retry")}</button></div>}
-    {view?.state === "unavailable" && <p role="status">{t("map.unavailable")}</p>}
-    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
-    {view?.state === "ready" && view.layers.length === 0 && <p role="status">{t("map.unavailable")}</p>}
+    <MapStates runId={runId} open={open} />
+  </section>;
+}
+
+/** The map of a run on its own address, over the whole content area, with one toolbar that leads back to `back`. */
+export function MapViewer({ runId, back }: { runId: string; back: string }) {
+  return <section aria-label={t("map.title")} className="map-viewer-section">
+    <MapStates runId={runId} back={back} open />
   </section>;
 }

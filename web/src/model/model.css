@@ -1,0 +1,35 @@
+/* On its own address the 3D model takes the whole content area, under one toolbar. */
+.model-viewer {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 2 * var(--space-8));
+  min-height: 24rem;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.model-viewer .toolbar a.button,
+.model-viewer .toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.model-viewer > [role="alert"],
+.model-viewer > [role="status"] {
+  margin: var(--space-2);
+}
+
+.model-viewer-canvas {
+  flex: 1;
+  min-height: 16rem;
+}
+
+.model-viewer-instructions {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  border-top: 1px solid var(--border-1);
+}
