@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record the approved design proposal for the desktop-class interface, with the screen inventory, the sidebar navigation, the nine option groups placing all 80 task API options, the design system outline and the maintainer's eleven decisions. ADR 0012 shows every option the task API offers, superseding part of ADR 0009; ADR 0013 renders the orthophoto without tiles, superseding part of ADR 0010; the glossary gains Workspace, Section, Preferences and Danger area. Evidence: `docs/proposals/0001-desktop-class-interface.md`, `docs/adr/0012-every-option-the-task-api-offers-is-shown.md`, `docs/adr/0013-the-map-renders-the-orthophoto-without-tiles.md`.
+
 ## 0.1.0
 
 - Package the Mac executable as the AIDM UI app on a disk image, and write release notes that hold only the pilot's install steps. Opening the app starts AIDM UI in the background, and opening it again opens the interface again. Evidence: `scripts/macos-app.test.ts`, `scripts/release-notes.test.ts`, and the release workflow's Mac smoke test, which opens the packaged app on macOS.

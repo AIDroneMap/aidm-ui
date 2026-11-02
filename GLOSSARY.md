@@ -127,3 +127,21 @@ _Avoid_: Asset, artefact, deliverable
 **Basemap**:
 The tile source an operator may configure under the map. There is none unless the operator adds one.
 _Avoid_: Background layer; tiles (which are the engine's output)
+
+### The interface
+
+**Workspace**:
+The screens of one project, reached from the sidebar while that project is open.
+_Avoid_: Dashboard, project page
+
+**Section**:
+One screen of a project's workspace with one purpose: Photos, Settings, Review, Runs, Results or Details.
+_Avoid_: Tab, panel (reserved for a part of a screen)
+
+**Preferences**:
+The application's own settings: port, local network access, container runtime, update check, basemap, data folder, theme. Never the settings of a run.
+_Avoid_: Settings (reserved for run settings), configuration
+
+**Danger area**:
+The separated part of a screen that holds a destructive action and its confirmation, which names what goes and its size.
+_Avoid_: Danger zone, advanced
