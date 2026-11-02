@@ -1,10 +1,3 @@
-.details-form textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 8rem;
-  resize: vertical;
-}
-
 .details-storage {
   width: 100%;
   margin-top: var(--space-8);

@@ -159,13 +159,14 @@ test("Details and all three deletion questions use production routes and preserv
     const fill = async (selector: string, value: string) => {
       await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
     };
-    await fill("#project-name", "Vineyard south"); await fill("#project-notes", "Fly again after harvest");
+    await fill("#project-name", "Vineyard south"); await fill("#project-notes", "Fly again after harvest\nCheck the north field");
     await activate("main form button[type=submit]");
     await wait("document.querySelector('nav.sidebar')?.textContent.includes('Vineyard south')");
     await go("#/", "Projects");
     await wait("document.querySelector('main')?.textContent.includes('Vineyard south')");
     await go(`#/projects/${project.id}/details`, "Details");
-    await wait("document.querySelector('#project-notes')?.value === 'Fly again after harvest'");
+    await wait("document.querySelector('#project-notes')?.value === 'Fly again after harvest\\nCheck the north field'");
+    expect(await evaluate("getComputedStyle(document.querySelector('#project-notes')).resize")).toBe("vertical");
 
     await go(`#/projects/${importedProject.id}/details`, "Details");
     await wait("document.querySelector('.details-danger button')?.disabled === false");

@@ -11,7 +11,7 @@ const form = (value: ProjectView) => renderToStaticMarkup(<DetailsForm project={
 test("details label name and notes, and offer deletion", () => {
   const html = form(project);
   expect(unlabelledInputs(html)).toEqual([]);
-  expect(html).toContain('for="project-notes"');
+  expect(html).toContain('class="field text-area-field"><label for="project-notes"');
   expect(html).toContain("Delete project");
   expect(untranslatedText(html, [project.name, project.notes])).toEqual([]);
   const sample = form({ ...project, builtin: "sample" });

@@ -2,6 +2,7 @@
 @import "./controls/base.css";
 @import "./controls/Button.css";
 @import "./controls/TextField.css";
+@import "./controls/TextAreaField.css";
 @import "./controls/NumberField.css";
 @import "./controls/Select.css";
 @import "./controls/Toggle.css";

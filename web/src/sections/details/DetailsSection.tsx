@@ -5,6 +5,7 @@ import { ErrorMessage } from "../../components/ErrorMessage.tsx";
 import { Button } from "../../controls/Button.tsx";
 import { PageHeader } from "../../controls/PageHeader.tsx";
 import { Table } from "../../controls/Table.tsx";
+import { TextAreaField } from "../../controls/TextAreaField.tsx";
 import { TextField } from "../../controls/TextField.tsx";
 import { formatBytes } from "../../format.ts";
 import { t } from "../../i18n/translate.ts";
@@ -37,7 +38,7 @@ export function DetailsForm({ project, name, notes, working, storage, onName, on
     {sample && <p>{t("projects.sample_help")}</p>}
     <form className="details-form" onSubmit={submit}>
       {!sample && <TextField id="project-name" label={t("projects.name")} value={name} onChange={event => onName(event.target.value)} required maxLength={200} />}
-      <div className="field"><label htmlFor="project-notes">{t("projects.notes")}</label><textarea id="project-notes" value={notes} onChange={event => onNotes(event.target.value)} maxLength={100000} /></div>
+      <TextAreaField id="project-notes" label={t("projects.notes")} value={notes} onChange={event => onNotes(event.target.value)} maxLength={100000} />
       <Button type="submit" disabled={working}>{t("projects.save")}</Button>
     </form>
     <Table className="details-storage" label={t("details.storage")}>
