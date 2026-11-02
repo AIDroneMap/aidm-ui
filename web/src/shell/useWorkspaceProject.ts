@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ProjectView, RunState } from "../../../shared/api-types.ts";
+import type { ProjectView } from "../../../shared/api-types.ts";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 
-/** How often the open project is read again while one of its runs is unfinished, so the sidebar badges follow it. */
+/** How often the open project is read again while any of its runs is unfinished, so the sidebar badges follow it. */
 export const ACTIVE_PROJECT_POLL_MS = 5000;
 
-const FINISHED: readonly RunState[] = ["completed", "failed", "cancelled"];
-
-/** True while the project's latest run has not finished. */
-export function runActive(project: Pick<ProjectView, "latestState">): boolean {
-  return project.latestState !== null && !FINISHED.includes(project.latestState);
+/** True while any run of the project has not finished, on any engine. */
+export function runActive(project: Pick<ProjectView, "activeRunCount">): boolean {
+  return (project.activeRunCount ?? 0) > 0;
 }
 
 export type WorkspaceProject = {

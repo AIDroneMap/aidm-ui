@@ -8,7 +8,7 @@ import { routeFromHash } from "./router.ts";
 import { Shell } from "./shell/Shell.tsx";
 import { textNodes, untranslatedText } from "./test-helpers.ts";
 
-const project: ProjectView = { id: 7, name: "Vineyard north", notes: "", builtin: null, photoCount: 312, runCount: 2, latestState: "processing", lastChange: "2026-11-01T00:00:00.000Z", resultsBytes: 3, resultArchives: [{ runId: 1, size: 1 }, { runId: 2, size: 2 }] };
+const project: ProjectView = { id: 7, name: "Vineyard north", notes: "", builtin: null, photoCount: 312, runCount: 2, latestState: "processing", activeRunCount: 1, lastChange: "2026-11-01T00:00:00.000Z", resultsBytes: 3, resultArchives: [{ runId: 1, size: 1 }, { runId: 2, size: 2 }] };
 
 test("the Projects screen shows only text from the translation file", () => {
   const html = renderToStaticMarkup(<Shell route={{ screen: "projects" }} project={null}><ProjectsPage onAuthRequired={() => {}} /></Shell>);
@@ -38,7 +38,7 @@ test("inside a project the sidebar names it, lists its six sections and their ba
 });
 
 test("a finished project has no run badge, and a run marks its project's Runs section", () => {
-  const html = renderToStaticMarkup(<Shell route={routeFromHash("#/runs/2")} project={{ ...project, latestState: "completed", photoCount: 0, resultArchives: [] }}><p /></Shell>);
+  const html = renderToStaticMarkup(<Shell route={routeFromHash("#/runs/2")} project={{ ...project, latestState: "completed", activeRunCount: 0, photoCount: 0, resultArchives: [] }}><p /></Shell>);
   expect(html).not.toContain("A run is in progress");
   expect(html).not.toContain("Photos: ");
   expect(html).toMatch(/href="#\/projects\/7\/runs" aria-current="page"/);
