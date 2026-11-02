@@ -88,7 +88,7 @@ function Screens() {
 
   const projectId = route.screen === "project" ? route.projectId
     : route.screen === "run" && runProject?.runId === route.runId ? runProject.projectId : null;
-  const workspace = useWorkspaceProject(session === "ready" ? projectId : null, authRequired);
+  const workspace = useWorkspaceProject(session === "ready" ? projectId : null, authRequired, hash);
 
   // First run: a page that opens on the Projects screen goes to the wizard, once. After that the operator is free to leave.
   const redirect = useRef(firstRunRedirect());

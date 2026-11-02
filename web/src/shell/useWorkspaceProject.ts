@@ -21,8 +21,10 @@ export type WorkspaceProject = {
 /**
  * The project the sidebar and the open section show. One read per project,
  * shared by both, so a rename or an upload shows in the sidebar at once.
+ * The project is read again at each new address, so a change made on another
+ * screen, such as results deleted from the run page, shows on arrival.
  */
-export function useWorkspaceProject(projectId: number | null, onAuthRequired: () => void): WorkspaceProject {
+export function useWorkspaceProject(projectId: number | null, onAuthRequired: () => void, address = ""): WorkspaceProject {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [reads, setReads] = useState(0);
@@ -47,7 +49,7 @@ export function useWorkspaceProject(projectId: number | null, onAuthRequired: ()
       },
     );
     return () => { current = false; };
-  }, [projectId, reads]);
+  }, [projectId, reads, address]);
 
   const active = project !== null && project.id === projectId && runActive(project);
   useEffect(() => {

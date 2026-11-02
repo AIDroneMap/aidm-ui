@@ -6,7 +6,8 @@ import { browserPath } from "../../controls/browser-path.ts";
 import { startBrowser } from "../../controls/browser-start.ts";
 import { findBrowserPage } from "../../controls/browser-target.ts";
 
-test("deleting a run's results takes it off the Results list, the sidebar count and the Details storage", async () => {
+// The results are deleted from the Results section, or from the run's own page before the operator goes back to Results.
+for (const start of ["the Results section", "the run page"] as const) test(`deleting a run's results from ${start} takes it off the Results list, the sidebar count and the Details storage`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-results-section-"));
   const build = await Bun.build({ entrypoints: [new URL("../../pages/run-browser-fixture.tsx", import.meta.url).pathname], target: "browser", plugins: [{ name: "viewer-assets", setup(builder) {
     builder.onResolve({ filter: /\?url$/ }, (args) => ({ path: args.path, namespace: "asset-url" }));
@@ -42,21 +43,27 @@ test("deleting a run's results takes it off the Results list, the sidebar count 
       try { return await evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 5000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(new Error('timeout')) : setTimeout(check, 20); check(); })`); }
       catch { throw new Error(`Waiting for ${expression}: ${await evaluate("document.body.innerText")}`); }
     };
-    const deleteButton = "[...document.querySelectorAll('main section button')].find(element => element.textContent === 'Delete results')";
+    const deleteButton = "[...document.querySelectorAll('main button')].find(element => element.textContent === 'Delete results')";
     const sidebarResults = "document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]')?.textContent ?? ''";
 
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/results` });
     await wait("document.querySelector('main a[href=\"#/projects/1/results/7\"]')");
     expect(await evaluate(sidebarResults)).toContain("Runs with results: 1");
-    await evaluate("document.querySelector('main a[href=\"#/projects/1/results/7\"]').click(); true");
+    if (start === "the Results section") await evaluate("document.querySelector('main a[href=\"#/projects/1/results/7\"]').click(); true");
+    else await evaluate("location.hash = '#/runs/7'; true");
     await wait(deleteButton);
     await evaluate(`${deleteButton}.click(); true`);
     await wait("document.querySelector('dialog[open]')");
     await evaluate("[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === 'Delete results').click(); true");
     await wait("document.body.textContent.includes('Results deleted.')");
     expect(deleted).toBe(true);
-    await wait(`!(${sidebarResults}).includes('Runs with results')`);
-    await evaluate("document.querySelector('main a[href=\"#/projects/1/results\"]').click(); true");
+    if (start === "the Results section") {
+      await wait(`!(${sidebarResults}).includes('Runs with results')`);
+      await evaluate("document.querySelector('main a[href=\"#/projects/1/results\"]').click(); true");
+    } else {
+      await evaluate("document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]').click(); true");
+      await wait(`!(${sidebarResults}).includes('Runs with results')`);
+    }
     await wait("document.querySelector('main .empty-state')");
     expect(await evaluate("document.querySelector('main a[href=\"#/projects/1/results/7\"]')")).toBeNull();
     await evaluate("location.hash = '#/projects/1/details'; true");
