@@ -26,7 +26,7 @@ function Section({ route, project, refresh, onAuthRequired }: { route: ProjectRo
     case "settings": return <SettingsSection project={project} onAuthRequired={onAuthRequired} />;
     case "review": return <ReviewSection project={project} />;
     case "runs": return <RunsSection project={project} onAuthRequired={onAuthRequired} />;
-    case "results": return <ResultsSection project={project} runId={route.runId} viewer={route.viewer} onAuthRequired={onAuthRequired} />;
+    case "results": return <ResultsSection project={project} runId={route.runId} viewer={route.viewer} onChange={refresh} onAuthRequired={onAuthRequired} />;
     case "details": return <DetailsSection project={project} onChange={refresh} onAuthRequired={onAuthRequired} />;
   }
 }

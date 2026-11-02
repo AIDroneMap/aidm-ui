@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProjectView, RunView } from "../../../../shared/api-types.ts";
 import { api, asApiFailure, type ApiFailure } from "../../api.ts";
 import { ErrorMessage } from "../../components/ErrorMessage.tsx";
@@ -13,17 +13,17 @@ import { ModelPanel } from "../../model/ModelPanel.tsx";
 import { projectName } from "../../pages/ProjectsPage.tsx";
 import { resultsHash, sectionHash, type Viewer } from "../../router.ts";
 
-type Props = { project: ProjectView; runId?: number; viewer?: Viewer; onAuthRequired(): void };
+type Props = { project: ProjectView; runId?: number; viewer?: Viewer; /** Reads the project again, after a run's results changed. */ onChange(): void; onAuthRequired(): void };
 
 /**
  * The Results section and its viewer addresses. Until the Results ticket
  * rebuilds them, the list names each run with an archive, a run's address
  * shows its downloads, and the viewers are the panels the run page has.
  */
-export function ResultsSection({ project, runId, viewer, onAuthRequired }: Props) {
+export function ResultsSection({ project, runId, viewer, onChange, onAuthRequired }: Props) {
   return <>
     <PageHeader title={t("results.title")} subtitle={projectName(project)} />
-    {runId === undefined ? <ResultList project={project} /> : <RunResults key={runId} project={project} runId={runId} viewer={viewer} onAuthRequired={onAuthRequired} />}
+    {runId === undefined ? <ResultList project={project} /> : <RunResults key={runId} project={project} runId={runId} viewer={viewer} onChange={onChange} onAuthRequired={onAuthRequired} />}
   </>;
 }
 
@@ -35,7 +35,7 @@ function ResultList({ project }: { project: ProjectView }) {
   </li>)}</ul>;
 }
 
-function RunResults({ project, runId, viewer, onAuthRequired }: Required<Pick<Props, "project" | "runId">> & Pick<Props, "viewer" | "onAuthRequired">) {
+function RunResults({ project, runId, viewer, onChange, onAuthRequired }: Required<Pick<Props, "project" | "runId">> & Pick<Props, "viewer" | "onChange" | "onAuthRequired">) {
   const [run, setRun] = useState<RunView | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   useEffect(() => {
@@ -52,6 +52,14 @@ function RunResults({ project, runId, viewer, onAuthRequired }: Required<Pick<Pr
     });
     return () => { current = false; };
   }, [runId]);
+  // When the results arrive or are deleted, the list, the sidebar count and the Details storage come from a fresh read of the project.
+  const shown = useRef<string | undefined>(undefined);
+  const state = run?.results?.state;
+  useEffect(() => {
+    if (state === undefined) return;
+    if (shown.current !== undefined && shown.current !== state) onChange();
+    shown.current = state;
+  }, [state]);
   if (failure) return <ErrorMessage failure={failure} />;
   if (run === null) return <p>{t("results.loading")}</p>;
   const ready = run.results?.state === "ready";
