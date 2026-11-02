@@ -207,6 +207,19 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
     await wait("document.querySelector('main h1')?.textContent === 'Photos'");
     expect(await evaluate("document.querySelector('nav.sidebar').getBoundingClientRect().width")).toBeLessThan(80);
     await noSidewaysScroll();
+    // The words of a folded item show beside the rail, on keyboard focus and on hover, and nothing covers or clips them.
+    const labelShown = (href: string) => evaluate<boolean>(`(() => {
+      const label = document.querySelector('nav.sidebar a[href="${href}"] .nav-label'), box = label.getBoundingClientRect();
+      if (box.width < 20 || box.left < document.querySelector('nav.sidebar').getBoundingClientRect().right) return false;
+      return label.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2));
+    })()`);
+    await tabTo('nav.sidebar a[href="#/preferences"]');
+    expect(await labelShown("#/preferences")).toBe(true);
+    await evaluate("document.activeElement.blur(); true");
+    const icon = await evaluate<{ x: number; y: number }>(`(() => { const box = document.querySelector('nav.sidebar a[href="#/engines"]').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: icon.x, y: icon.y });
+    expect(await labelShown("#/engines")).toBe(true);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 600, y: 400 });
     await viewport(768, 1024);
     await wait("getComputedStyle(document.querySelector('.shell-nav')).display === 'none'");
     await noSidewaysScroll();

@@ -44,6 +44,20 @@
   animation: shell-spin 1s linear infinite;
 }
 
+/*
+ * Folded to icons, the rail is short enough to fit the window, and each
+ * item's words show beside it on hover and focus. A scroll container would
+ * clip them, so the folded rail does not scroll.
+ */
+@media (max-width: 64rem) {
+  .shell-nav {
+    height: auto;
+    min-height: 100vh;
+    max-height: 100vh;
+    overflow: visible;
+  }
+}
+
 @keyframes shell-spin {
   to {
     transform: rotate(360deg);
@@ -87,6 +101,8 @@
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 30;
+    height: 100vh;
+    overflow-y: auto;
     box-shadow: var(--shadow-raised);
   }
 
