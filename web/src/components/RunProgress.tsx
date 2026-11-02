@@ -1,45 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../controls/Button.tsx";
+import { Notice } from "../controls/Notice.tsx";
 import { ApiFailure } from "../api.ts";
 import { DownloadBlock, interruptionText } from "./DownloadBlock.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
-import { Results } from "./Results.tsx";
 import { formatCount } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
-import { isFinished, linesWithRestart, type Stage } from "../runs.ts";
-import { RUN_STATES, type RunView } from "../../../shared/api-types.ts";
-
-function LogView({ lines }: { lines: string[] }) {
-  const box = useRef<HTMLPreElement>(null);
-  const pinned = useRef(true);
-  // Follow new lines unless the operator scrolled up to read.
-  useEffect(() => {
-    const element = box.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [lines]);
-  return (
-    <>
-      <h3 id="run-log-title">{t("run.log_title")}</h3>
-      <pre
-        ref={box}
-        className="run-log"
-        role="region"
-        aria-labelledby="run-log-title"
-        tabIndex={0}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-        }}
-      >
-        {lines.length === 0 ? t("run.log_empty") : lines.join("\n")}
-      </pre>
-    </>
-  );
-}
+import { isFinished, linesWithRestart } from "../runs.ts";
+import { ResultsBand } from "../run/ResultsBand.tsx";
+import { RunFailure } from "../run/RunFailure.tsx";
+import { RunHeader } from "../run/RunHeader.tsx";
+import { RunLog } from "../run/RunLog.tsx";
+import { RunStages } from "../run/RunStages.tsx";
+import type { RunView } from "../../../shared/api-types.ts";
+import "../run/run.css";
 
 export interface RunProgressProps {
   run: RunView;
-  stage: Stage | null;
   lines: string[];
   /** How many lines the run has written so far, counting the ones the page dropped. Needed to place the restart separator. */
   lineCount?: number;
@@ -51,12 +28,23 @@ export interface RunProgressProps {
   failure: ApiFailure | null;
   onCancel: () => void;
   onAgain?: () => void;
+  /** The level of the run's name: 1 on the run's own screen, 2 inside a screen that has its own title. */
+  level?: 1 | 2;
+  /** Above the run's name: the way back to its project. */
+  back?: ReactNode;
+  /** What the operator can do with the run. Under the failure when the run failed. */
+  actions?: ReactNode;
+  /** The viewers of a finished run, in the results band. */
+  viewers?: ReactNode;
 }
 
-/** A run in progress or finished: its state in words, its progress, its log and what the operator can do next. */
+/**
+ * The run screen, for every run, the sample job included. The band that
+ * matters for the run's state comes first: the failure of a failed run, the
+ * results of a finished one, then the stages, then the log, folded.
+ */
 export function RunProgress({
   run: incomingRun,
-  stage,
   lines,
   lineCount,
   restartedAtLine,
@@ -65,23 +53,41 @@ export function RunProgress({
   failure,
   onCancel,
   onAgain,
+  level = 2,
+  back,
+  actions,
+  viewers,
 }: RunProgressProps) {
   const [run, setRun] = useState(incomingRun);
   useEffect(() => { setRun(incomingRun); }, [incomingRun]);
+  const [logOpen, setLogOpen] = useState(false);
   const finished = isFinished(run);
-  const known = (RUN_STATES as readonly string[]).includes(run.state);
+  const band = level === 1 ? 2 : 3;
+  const held = { lines, count: lineCount ?? lines.length };
+  const showLog = () => {
+    setLogOpen(true);
+    // After the log opens, its panel takes the focus so the keyboard and a screen reader land there.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>("#run-log .run-log")?.focus());
+  };
   return (
-    <>
-      {run.engineName !== null && <p>{run.engineLocal ? t("run.engine_local") : t("run.engine", { name: run.engineName })}</p>}
-      <p role="status" className="run-state">
-        {t(run.step === "link" ? "run.linking" : run.step === "results" ? "run.results_fetching" : known ? `run.state.${run.state}` : "run.state.unknown")}
-      </p>
-      {run.state === "queued" && run.queueCount != null && <p>{t("run_manage.waiting", { count: run.queueCount })}</p>}
-      {run.sample && <h2>{t("run.sample_name")}</h2>}
-      {!run.sample && run.name && <h2>{run.name}</h2>}
-      {stage && <section><h3>{t(`run.stage.${stage}.name`)}</h3><p>{t(`run.stage.${stage}.description`)}</p></section>}
-      {connectionLost && !finished && <p className="hint">{t("run.live_paused")}</p>}
-      {run.restarted && <p className="warning">{t("run.restarted")}</p>}
+    <div className="run-screen">
+      <RunHeader run={run} level={level} back={back} cancelling={cancelling} onCancel={onCancel} />
+
+      {connectionLost && !finished && <Notice tone="warn"><p>{t("run.live_paused")}</p></Notice>}
+      {run.restarted && <Notice tone="warn"><p>{t("run.restarted")}</p></Notice>}
+      {run.state === "engine_unreachable" && <Notice tone="warn"><p>{t("run.screen.unreachable")}</p></Notice>}
+      {failure && <ErrorMessage failure={failure} />}
+
+      {run.state === "failed" ? (
+        <RunFailure run={run} held={held} level={band} actions={actions} onShowLog={showLog} />
+      ) : (
+        <>
+          {run.engineMessage !== null && <Notice tone="danger"><p>{t("run.engine_said", { message: run.engineMessage })}</p></Notice>}
+          {run.problem && <ErrorMessage failure={new ApiFailure(0, run.problem.code, run.problem.data)} />}
+        </>
+      )}
+
+      {run.state === "completed" && <ResultsBand run={run} onChange={setRun} viewers={viewers} />}
 
       {run.step === "download" && run.download && (
         <DownloadBlock
@@ -105,51 +111,25 @@ export function RunProgress({
           />
         </div>
       )}
-      {run.state === "processing" && run.progress !== null && (
-        <div className="field">
-          <label htmlFor="run-processing">{t("run.processing", { percent: formatCount(Math.round(run.progress)) })}</label>
-          <progress id="run-processing" max={100} value={run.progress} />
-        </div>
-      )}
+      {run.state === "queued" && run.queueCount != null && <p>{t("run_manage.waiting", { count: run.queueCount })}</p>}
 
-      {run.engineMessage !== null && (
-        <div className="error">
-          <p>{t("run.engine_said", { message: run.engineMessage })}</p>
-        </div>
-      )}
-      {run.problem && <ErrorMessage failure={new ApiFailure(0, run.problem.code, run.problem.data)} />}
-      {failure && <ErrorMessage failure={failure} />}
+      <RunStages run={run} level={band} />
 
-      <LogView
-        lines={linesWithRestart(
-          { lines, count: lineCount ?? lines.length },
-          restartedAtLine ?? null,
-          t("run.log_restarted"),
-        )}
+      {run.state !== "failed" && actions}
+
+      <RunLog
+        runId={run.id}
+        lines={linesWithRestart(held, restartedAtLine ?? null, t("run.log_restarted"))}
+        count={held.count}
+        open={logOpen}
+        onToggle={setLogOpen}
       />
 
-      {run.results && <Results run={run} onChange={setRun} />}
-
-      <div className="actions">
-        {!finished && run.state !== "completed" && (
-          <Button type="button" className="secondary" disabled={cancelling} onClick={onCancel}>
-            {cancelling ? t("run.cancelling") : t("run.cancel")}
-          </Button>
-        )}
-        {!run.results && run.state === "completed" && run.step !== "results" &&
-          (run.resultsAvailable ? (
-            <a href={`/api/runs/${run.id}/results`} download>
-              {t("run.results_link")}
-            </a>
-          ) : (
-            <span role="status">{t("run.results_preparing")}</span>
-          ))}
-        {finished && onAgain && (
-          <Button type="button" className="secondary" onClick={onAgain}>
-            {t("sample.again")}
-          </Button>
-        )}
-      </div>
-    </>
+      {finished && onAgain && (
+        <div className="actions">
+          <Button variant="secondary" onClick={onAgain}>{t("sample.again")}</Button>
+        </div>
+      )}
+    </div>
   );
 }

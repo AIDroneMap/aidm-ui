@@ -1,0 +1,93 @@
+/* The run screen: a header, then bands in the order the run's state needs them. */
+
+.run-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.run-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  margin-bottom: var(--space-2);
+}
+
+.run-header-text {
+  min-width: 0;
+}
+
+.run-header h1,
+.run-header h2 {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.run-header-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+}
+
+.run-header-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.run-header .run-state {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-regular);
+}
+
+.run-band h2,
+.run-band h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.run-band .notice h2,
+.run-band .notice h3 {
+  margin: 0 0 var(--space-1);
+  color: inherit;
+}
+
+.run-stage-percent {
+  margin-left: var(--space-2);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-failure-caption {
+  margin: var(--space-3) 0 0;
+  color: var(--text-2);
+}
+
+.run-log-line {
+  display: block;
+}
+
+mark.run-log-line {
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-weight: var(--weight-medium);
+}
+
+.run-log-band .run-log {
+  height: 24rem;
+  max-height: none;
+}
+
+.run-log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
