@@ -1,3 +1,57 @@
 .result-map { width: 100%; height: 400px; background: #e8e8e8; }
 .result-map .maplibregl-canvas:focus-visible { outline: 3px solid #005fcc; outline-offset: -3px; }
 .map-outside .maplibregl-ctrl-scale { display: none; }
+
+/* On its own address the map takes the whole content area, under one toolbar. */
+.map-viewer {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 2 * var(--space-8));
+  min-height: 24rem;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.map-viewer .toolbar fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.map-viewer .toolbar legend {
+  float: left;
+  margin-right: var(--space-2);
+  color: var(--text-2);
+}
+
+.map-viewer .toolbar a.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.map-coordinates {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-viewer > [role="alert"],
+.map-viewer > [role="status"] {
+  margin: var(--space-2);
+}
+
+.result-map-full {
+  flex: 1;
+  height: auto;
+  min-height: 16rem;
+  background: var(--surface-2);
+}
+
+.result-map-full .maplibregl-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

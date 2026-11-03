@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createInflateRaw } from "node:zlib";
+import type { LngLat } from "../../shared/map.ts";
 import type { ArchiveEntry } from "./zip.ts";
 
 const LIMIT = 1024 * 1024;
@@ -27,7 +28,14 @@ function utmToWgs84(easting: number, northing: number, epsg: number): [number, n
   return result;
 }
 
-export async function readGeoreference(path: string, entry: ArchiveEntry): Promise<{ bounds: [number, number, number, number]; epsg: number } | null> {
+export interface Georeference {
+  bounds: [number, number, number, number];
+  /** Top left, top right, bottom right and bottom left of the raster, as longitude and latitude. */
+  corners: [LngLat, LngLat, LngLat, LngLat];
+  epsg: number;
+}
+
+export async function readGeoreference(path: string, entry: ArchiveEntry): Promise<Georeference | null> {
   let close: (() => Promise<void>) | undefined;
   try {
     if (![entry.offset, entry.size, entry.compressedSize].every((value) => Number.isSafeInteger(value) && value >= 0) || !Number.isSafeInteger(entry.offset + entry.compressedSize)) return null;
@@ -162,12 +170,12 @@ export async function readGeoreference(path: string, entry: ArchiveEntry): Promi
       const equator = epsg! >= 32701 ? 10000000 : 0;
       if (corners[0]![0] !== corners[2]![0] || corners[0]![1] !== corners[1]![1] || (Math.min(...eastings) < 500000 && Math.max(...eastings) > 500000) || (Math.min(...northings) < equator && Math.max(...northings) > equator)) return null;
     }
-    const points = corners.map(([x, y]) => epsg === 3857 ? [x * 180 / (Math.PI * 6378137), (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * 180 / Math.PI] : utm ? utmToWgs84(x!, y!, epsg!) : [x, y]);
+    const points = corners.map(([x, y]): LngLat => epsg === 3857 ? [x * 180 / (Math.PI * 6378137), (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * 180 / Math.PI] : utm ? utmToWgs84(x!, y!, epsg!) : [x!, y!]);
     if (points.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y) || x! < -180 || x! > 180 || y! < -90 || y! > 90)) return null;
     const xs = points.map((point) => point[0]!); const ys = points.map((point) => point[1]!);
     const bounds: [number, number, number, number] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
     if (bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) return null;
-    return { bounds, epsg: epsg! };
+    return { bounds, corners: [points[0]!, points[1]!, points[3]!, points[2]!], epsg: epsg! };
   } catch { return null; }
   finally { await close?.(); }
 }

@@ -48,13 +48,13 @@ async function read(data: Buffer, method: 0 | 8 = 0) {
 }
 
 test("reads geographic bounds from stored and deflated raster metadata", async () => {
-  for (const method of [0, 8] as const) expect(await read(fixture(), method)).toEqual({ bounds: [10, 17, 12, 20], epsg: 4326 });
+  for (const method of [0, 8] as const) expect(await read(fixture(), method)).toEqual({ bounds: [10, 17, 12, 20], corners: [[10, 20], [12, 20], [12, 17], [10, 17]], epsg: 4326 });
 });
 
 test("pixel points extend half a pixel around the samples", async () => {
   const data = fixture();
   data.writeUInt16LE(2, 166);
-  expect(await read(data)).toEqual({ bounds: [9.5, 17.5, 11.5, 20.5], epsg: 4326 });
+  expect(await read(data)).toEqual({ bounds: [9.5, 17.5, 11.5, 20.5], corners: [[9.5, 20.5], [11.5, 20.5], [11.5, 17.5], [9.5, 17.5]], epsg: 4326 });
 });
 
 test("converts the primary orthophoto's UTM metadata", async () => {
@@ -68,11 +68,17 @@ test("converts the primary orthophoto's UTM metadata", async () => {
   // Independent corner transformation with Proj4js 2.15.0, using the fixture's literal UTM tags.
   const expected = [-91.99451323800885, 46.842167553856164, -91.9931045333495, 46.843133788493624];
   expected.forEach((value, index) => expect(result!.bounds[index]!).toBeCloseTo(value, 7));
+  // The corners span the bounds, in the order top left, top right, bottom right, bottom left.
+  const [topLeft, topRight, bottomRight, bottomLeft] = result!.corners;
+  expect(topLeft[0]).toBeLessThan(topRight[0]); expect(bottomLeft[0]).toBeLessThan(bottomRight[0]);
+  expect(topLeft[1]).toBeGreaterThan(bottomLeft[1]); expect(topRight[1]).toBeGreaterThan(bottomRight[1]);
+  const xs = result!.corners.map(point => point[0]), ys = result!.corners.map(point => point[1]);
+  expect([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]).toEqual(result!.bounds);
 });
 
 test("reads big-endian BigTIFF metadata", async () => {
   const data = bigFixture();
-  for (const method of [0, 8] as const) expect(await read(data, method)).toEqual({ bounds: [10, 17, 12, 20], epsg: 4326 });
+  for (const method of [0, 8] as const) expect(await read(data, method)).toEqual({ bounds: [10, 17, 12, 20], corners: [[10, 20], [12, 20], [12, 17], [10, 17]], epsg: 4326 });
 });
 
 test("converts Web Mercator coordinates", async () => {
@@ -123,7 +129,7 @@ function withOverview(primary: Buffer): Buffer {
 }
 
 test.each([0, 8] as const)("reads the primary raster with overview directories in ZIP method %s", async method => {
-  for (const primary of [fixture(), bigFixture()]) expect(await read(withOverview(primary), method)).toEqual({ bounds: [10, 17, 12, 20], epsg: 4326 });
+  for (const primary of [fixture(), bigFixture()]) expect(await read(withOverview(primary), method)).toEqual({ bounds: [10, 17, 12, 20], corners: [[10, 20], [12, 20], [12, 17], [10, 17]], epsg: 4326 });
 });
 
 test("rejects overview pointers into the header, primary directory or beyond the raster", async () => {

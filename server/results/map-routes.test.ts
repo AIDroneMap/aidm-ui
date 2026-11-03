@@ -92,7 +92,7 @@ test.each([false, true])("current XYZ layers use primary georeferencing with ove
   ]);
   const view = await (await fetch(`${h.base}/api/runs/${run.id}/map`)).json() as RunMapView;
   expect(view.state).toBe("ready");
-  expect(view.layers.map(layer => [layer.name, layer.scheme])).toEqual([["orthophoto", "xyz"], ["surface", "xyz"], ["ground", "xyz"]]);
+  expect(view.layers.map(layer => [layer.name, layer.kind === "tiles" ? layer.scheme : layer.kind])).toEqual([["orthophoto", "xyz"], ["surface", "xyz"], ["ground", "xyz"]]);
 });
 
 test("tiles without usable result georeferencing and tiles outside the raster stay unavailable", async () => {
@@ -104,4 +104,36 @@ test("tiles without usable result georeferencing and tiles outside the raster st
     { name: "dtm_tiles/16/16020/42443.png", data: png },
   ]);
   expect(await (await fetch(`${h.base}/api/runs/${run.id}/map`)).json()).toEqual({ state: "unavailable", layers: [] });
+});
+
+import { fromUrl } from "geotiff";
+import { fixtureColour, geoTiffFixture } from "../../test-support/geotiff-fixture.ts";
+test("a tile-less orthophoto is reported as a GeoTIFF layer, and its output route answers the range requests a GeoTIFF reader makes", async () => {
+  const image = geoTiffFixture();
+  const run = await readyArchive([
+    { name: "odm_orthophoto/odm_orthophoto.tif", data: image },
+    { name: "odm_dem/dsm.tif", data: image },
+    { name: "dsm_tiles/0/0/0.png", data: png },
+  ]);
+  await fake.stop();
+  const view = await (await fetch(`${h.base}/api/runs/${run.id}/map`)).json() as RunMapView;
+  expect(view.layers.map(layer => [layer.kind, layer.name])).toEqual([["cog", "orthophoto"], ["tiles", "surface"]]);
+  const url = `${h.base}/api/runs/${run.id}/outputs/orthophoto`;
+  const slice = async (range: string) => {
+    const response = await fetch(url, { headers: { Range: range } });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    return { body: new Uint8Array(await response.arrayBuffer()), range: response.headers.get("content-range") };
+  };
+  expect(await slice("bytes=0-7")).toEqual({ body: image.slice(0, 8), range: `bytes 0-7/${image.length}` });
+  expect(await slice("bytes=100-299")).toEqual({ body: image.slice(100, 300), range: `bytes 100-299/${image.length}` });
+  expect(await slice(`bytes=${image.length - 50}-`)).toEqual({ body: image.slice(-50), range: `bytes ${image.length - 50}-${image.length - 1}/${image.length}` });
+  expect(await slice("bytes=-16")).toEqual({ body: image.slice(-16), range: `bytes ${image.length - 16}-${image.length - 1}/${image.length}` });
+  expect((await fetch(url, { headers: { Range: `bytes=${image.length}-` } })).status).toBe(416);
+  // The reader the map uses, with whole-file reads refused, gets the right pixels through the route.
+  const tiff = await fromUrl(url, { allowFullFile: false });
+  expect(await tiff.getImageCount()).toBe(2);
+  const primary = await tiff.getImage(0);
+  const pixels = await primary.readRGB({ window: [40, 30, 41, 31], interleave: true, enableAlpha: true }) as unknown as Uint8Array;
+  expect([...pixels]).toEqual([...fixtureColour(40, 30, 64, 48), 255]);
 });

@@ -45,5 +45,6 @@ export const SAMPLE_DATASET: SampleDatasetEntry = {
     { architecture: "x64", seconds: 1366, cores: 4, memoryGiB: 15 },
     { architecture: "arm64", seconds: 982, cores: 4, memoryGiB: 15 },
   ],
-  options: [{ name: "dsm", value: true }],
+  // Tiles too, as every run sets them, so the map has the surface model as well as the orthophoto.
+  options: [{ name: "dsm", value: true }, { name: "tiles", value: true }],
 };

@@ -253,7 +253,7 @@ real(
     const map = await mapResponse.json() as import("../../shared/map.ts").RunMapView;
     expect(map.state).toBe("ready");
     const mapOrthophoto = map.layers.find(layer => layer.name === "orthophoto");
-    expect(mapOrthophoto).toMatchObject({ scheme: "tms", minZoom: 16, maxZoom: 18 });
+    expect(mapOrthophoto).toMatchObject({ kind: "tiles", scheme: "tms", minZoom: 16, maxZoom: 18 });
     // Independent projection of the pinned fixture's EPSG:32615 raster corners.
     const expectedBounds = [-91.99451323800885, 46.842167553856164, -91.9931045333495, 46.843133788493624];
     expectedBounds.forEach((value, index) => expect(mapOrthophoto!.bounds[index]).toBeCloseTo(value, 7));
@@ -269,6 +269,9 @@ real(
     const engine = h.engineStore.get(engineId)!;
     const client = new TaskClient({ address: engine.address, token: engine.token });
     expect((await client.taskInfo(savedRun.taskUuid!)).ok).toBe(true);
+    // The sample job asks for map tiles, and the engine has them among the task's options.
+    const sampleInfo = await (await fetch(`${engine.address}/task/${encodeURIComponent(savedRun.taskUuid!)}/info?token=${encodeURIComponent(engine.token)}`)).json() as { options: Array<{ name: string; value: unknown }> };
+    expect(sampleInfo.options).toContainEqual({ name: "tiles", value: true });
     expect((await fetch(`${h.base}/api/runs/${run.id}/results`, { method: "DELETE" })).status).toBe(200);
     expect(await Bun.file(stored).exists()).toBe(false);
     const after = await (await fetch(`${h.base}/api/runs/${run.id}`)).json() as RunView;
