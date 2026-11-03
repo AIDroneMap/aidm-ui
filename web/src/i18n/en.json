@@ -1031,7 +1031,7 @@
   "option.max-concurrency.name": "Processes at once",
   "option.max-concurrency.description": "Sets the most processes the engine runs at the same time. The engine starts with one per processor core.",
   "option.max-concurrency.when": "Lower it when a run stops because the computer ran out of memory, or when you need the computer for other work.",
-  "option.max-concurrency.cost": "The engine gives peak memory as about 1 GB per thread and 2 megapixel image resolution. Fewer processes use less memory.",
+  "option.max-concurrency.cost": "Fewer processes use less memory.",
   "option.max-concurrency.example": "Set 2 to finish a large flight that ran out of memory with the default.",
   "option.no-gpu.name": "Don't use the graphics card",
   "option.no-gpu.description": "Stops the engine from using the graphics card, even when one is available.",
