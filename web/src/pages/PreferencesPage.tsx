@@ -10,6 +10,8 @@ import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
+import { ScreenLoading } from "./ScreenLoading.tsx";
+import "./preferences.css";
 import {
   DEFAULT_PORT,
   PASSPHRASE_MIN_LENGTH,
@@ -95,7 +97,7 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   return (
     <div role="group" aria-label={t("preferences.dataset.delete_ask")} className="actions">
       <p>{t("preferences.dataset.delete_ask")}</p>
-      <Button ref={first} type="button" onClick={onConfirm}>
+      <Button ref={first} type="button" variant="danger" onClick={onConfirm}>
         {t("preferences.dataset.delete_confirm")}
       </Button>
       <Button type="button" className="secondary" onClick={onKeep}>
@@ -105,13 +107,25 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   );
 }
 
+/** The top of the screen. The heading takes the focus when the screen opens, as on every screen of the shell. */
+function PreferencesHeader() {
+  return (
+    <header className="page-header">
+      <div className="page-header-text">
+        <h1 tabIndex={-1}>{t("preferences.title")}</h1>
+        <p className="page-header-subtitle">{t("preferences.subtitle")}</p>
+      </div>
+    </header>
+  );
+}
+
 export function PreferencesForm(props: PreferencesFormProps) {
   const { settings } = props;
   if (!settings) {
     return (
       <>
-        <h1>{t("preferences.title")}</h1>
-        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <p>{t("preferences.loading")}</p>}
+        <PreferencesHeader />
+        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <ScreenLoading text={t("preferences.loading")} />}
       </>
     );
   }
@@ -129,7 +143,7 @@ export function PreferencesForm(props: PreferencesFormProps) {
 
   return (
     <>
-      <h1>{t("preferences.title")}</h1>
+      <PreferencesHeader />
 
       <section aria-labelledby="settings-port-title">
         <h2 id="settings-port-title">{t("preferences.port.title")}</h2>
@@ -489,7 +503,7 @@ export function PreferencesPage({
     }
   };
 
-  return (<>
+  return (<div className="preferences">
     <PreferencesForm
       settings={settings}
       failure={failure}
@@ -527,5 +541,5 @@ export function PreferencesPage({
     />
     <ThemePreference />
     <BasemapSettings onAuthRequired={onAuthRequired} />
-  </>);
+  </div>);
 }

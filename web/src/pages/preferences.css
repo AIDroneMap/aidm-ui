@@ -1,0 +1,47 @@
+/*
+ * Preferences: one panel per preference, each with its title, a sentence on
+ * what it changes, its control and the line that says it was saved.
+ */
+.preferences section {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+}
+
+.preferences section h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.preferences section > p {
+  margin: 0 0 var(--space-3);
+}
+
+.preferences section > p[role="status"] {
+  margin: var(--space-2) 0 0;
+  color: var(--text-2);
+}
+
+.preferences section > p[role="status"]:empty {
+  margin: 0;
+}
+
+.preferences .field {
+  margin-bottom: var(--space-3);
+}
+
+.preferences fieldset {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  border: 0;
+}
+
+.preferences section ul {
+  margin: 0 0 var(--space-3);
+}
+
+.preferences > .screen-loading {
+  margin-bottom: var(--space-6);
+}

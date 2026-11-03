@@ -238,6 +238,7 @@
   "login.working": "Signing in...",
   "preferences.title": "Preferences",
   "preferences.loading": "Loading the preferences...",
+  "preferences.subtitle": "How AIDM UI runs on this computer and how it looks in this browser.",
   "preferences.theme.title": "Light or dark",
   "preferences.theme.explain": "AIDM UI follows this device unless you choose here. The choice stays in this browser.",
   "preferences.theme.system": "Like this device",
