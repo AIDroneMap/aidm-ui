@@ -1,15 +1,22 @@
 import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { isBasemapSettings, type BasemapSettings } from "../../../shared/basemap.ts";
 import type { RunMapView } from "../../../shared/map.ts";
+import { Toolbar } from "../controls/Toolbar.tsx";
+import { IconArrowLeft } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
 
 const MapCanvas = lazy(() => import("./MapCanvas.tsx"));
 
-class MapErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { failed: boolean }> {
+/** The map route's toolbar while there is no map to draw, so the way back is always there. The drawn map has its own. */
+function BackToolbar({ back }: { back: string }) {
+  return <Toolbar label={t("results.map.toolbar")}><a className="button" href={back}><IconArrowLeft /> {t("results.back")}</a></Toolbar>;
+}
+
+class MapErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void; back?: string }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() {
-    if (this.state.failed) return <div role="alert"><p>{t("map.error")}</p><button onClick={this.props.onRetry}>{t("map.retry")}</button></div>;
+    if (this.state.failed) return <>{this.props.back && <BackToolbar back={this.props.back} />}<div role="alert"><p>{t("map.error")}</p><button onClick={this.props.onRetry}>{t("map.retry")}</button></div></>;
     return this.props.children;
   }
 }
@@ -57,12 +64,14 @@ function MapStates({ runId, back, open }: { runId: string; back?: string; open: 
   const [mapAttempt, setMapAttempt] = useState(0);
   const { view, failed, basemap, basemapFailed } = useMapData(runId, open, attempt);
   const retry = () => setAttempt(value => value + 1);
+  const drawn = view?.state === "ready" && view.layers.length > 0;
   return <>
+    {back && !drawn && <BackToolbar back={back} />}
     {open && !view && !failed && <p role="status">{t("map.loading")}</p>}
     {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><button onClick={retry}>{t("basemap.retry")}</button></div>}
     {failed && <div role="alert"><p>{t("map.error")}</p><button onClick={retry}>{t("map.retry")}</button></div>}
     {view?.state === "unavailable" && <p role="status">{t("map.unavailable")}</p>}
-    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} back={back} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
+    {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} back={back} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} back={back} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
     {view?.state === "ready" && view.layers.length === 0 && <p role="status">{t("map.unavailable")}</p>}
   </>;
 }
