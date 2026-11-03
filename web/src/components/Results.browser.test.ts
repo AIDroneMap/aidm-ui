@@ -43,7 +43,7 @@ test("retry follows results to readiness and deletion requires confirmation", as
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Try fetching results again').click()");
     await wait("document.body.textContent.includes('3D model (GLB)')");
     expect(requests).toContain("POST /api/runs/7/results");
-    await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Delete results').click()");
+    await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Delete the results of this run').click()");
     await wait("document.querySelector('dialog')?.open");
     expect(requests).not.toContain("DELETE /api/runs/7/results");
     await evaluate("document.querySelector('dialog button:last-child').click()");

@@ -57,11 +57,11 @@ test("project archive links open the requested run, including after a reload", a
     expect(await evaluate("document.querySelector('main a[href=\"#/projects/1/runs\"]')?.textContent")).toBe("Back to project");
     expect(await evaluate("!document.body.textContent.includes('Start again')")).toBe(true);
     expect(requests).toContain("/api/runs/7");
-    expect(await evaluate("Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Open the 3D model')")).toBe(true);
+    expect(await evaluate("document.querySelector('a.viewer-tile[href=\"#/projects/1/results/7/model\"]')?.textContent.startsWith('Open the 3D model')")).toBe(true);
     await evaluate("location.hash = '#/runs/8'");
     await wait("document.body.textContent.includes('Flight 8')");
     expect(await evaluate("!document.body.textContent.includes('Flight 7')")).toBe(true);
-    expect(await evaluate("!Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Open the 3D model')")).toBe(true);
+    expect(await evaluate("document.querySelector('a.viewer-tile[href$=\"/model\"]')")).toBeNull();
     await send("Page.reload");
     await wait("document.body.textContent.includes('Flight 8')");
     expect(requests.filter(path => path === "/api/runs/8").length).toBeGreaterThanOrEqual(2);

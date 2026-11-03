@@ -44,7 +44,7 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
       try { return await evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 5000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(new Error('timeout')) : setTimeout(check, 20); check(); })`); }
       catch { throw new Error(`Waiting for ${expression}: ${await evaluate("document.body.innerText")}`); }
     };
-    const deleteButton = `[...document.querySelectorAll('main button')].find(element => element.textContent === ${JSON.stringify(start === "the Results section" ? "Delete the results of this run" : "Delete results")})`;
+    const deleteButton = `[...document.querySelectorAll('main button')].find(element => element.textContent === "Delete the results of this run")`;
     const confirmLabel = "Delete results and 1 KiB";
     const sidebarResults = "document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]')?.textContent ?? ''";
 

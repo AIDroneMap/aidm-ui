@@ -9,6 +9,8 @@ import type { RunView } from "../../../shared/api-types.ts";
 import type { RunReviewView } from "../../../shared/run-review.ts";
 import { FAILURE_LINES } from "../../../shared/run-stages.ts";
 import { FakeTaskApi } from "../../../test-support/fake-task-api.ts";
+import { geoTiffFixture } from "../../../test-support/geotiff-fixture.ts";
+import { texturedGlb } from "../../../test-support/textured-glb.ts";
 import { writeStoredZip } from "../../../test-support/stored-zip-writer.ts";
 import { browserPath } from "../controls/browser-path.ts";
 import { startBrowser } from "../controls/browser-start.ts";
@@ -44,7 +46,11 @@ test("the run screen follows a run from queued through its stages to its results
     return { id: run.id, uuid: h.runs.get(run.id)!.taskUuid! };
   };
   const archive = join(folder, "all.zip");
-  writeStoredZip(archive, [{ name: "odm_report/report.pdf", data: Buffer.from("report") }]);
+  writeStoredZip(archive, [
+    { name: "odm_orthophoto/odm_orthophoto.tif", data: geoTiffFixture({}) },
+    { name: "odm_texturing/odm_textured_model_geo.glb", data: texturedGlb() },
+    { name: "odm_report/report.pdf", data: Buffer.from("report") },
+  ]);
 
   let browser: Awaited<ReturnType<typeof startBrowser>> | undefined, socket: WebSocket | undefined;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void; timer: Timer }>();
@@ -61,9 +67,9 @@ test("the run screen follows a run from queued through its stages to its results
       catch (error) { throw new Error(`Waiting for ${condition}: ${await evaluate("document.querySelector('main')?.innerText ?? document.body.innerText")}`, { cause: error }); }
     };
     const stage = (name: string) => `[...document.querySelectorAll('.stage')].find(el=>el.querySelector('.stage-name')?.textContent===${JSON.stringify(name)})`;
-    const press = async (key: " " | "Tab", shift = false) => {
-      const code = key === " " ? "Space" : "Tab", keyCode = key === " " ? 32 : 9;
-      await send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0 });
+    const press = async (key: " " | "Tab" | "Enter", shift = false) => {
+      const code = key === " " ? "Space" : key, keyCode = key === " " ? 32 : key === "Tab" ? 9 : 13;
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0, ...(key === "Enter" ? { text: "\r" } : {}) });
       await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode, modifiers: shift ? 8 : 0 });
     };
     const text = "document.querySelector('main').textContent";
@@ -90,17 +96,31 @@ test("the run screen follows a run from queued through its stages to its results
     engine.setTask(field.uuid, { processingTime: 7000 });
     await wait(`document.querySelector('.run-elapsed').textContent==='Processing for 7 s'`);
 
-    // Completed: the results come first, and every stage the engine never announced is skipped.
+    // Completed: the Results section's viewer tiles and downloads come first, and every stage the engine never announced is skipped.
     engine.setTask(field.uuid, { output: ["[INFO]    Running dataset stage", "reading", "[INFO]    Running opensfm stage", "[INFO]    Running odm_report stage"], results: new Uint8Array(await readFile(archive)) });
     await wait(`${stage("Write the processing report")}?.classList.contains('stage-running')`);
     engine.setTask(field.uuid, { statusCode: 40, processingTime: 9000, progress: 100 });
     await wait(`document.querySelector('a[href="/api/runs/${field.id}/outputs/report"]')`);
     expect(await evaluate(`document.querySelector('.run-results').compareDocumentPosition(document.querySelector('.run-stages')) & Node.DOCUMENT_POSITION_FOLLOWING`)).toBeTruthy();
+    const mapTile = `#/projects/${project}/results/${field.id}/map`, modelTile = `#/projects/${project}/results/${field.id}/model`;
+    expect(await evaluate(`[...document.querySelectorAll('.run-results a.viewer-tile')].map(el=>el.getAttribute('href'))`)).toEqual([mapTile, modelTile]);
+    expect(await evaluate(`[...document.querySelectorAll('.run-results .downloads a')].map(el=>el.getAttribute('href'))`)).toEqual([`/api/runs/${field.id}/results`, `/api/runs/${field.id}/outputs/orthophoto`, `/api/runs/${field.id}/outputs/glb`, `/api/runs/${field.id}/outputs/report`]);
+    expect(await evaluate(`document.querySelector('.run-results .viewer-tiles').compareDocumentPosition(document.querySelector('.run-stages')) & Node.DOCUMENT_POSITION_FOLLOWING`)).toBeTruthy();
+    expect(await evaluate(`[...document.querySelectorAll('.run-results button')].map(el=>el.textContent)`)).toContain("Delete the results of this run");
     expect(await evaluate(`document.querySelector('.run-state').textContent`)).toBe("Finished");
     expect(await evaluate(`document.querySelector('.run-elapsed').textContent`)).toBe("Processed in 9 s");
     expect(await evaluate(`${stage("Build a dense model")}.querySelector('.stage-state').textContent`)).toBe("Skipped");
     expect(await evaluate(`${stage("Write the processing report")}.querySelector('.stage-state').textContent`)).toBe("Done");
     expect(await evaluate(`[...document.querySelectorAll('button')].some(el=>el.textContent==='Cancel the run')`)).toBe(false);
+
+    // From the keyboard, each viewer tile opens its route, and going back returns to the run screen.
+    for (const [href, heading] of [[mapTile, "Map of Field run"], [modelTile, "3D model of Field run"]]) {
+      await evaluate(`document.querySelector('.run-results a.viewer-tile[href="${href}"]').focus();true`);
+      await press("Enter");
+      await wait(`location.hash===${JSON.stringify(href)}&&document.querySelector('main h1')?.textContent===${JSON.stringify(heading)}`);
+      await evaluate("history.back();true");
+      await wait(`location.hash==='#/runs/${field.id}'&&document.querySelector('main h1')?.textContent==='Field run'&&document.querySelector('.run-results a.viewer-tile')`);
+    }
 
     // Failed: the failing stage, the engine's message and the last lines with the first error, the log folded.
     const broken = await start("Broken run");

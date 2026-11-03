@@ -301,9 +301,10 @@ test("a restarted run says so", () => {
 });
 
 
-test("a completed run offers the results", () => {
-  const html = renderRun({ state: "completed", resultsAvailable: true });
-  expect(html).toContain('<a href="/api/runs/7/results" download="">Download the results</a>');
+test("a completed run whose archive is not on this computer offers nothing to download", () => {
+  const html = renderRun({ state: "completed", resultsAvailable: false });
+  expect(html).not.toContain("/results");
+  expect(html).toContain("This run has no results yet.");
   expect(untranslatedText(html, runData)).toEqual([]);
 });
 
@@ -331,12 +332,6 @@ test("failed and deleted results do not offer downloads", () => {
   const deleted = renderRun({ state: "completed", results: { state: "deleted", archiveSize: null, outputs: [] } });
   expect(deleted).toContain("Results deleted");
   expect(deleted).not.toContain("/outputs/");
-});
-
-test("a completed run whose results are not ready offers no link", () => {
-  const html = renderRun({ state: "completed", resultsAvailable: false });
-  expect(html).not.toContain("/results");
-  expect(html).toContain("The results are being prepared.");
 });
 
 test("a lost live connection is announced while the run is going", () => {
