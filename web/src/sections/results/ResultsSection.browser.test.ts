@@ -45,7 +45,7 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
       catch { throw new Error(`Waiting for ${expression}: ${await evaluate("document.body.innerText")}`); }
     };
     const deleteButton = `[...document.querySelectorAll('main button')].find(element => element.textContent === ${JSON.stringify(start === "the Results section" ? "Delete the results of this run" : "Delete results")})`;
-    const confirmLabel = start === "the Results section" ? "Delete results (1 KiB)" : "Delete results and 1 KiB";
+    const confirmLabel = "Delete results and 1 KiB";
     const sidebarResults = "document.querySelector('nav.sidebar a[href=\"#/projects/1/results\"]')?.textContent ?? ''";
 
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/#/projects/1/results` });
@@ -57,12 +57,10 @@ for (const start of ["the Results section", "the run page"] as const) test(`dele
     await wait(deleteButton);
     await evaluate(`${deleteButton}.click(); true`);
     await wait("document.querySelector('dialog[open]')");
-    // The run page asks with the shared deletion dialog: Keep has the focus, and the archive and its size are named.
-    if (start === "the run page") {
-      expect(await evaluate("document.activeElement?.textContent")).toBe("Keep results");
-      expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Delete the results of "Flight 7"?');
-      expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Local result archive: 1 KiB');
-    }
+    // Both places ask with the shared deletion dialog: Keep has the focus, and the archive and its size are named.
+    expect(await evaluate("document.activeElement?.textContent")).toBe("Keep results");
+    expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Delete the results of "Flight 7"?');
+    expect(await evaluate("document.querySelector('dialog[open]').textContent")).toContain('Local result archive: 1 KiB');
     await evaluate(`[...document.querySelectorAll('dialog[open] button')].find(element => element.textContent === ${JSON.stringify(confirmLabel)}).click(); true`);
     if (start === "the Results section") {
       await wait(`!(${sidebarResults}).includes('Runs with results')`);
