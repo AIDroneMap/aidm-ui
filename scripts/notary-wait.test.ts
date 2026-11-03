@@ -65,7 +65,7 @@ for last; do :; done
 case "$1" in
   create-keychain) : > "$last" ;;
   find-identity) echo '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Developer ID Application: Test Org (TEST000000)"' ;;
-  list-keychains) echo '    "/tmp/login.keychain-db"' ;;
+  list-keychains) echo '    "login.keychain-db"' ;;
 esac
 `;
 
