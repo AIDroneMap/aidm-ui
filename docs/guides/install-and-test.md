@@ -59,7 +59,7 @@ Signature, compatibility or installation errors are failures to investigate, not
 
 ### Use an engine on another computer
 
-Open **Engines**, choose **Add an engine**, and enter its name, task API address and token. Choose **Test connection**, then save it. Select that engine in each run's review. The AIDM UI server must be able to reach it. The browser does not connect directly to the engine, and the token stays on the server.
+Open **Engines**, choose **Add a remote engine**, and enter its name, task API address and token. Choose **Test connection**, then save it. Select that engine in each run's review. The AIDM UI server must be able to reach it. The browser does not connect directly to the engine, and the token stays on the server.
 
 ## First check: the sample job
 
