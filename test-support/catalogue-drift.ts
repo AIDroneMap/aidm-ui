@@ -29,17 +29,20 @@ export function assertCatalogueDrift(options: readonly ReconciledOption[], apiVe
 
 /**
  * Checks that the settings editor has one row per option the task API reported (ADR 0012): no row
- * unexplained, no reported name dropped, no row the API did not report.
+ * unexplained, no reported name dropped, no row the API did not report. A test-mode list may carry
+ * its four retired options as unexplained rows, exactly those and no other.
  */
-export function assertEditorRows(reported: readonly EngineOption[], rows: readonly ReconciledOption[], apiVersion: string): void {
+export function assertEditorRows(reported: readonly EngineOption[], rows: readonly ReconciledOption[], apiVersion: string, list: OptionListKind = "engine"): void {
   const offered = new Set(reported.map((option) => option.name));
   const names = new Set(rows.map((row) => row.name));
+  const allowed = list === "test-mode" ? LEGACY_TEST_OPTIONS.unexplained : [];
+  const unexplained = rows.filter((row) => row.unexplained).map((row) => row.name).sort();
   const problems = {
-    unexplained: rows.filter((row) => row.unexplained).map((row) => row.name),
+    unexplained: JSON.stringify(unexplained) === JSON.stringify(allowed) ? [] : unexplained,
     dropped: reported.filter((option) => !names.has(option.name)).map((option) => option.name),
     extra: rows.filter((row) => !offered.has(row.name)).map((row) => row.name),
   };
   if (rows.length !== reported.length || Object.values(problems).some((names) => names.length)) {
-    throw new Error(`Editor rows for API ${apiVersion}: ${rows.length} rows for ${reported.length} options, ${JSON.stringify(problems)}.`);
+    throw new Error(`Editor rows for the ${list} list of API ${apiVersion}: ${rows.length} rows for ${reported.length} options, ${JSON.stringify(problems)}; allowed unexplained ${JSON.stringify(allowed)}.`);
   }
 }

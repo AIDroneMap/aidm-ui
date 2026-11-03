@@ -33,7 +33,7 @@ test("engine defaults win unless a supported preset explicitly sets the option",
   expect(plan.departures).toEqual([]);
   expect(plan.effectiveOptions.find((option) => option.name === "dsm")?.value).toBe(true);
   expect(plan.outputs).toEqual(["orthophoto", "dsm", "3d-model", "report"]);
-  expect(SERVER_OUTPUT_KEYS).toEqual(["pc-ept", "cog", "gltf", "tiles"]);
+  expect(SERVER_OUTPUT_KEYS).toEqual(["pc-ept", "cog", "gltf"]);
 });
 
 test("skip and fast flags suppress dependent outputs", () => {

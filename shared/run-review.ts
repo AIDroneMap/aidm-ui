@@ -33,7 +33,10 @@ export interface RunReviewView {
   wayIn: "upload" | "import" | "link";
   photos: { included: number | null; excluded: number | null; total: number | null; bytes: number | null };
   facts: ProjectPhotoFactsView | null;
+  /** Every option that departs from its default in the editor, with the value the run sends. */
   options: ReviewOption[];
+  /** Options left at a default the server gives them, which differs from the engine's own (ADR 0012). */
+  serverSet: ReviewOption[];
   outputs: RunOutput[];
   alwaysProduced: Array<(typeof SERVER_OUTPUT_KEYS)[number]>;
   revision: string;

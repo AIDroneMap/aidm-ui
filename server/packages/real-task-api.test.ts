@@ -1,6 +1,7 @@
 import { compareVersions } from "../engines/versions.ts";
 import { modelAcceptanceAssets, assertArchivedModel } from "../../test-support/model-acceptance.ts";
-import { assertCatalogueDrift } from "../../test-support/catalogue-drift.ts";
+import { assertCatalogueDrift, assertEditorRows } from "../../test-support/catalogue-drift.ts";
+import { OPTION_CATALOGUE, OPTION_GROUPS } from "../../shared/option-catalogue.ts";
 import type { ReconciledOption } from "../../shared/engine-options.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -351,6 +352,11 @@ real(
     expect(review).toMatchObject({ project: { id: uploadedProject.id }, engine: { id: engineId }, preset: "quick-map", wayIn: "upload", photos: { included: 3, excluded: 0, total: 3 }, blocked: null });
     expect(review.revision).toBeTruthy();
     expect(review.options).toContainEqual(expect.objectContaining({ name: "orthophoto-resolution", value: 8 }));
+    // The editor has one row per option the live task API reports, with the exact exception of the list a test-mode package bundles.
+    const reportedOptions = await client.options();
+    if (!reportedOptions.ok) throw new Error("The task API did not list its options.");
+    assertEditorRows(reportedOptions.value, review.settings!.options, version as string, "test-mode");
+    const taskOptions = async (uuid: string) => (await (await fetch(`${engine.address}/task/${encodeURIComponent(uuid)}/info?token=${encodeURIComponent(engine.token)}`)).json() as { options: Array<{ name: string; value: unknown }> }).options;
     const presetResponse = await fetch(`${h.base}/api/presets`, { method: "POST", body: JSON.stringify({ options: editedSettings, preset: "Field settings", engineVersion: review.engine.info.engineVersion ?? null }) });
     expect(presetResponse.status).toBe(201);
     const savedPreset = await presetResponse.json() as import("../../shared/settings-file.ts").SavedPreset;
@@ -371,6 +377,10 @@ real(
       return completed.resultsAvailable || completed.state === "failed" || completed.results?.state === "failed";
     }, 240_000);
     expect(completed).toMatchObject({ state: "completed", resultsAvailable: true, results: { state: "ready" } });
+    // Left at their defaults, map tiles are on and this CPU package runs without a GPU, as the server sets them.
+    const untouchedOptions = await taskOptions(h.runs.get(projectRun.id)!.taskUuid!);
+    expect(untouchedOptions).toContainEqual({ name: "tiles", value: true });
+    expect(untouchedOptions).toContainEqual({ name: "no-gpu", value: true });
     expect((await fetch(`${h.base}/api/presets/${savedPreset.id}`, { method: "DELETE" })).status).toBe(204);
     expect((await (await fetch(`${h.base}/api/runs/${projectRun.id}`)).json()).presetName).toBe("Field settings");
     const projectArchiveResponse = await fetch(`${h.base}/api/runs/${projectRun.id}/results`);
@@ -412,6 +422,31 @@ real(
     expect((await fetch(`${h.base}/api/runs/${recreated.id}`, { method: "DELETE" })).status).toBe(204);
     const removed = await client.taskInfo(recreated.taskUuid!);
     expect(removed.ok).toBe(false);
+
+    // One edited option from each of the nine groups reaches the engine with exactly that value,
+    // including the two the server would otherwise set (map tiles, the process count).
+    const nineGroups = [
+      { name: "gps-accuracy", value: 7 }, { name: "min-num-features", value: 12000 }, { name: "pc-filter", value: 3 },
+      { name: "mesh-size", value: 150000 }, { name: "dsm", value: true }, { name: "crop", value: 2 },
+      { name: "tiles", value: false }, { name: "max-concurrency", value: 2 }, { name: "merge", value: "orthophoto" },
+    ];
+    const groupOf = (name: string) => OPTION_CATALOGUE.find(option => option.name === name)?.group;
+    expect(nineGroups.map(option => groupOf(option.name))).toEqual([...OPTION_GROUPS]);
+    const groupsBody = { engineId, preset: "custom", options: nineGroups };
+    const groupsReview = await (await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review`, { method: "POST", body: JSON.stringify(groupsBody) })).json() as RunReviewView;
+    expect(groupsReview.blocked).toBeNull();
+    expect(groupsReview.options.map(({ name, value }) => ({ name, value })).sort((a, b) => a.name.localeCompare(b.name))).toEqual([...nineGroups].sort((a, b) => a.name.localeCompare(b.name)));
+    const groupsStart = await fetch(`${h.base}/api/projects/${uploadedProject.id}/runs`, { method: "POST", body: JSON.stringify({ ...groupsBody, name: "Nine groups", revision: groupsReview.revision }) });
+    expect(groupsStart.status).toBe(202);
+    const groupsRun = await groupsStart.json() as RunView;
+    await eventually(async () => {
+      const view = await (await fetch(`${h.base}/api/runs/${groupsRun.id}`)).json() as RunView;
+      return view.resultsAvailable || view.state === "failed" || view.results?.state === "failed";
+    }, 240_000);
+    expect(h.tracker.view(groupsRun.id)).toMatchObject({ state: "completed", resultsAvailable: true });
+    const groupsOptions = await taskOptions(h.runs.get(groupsRun.id)!.taskUuid!);
+    for (const option of nineGroups) expect(groupsOptions.filter(sent => sent.name === option.name)).toEqual([option]);
+    console.log("Nine groups reached the engine", JSON.stringify(nineGroups));
 
     const source = join(scratch, "imported-photos");
     await mkdir(source);

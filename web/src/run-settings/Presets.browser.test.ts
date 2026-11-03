@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { openHarness, eventually } from "../../../server/testing/harness.ts";
 import { assetsFromFolder } from "../../../server/http/static-assets.ts";
 import { FakeTaskApi } from "../../../test-support/fake-task-api.ts";
-import { NOT_SENT_YET } from "../../../server/projects/project-runs.ts";
+import { reconcileOptions } from "../../../server/options/reconcile.ts";
 import { browserPath } from "../controls/browser-path.ts";
 import { startBrowser } from "../controls/browser-start.ts";
 import { findBrowserPage } from "../controls/browser-target.ts";
@@ -91,7 +91,12 @@ test("presets persist, reset, export and import through the real project setting
     expect(await (await fetch(h.base+"/api/presets")).json()).toEqual(saved);
     await click("Review and start");await click("Start run");
     await eventually(async()=>engine.tasks.size===1&&[...engine.tasks.values()][0]!.committed);
-    expect([...engine.tasks.values()][0]!.options).toEqual(expect.arrayContaining(exported.options.filter((option: { name: string }) => !NOT_SENT_YET.has(option.name))));
+    const sent = [...engine.tasks.values()][0]!.options as Array<{ name: string; value: unknown }>;
+    const sentNames = new Set(sent.map(option => option.name));
+    expect(sent).toEqual(expect.arrayContaining(exported.options.filter((option: { name: string }) => sentNames.has(option.name))));
+    // What the run leaves out is at the engine's own default, so the engine does the same without it.
+    const engineDefaults = new Map(reconcileOptions(engine.options).map(option => [option.name, option.defaultValue]));
+    for (const option of exported.options as Array<{ name: string; value: unknown }>) if (!sentNames.has(option.name)) expect(option.value).toBe(engineDefaults.get(option.name)!);
     expect(h.ctx.tracker.view(h.runs.latestForProject(project)!.id)).toMatchObject({preset:"custom",presetName:"Field map"});
   } finally { for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error("test finished"))}socket?.close();await browser?.stop();await h.stop();await engine.stop();await other.stop();await rm(folder,{recursive:true,force:true}); }
 },60000);

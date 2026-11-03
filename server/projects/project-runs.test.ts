@@ -308,32 +308,85 @@ test("edited settings are reviewed, committed and bound to their exact revision"
   expect([...api.tasks.values()][0]!.options).toContainEqual({ name: "orthophoto-resolution", value: 8 });
 });
 
-test("the options ADR 0012 shows as rows are checked but not sent by a run until the server sets only untouched defaults", async () => {
-  api.options = structuredClone(recordedOptions) as typeof api.options;
+async function sentWith(options: Array<{ name: string; value: unknown }>) {
+  const reviewed = await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "custom", options });
+  expect(reviewed.status).toBe(200);
+  const view = await reviewed.json() as RunReviewView;
+  const before = api.tasks.size;
+  // The task ends at once, so the next run on the same engine may start.
+  api.onCommit = task => { task.statusCode = 30; };
+  const started = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: "custom", name: "Run", revision: view.revision, options });
+  expect(started.status).toBe(202);
+  const run = await started.json() as RunView;
+  await eventually(async () => api.tasks.size === before + 1 && [...api.tasks.values()].at(-1)!.committed);
+  await eventually(async () => h.tracker.view(run.id)?.state === "failed");
+  const sent = [...api.tasks.values()].at(-1)!.options as Array<{ name: string; value: unknown }>;
+  expect(new Set(sent.map(option => option.name)).size).toBe(sent.length);
+  return { view, sent };
+}
+function useLocalEngine(gpu: boolean) {
+  const local = h.engineStore.addLocal({ name: "Local engine", token: api.token, packageKind: "container", installedVersion: "2.7.0" });
+  h.engineStore.update(local.id, { address: api.address }); engine = local.id;
+  h.settings.set("local.package", { packageVersion: "2.7.0", variant: gpu ? "linux-amd64-gpu" : "linux-amd64-cpu", runtime: "docker", container: { kind: "container", image: "example/engine", digest: "sha256:" + "a".repeat(64), size: 1, gpu } });
+}
+
+test("map tiles, the process count and GPU use take the server's value only while the operator leaves the default", async () => {
   await upload("photo.jpg");
-  const before = await (await review()).json() as RunReviewView;
-  expect(before.settings?.options).toHaveLength(recordedOptions.length);
-  const edits = [
-    { name: "max-concurrency", value: 2 }, { name: "no-gpu", value: true }, { name: "tiles", value: false }, { name: "pc-ept", value: false },
-    { name: "cog", value: false }, { name: "gltf", value: false }, { name: "cameras", value: "{}" }, { name: "boundary", value: "{}" },
+  useLocalEngine(false);
+  const untouched = await sentWith([]);
+  const row = (name: string) => untouched.view.settings?.options.find(option => option.name === name);
+  expect(row("tiles")?.defaultValue).toBe(true);
+  expect(row("no-gpu")?.defaultValue).toBe(true);
+  expect(row("max-concurrency")?.defaultValue).toBe(8);
+  expect(untouched.sent).toContainEqual({ name: "tiles", value: true });
+  expect(untouched.sent).toContainEqual({ name: "no-gpu", value: true });
+  expect(untouched.sent.map(option => option.name)).not.toContain("max-concurrency");
+  expect(untouched.view.options).toEqual([]);
+  expect(untouched.view.serverSet.map(({ name, value, defaultValue }) => ({ name, value, defaultValue }))).toEqual([
+    { name: "tiles", value: true, defaultValue: false }, { name: "no-gpu", value: true, defaultValue: false },
+  ]);
+
+  const edited = await sentWith([{ name: "tiles", value: false }, { name: "no-gpu", value: false }, { name: "max-concurrency", value: 2 }]);
+  expect(edited.sent).toContainEqual({ name: "tiles", value: false });
+  expect(edited.sent).toContainEqual({ name: "max-concurrency", value: 2 });
+  expect(edited.sent.filter(option => option.name === "no-gpu" && option.value !== false)).toEqual([]);
+  expect(edited.view.serverSet).toEqual([]);
+  expect(edited.view.options.map(({ name, value }) => ({ name, value }))).toEqual([
+    { name: "tiles", value: false }, { name: "max-concurrency", value: 2 }, { name: "no-gpu", value: false },
+  ]);
+});
+
+test("a local engine with a GPU keeps it, and a remote engine gets no GPU setting, unless the operator sets one", async () => {
+  await upload("photo.jpg");
+  const remote = await sentWith([]);
+  expect(remote.sent.map(option => option.name)).not.toContain("no-gpu");
+  expect(remote.view.serverSet.map(option => option.name)).toEqual(["tiles"]);
+  expect((await sentWith([{ name: "no-gpu", value: true }])).sent).toContainEqual({ name: "no-gpu", value: true });
+  useLocalEngine(true);
+  const gpu = await sentWith([]);
+  expect(gpu.view.settings?.options.find(option => option.name === "no-gpu")?.defaultValue).toBe(false);
+  expect(gpu.sent.map(option => option.name)).not.toContain("no-gpu");
+});
+
+test("the options the engine reads as a request go only when changed, and the forced formats stay on", async () => {
+  await upload("photo.jpg");
+  const requests = [
+    { name: "max-concurrency", value: 2 }, { name: "cameras", value: "{}" }, { name: "boundary", value: "{}" },
     { name: "use-exif", value: true }, { name: "force-gps", value: true }, { name: "split", value: 100 }, { name: "split-overlap", value: 50 },
     { name: "sm-cluster", value: "http://cluster.invalid" }, { name: "sm-no-align", value: true }, { name: "merge", value: "dem" },
     { name: "end-with", value: "opensfm" }, { name: "rerun-from", value: "dataset" },
   ];
-  expect(edits).toHaveLength(17);
-  const response = await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options: edits });
-  expect(response.status).toBe(200);
-  const view = await response.json() as RunReviewView;
-  expect(view.revision).toBe(before.revision);
-  expect(view.options).toEqual(before.options);
-  const started = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: view.preset, name: "Run", revision: view.revision, options: edits });
-  expect(started.status).toBe(202);
-  await eventually(async () => api.tasks.size === 1 && [...api.tasks.values()][0]!.committed);
-  const sent = [...api.tasks.values()][0]!.options as Array<{ name: string; value: unknown }>;
-  expect(new Set(sent.map(option => option.name)).size).toBe(sent.length);
-  for (const name of ["pc-ept", "cog", "gltf", "tiles"]) expect(sent).toContainEqual({ name, value: true });
-  for (const { name } of edits.filter(({ name }) => !["pc-ept", "cog", "gltf", "tiles"].includes(name))) expect(sent.map(option => option.name)).not.toContain(name);
-  expect(sent).toHaveLength(recordedOptions.length - 17 + 4);
+  const untouched = await sentWith([]);
+  for (const { name } of requests) expect(untouched.sent.map(option => option.name)).not.toContain(name);
+  for (const name of ["pc-ept", "cog", "gltf"]) expect(untouched.sent).toContainEqual({ name, value: true });
+  expect(untouched.view.alwaysProduced).toEqual(["pc-ept", "cog", "gltf"]);
+  const forcedOff = [{ name: "pc-ept", value: false }, { name: "cog", value: false }, { name: "gltf", value: false }];
+  const edited = await sentWith([...requests, ...forcedOff]);
+  for (const option of requests) expect(edited.sent).toContainEqual(option);
+  for (const name of ["pc-ept", "cog", "gltf"]) expect(edited.sent).toContainEqual({ name, value: true });
+  expect(edited.view.options.map(option => option.name).sort()).toEqual(requests.map(option => option.name).sort());
+  // Every other row goes at its value, as before these rows existed. GPU use, left at the engine's default, stays out.
+  expect(edited.sent.map(option => option.name).sort()).toEqual(recordedOptions.map(option => option.name).filter(name => name !== "no-gpu").sort());
 });
 
 test("edited review exposes reconciled schema and refuses invalid or unoffered settings", async () => {
