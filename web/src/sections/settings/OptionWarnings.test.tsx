@@ -34,6 +34,14 @@ test("every warning has its words under the warn prefix and nothing else is ther
   expect(messages["warn.end_with"]).toContain("{stage}");
 });
 
+test("no warning gives a speed or memory figure, even one from the engine's help", () => {
+  const figure = /times as long|times longer|\bfactor\b|\b(two|three|four|five|ten) times\b|\d\s*(x|gb|mb|%)(?![a-z])/i;
+  const found = Object.entries(messages).filter(([key, text]) => key.startsWith("warn.") && figure.test(text)).map(([key]) => key);
+  expect(found).toEqual([]);
+  expect(figure.test("takes roughly four times as long")).toBe(true);
+  expect(figure.test("~1GB per thread")).toBe(true);
+});
+
 test("a warning names other options by their plain names", () => {
   const html = row(render({ "fast-orthophoto": true, dtm: true }), "fast-orthophoto");
   expect(html).toContain(said("warn.fast_orthophoto"));
