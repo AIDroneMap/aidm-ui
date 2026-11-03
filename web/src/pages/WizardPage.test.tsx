@@ -69,12 +69,12 @@ function renderCheck(check: MachineCheckData | null, overrides: Partial<Paramete
   );
 }
 
-test("a failing processor line shows Fail and the sentence with the missing features", () => {
+test("a failing processor line shows Fail and names the processor the engine needs, nothing else", () => {
   const html = renderCheck(refused);
   expect(html).toContain("Fail");
-  expect(html).toContain(
-    "This computer&#x27;s processor is too old for the engine. It lacks avx2, fma. You can still use an engine on another computer.",
-  );
+  expect(html).toContain('<span class="check-message">The engine needs an x86-64-v3 or ARMv8.2-A processor.</span>');
+  expect(html).not.toContain("too old");
+  expect(html).not.toContain("another computer");
 });
 
 test("a memory warning shows the total and the recommended size in GiB", () => {
@@ -787,7 +787,7 @@ test("on macOS 15 the choice screen says which macOS is needed and offers a remo
   expect(untranslatedText(html)).toEqual([]);
 });
 
-test("every refusal of this computer names the requirement in one sentence and nothing else", () => {
+test("every refusal of this computer, on the check line and in the refused state, names the requirement in one sentence and nothing else", () => {
   const cases: Array<[MachineCheckData["lines"][number]["message"], string]> = [
     [{ code: "machine.windows_not_yet", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
     [{ code: "machine.platform_unsupported", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
@@ -797,6 +797,9 @@ test("every refusal of this computer names the requirement in one sentence and n
     [{ code: "machine.ram_too_low", data: { total: 4 * 1024 ** 3, minimum: 8 * 1024 ** 3 } }, "The engine needs at least 8.0 GiB of memory."],
   ];
   for (const [reason, sentence] of cases) {
+    // The machine check line says the same, and nothing else.
+    const line = renderCheck({ lines: [{ id: "platform", result: "fail", message: reason }], localEngine: { offered: false, reason }, checkedAt: "2026-10-26T10:00:00Z" });
+    expect(line, reason.code).toContain(`<span class="check-message">${sentence}</span>`);
     const check: MachineCheckData = { lines: [], localEngine: { offered: false, reason }, checkedAt: "2026-10-26T10:00:00Z" };
     const card = /<h2>An engine on this computer<\/h2>(.*?)<\/div>/.exec(renderChoice(check))?.[1];
     expect(card, reason.code).toBe(`<p class="wizard-refused">${sentence}</p>`);
