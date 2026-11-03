@@ -96,13 +96,37 @@ test("a failure with no stage and no error line still names what happened", () =
   expect(html).not.toContain("The last");
 });
 
-test("a finished run shows its results before its stages", () => {
+test("a finished run shows the Results section's viewer tiles and downloads before its stages", () => {
   const stages = stagesOf([{ name: "dataset", line: 0, at: seenAt }], null, "completed");
-  const html = render({ state: "completed", stages, resultsAvailable: true, results: { state: "ready", archiveSize: 2048, outputs: [{ name: "orthophoto", size: 1024 }] } }, { viewers: <p>viewers</p> });
+  const outputs = [{ name: "glb", size: 512 }, { name: "orthophoto", size: 1024 }];
+  const html = render({ state: "completed", stages, resultsAvailable: true, results: { state: "ready", archiveSize: 2048, outputs } });
   expect(html).toContain('aria-label="Results"');
-  expect(html.indexOf('href="/api/runs/12/outputs/orthophoto"')).toBeLessThan(html.indexOf('aria-label="Stages"'));
-  expect(html.indexOf("<p>viewers</p>")).toBeLessThan(html.indexOf('aria-label="Stages"'));
+  expect(html).toContain('<a class="viewer-tile" href="#/projects/3/results/12/map">');
+  expect(html).toContain('<a class="viewer-tile" href="#/projects/3/results/12/model">');
+  // The whole archive first, then each output by name with its size.
+  const downloads = [...html.matchAll(/<a href="(\/api\/runs\/12\/[^"]+)" download="">/g)].map((match) => match[1]);
+  expect(downloads).toEqual(["/api/runs/12/results", "/api/runs/12/outputs/orthophoto", "/api/runs/12/outputs/glb"]);
+  expect(html).toContain("Delete the results of this run");
+  expect(html.indexOf('class="viewer-tile"')).toBeLessThan(html.indexOf('aria-label="Stages"'));
+  expect(html.indexOf("/api/runs/12/results")).toBeLessThan(html.indexOf('aria-label="Stages"'));
   expect(html).not.toContain("Cancel the run");
+  expect(untranslatedText(html, ["North field", "Barn engine"])).toEqual([]);
+});
+
+test("a run without an orthophoto or a model has no viewer tile, only its downloads", () => {
+  const html = render({ state: "completed", results: { state: "ready", archiveSize: 2048, outputs: [{ name: "report", size: 100 }] } });
+  expect(html).not.toContain("viewer-tile");
+  expect(html).toContain('href="/api/runs/12/outputs/report"');
+});
+
+test("results that could not be fetched offer a retry, and deleted results say so", () => {
+  const failed = render({ state: "completed", results: { state: "failed", archiveSize: null, outputs: [] } });
+  expect(failed).toContain("Could not fetch results.");
+  expect(failed).toContain(">Try fetching results again</button>");
+  const deleted = render({ state: "completed", results: { state: "deleted", archiveSize: null, outputs: [] } });
+  expect(deleted).toContain("Results deleted.");
+  expect(deleted).not.toContain("/outputs/");
+  expect(render({ state: "completed" })).toContain("This run has no results yet.");
 });
 
 test("while the results are fetched the band shows the fetch going on", () => {

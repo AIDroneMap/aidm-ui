@@ -7,10 +7,10 @@ import { ErrorMessage } from "./ErrorMessage.tsx";
 import { formatCount } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
 import { isFinished, linesWithRestart } from "../runs.ts";
-import { ResultsBand } from "../run/ResultsBand.tsx";
 import { RunFailure } from "../run/RunFailure.tsx";
 import { RunHeader } from "../run/RunHeader.tsx";
 import { RunLog } from "../run/RunLog.tsx";
+import { RunScreenResults } from "../run/RunScreenResults.tsx";
 import { RunStages } from "../run/RunStages.tsx";
 import type { RunView } from "../../../shared/api-types.ts";
 import "../run/run.css";
@@ -34,8 +34,6 @@ export interface RunProgressProps {
   back?: ReactNode;
   /** What the operator can do with the run. Under the failure when the run failed. */
   actions?: ReactNode;
-  /** The viewers of a finished run, in the results band. */
-  viewers?: ReactNode;
 }
 
 /**
@@ -56,7 +54,6 @@ export function RunProgress({
   level = 2,
   back,
   actions,
-  viewers,
 }: RunProgressProps) {
   const [run, setRun] = useState(incomingRun);
   useEffect(() => { setRun(incomingRun); }, [incomingRun]);
@@ -87,7 +84,7 @@ export function RunProgress({
         </>
       )}
 
-      {run.state === "completed" && <ResultsBand run={run} onChange={setRun} viewers={viewers} />}
+      {run.state === "completed" && <RunScreenResults run={run} onChange={setRun} />}
 
       {run.step === "download" && run.download && (
         <DownloadBlock
