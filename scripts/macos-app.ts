@@ -8,8 +8,11 @@
 // in the background and exits at once, so that opening the app again starts a
 // second copy, which finds the running one, opens the interface in the
 // browser again and exits (server/app/start.ts).
+//
+// The app's icon is written from the PNGs in assets/icon/ (scripts/macos-icon.ts).
 import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { icns, readIconPngs } from "./macos-icon.ts";
 
 export const APP_NAME = "AIDM UI";
 export const BUNDLE_ID = "io.github.aidronemap.aidm-ui";
@@ -19,6 +22,8 @@ export const LAUNCHER = "aidm-ui-launcher";
 export const EXECUTABLE = "aidm-ui";
 /** Bun's oldest supported macOS. The Mac engine needs macOS 26; the setup screens say so. */
 export const MINIMUM_MACOS = "13.0";
+/** The icon, in Contents/Resources. */
+export const ICON_FILE = `${APP_NAME}.icns`;
 
 const VERSION = /^\d+\.\d+\.\d+$/;
 
@@ -28,6 +33,7 @@ export function infoPlist(version: string): string {
     ["CFBundleDevelopmentRegion", "en"],
     ["CFBundleDisplayName", APP_NAME],
     ["CFBundleExecutable", LAUNCHER],
+    ["CFBundleIconFile", ICON_FILE],
     ["CFBundleIdentifier", BUNDLE_ID],
     ["CFBundleInfoDictionaryVersion", "6.0"],
     ["CFBundleName", APP_NAME],
@@ -68,6 +74,7 @@ export const LAUNCHER_SCRIPT = [
 /** Writes "<output folder>/AIDM UI.app", replacing an older one, and returns its path. */
 export function writeApp(executable: string, version: string, outputFolder: string): string {
   const plist = infoPlist(version);
+  const icon = icns(readIconPngs());
   const app = join(outputFolder, `${APP_NAME}.app`);
   rmSync(app, { recursive: true, force: true });
   const macos = join(app, "Contents", "MacOS");
@@ -78,6 +85,8 @@ export function writeApp(executable: string, version: string, outputFolder: stri
   chmodSync(join(macos, EXECUTABLE), 0o755);
   writeFileSync(join(macos, LAUNCHER), LAUNCHER_SCRIPT);
   chmodSync(join(macos, LAUNCHER), 0o755);
+  mkdirSync(join(app, "Contents", "Resources"));
+  writeFileSync(join(app, "Contents", "Resources", ICON_FILE), icon);
   return app;
 }
 

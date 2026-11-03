@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUNDLE_ID, EXECUTABLE, infoPlist, LAUNCHER, writeApp } from "./macos-app.ts";
+import { BUNDLE_ID, EXECUTABLE, ICON_FILE, infoPlist, LAUNCHER, writeApp } from "./macos-app.ts";
+import { icns, readIconPngs } from "./macos-icon.ts";
 
 const folders: string[] = [];
 const pids: number[] = [];
@@ -66,6 +67,18 @@ test("the app holds the executable unchanged and the launcher, both runnable", (
   expect(statSync(join(macos, LAUNCHER)).mode & 0o777).toBe(0o755);
   expect(readFileSync(join(app, "Contents", "Info.plist"), "utf8")).toBe(infoPlist("0.1.0"));
   expect(readFileSync(join(app, "Contents", "PkgInfo"), "utf8")).toBe("APPL????");
+});
+
+test("the app carries its icon in Resources and names it in Info.plist", () => {
+  expect(ICON_FILE).toBe("AIDM UI.icns");
+  expect(infoPlist("0.1.0")).toContain("<key>CFBundleIconFile</key>\n  <string>AIDM UI.icns</string>");
+  const out = folder();
+  const executable = join(out, "aidm-ui-macos-arm64");
+  writeFileSync(executable, "binary");
+  const app = writeApp(executable, "0.1.0", out);
+  const icon = readFileSync(join(app, "Contents", "Resources", ICON_FILE));
+  expect(icon.toString("latin1", 0, 4)).toBe("icns");
+  expect(icon.equals(icns(readIconPngs()))).toBe(true);
 });
 
 test("writing the app again replaces the older one", () => {

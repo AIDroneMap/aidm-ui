@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360">
+  <rect width="360" height="360" fill="#FBF9F3"/>
+  <path fill="#23281E" fill-rule="evenodd" d="M63 63h234v234H63Z M95 95h30v30H95Z M157 95h46v30h-46Z M235 95h30v30h-30Z M95 157h30v46H95Z M235 157h30v46h-30Z M95 235h30v30H95Z M157 235h46v30h-46Z M235 235h30v30h-30Z"/>
+</svg>
