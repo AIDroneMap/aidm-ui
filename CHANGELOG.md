@@ -18,7 +18,7 @@
 
 - Give Details a name and notes form with a shared multiline field, a storage table and a separate danger area. Project, run and results deletion share confirmations that name the removed items and their sizes, explain what stays and focus Keep when they open. Uploaded file aliases count once, and imported folders stay outside the deletion total. Evidence: the multiline-field markup tests in `web/src/controls/TextAreaField.test.tsx`, the storage and confirmation tests in `web/src/sections/details/DetailsSection.test.tsx` and the production-route keyboard journey in `web/src/sections/details/Details.browser.test.ts`. Closes #133.
 
-- Show a project's runs newest first in a table, with reported progress and results size, keyboard actions and a next step when no runs exist. Retry opens the new run. Delete names what is removed and reports failures. Duration shows a dash until the run view includes the engine's processing time. Evidence: the production-route journeys in `web/src/sections/runs/RunsSection.browser.test.ts`. Closes #142.
+- Show a project's runs newest first in a table, with reported progress and results size, keyboard actions and a next step when no runs exist. Retry opens the new run. Delete names what is removed and reports failures. Duration uses the engine's processing time and shows a dash until it is reported. Runs uses the shared delete confirmation. Evidence: the production-route journeys in `web/src/sections/runs/RunsSection.browser.test.ts`. Closes #142.
 
 ## 0.1.0
 

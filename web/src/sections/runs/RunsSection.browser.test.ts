@@ -42,7 +42,7 @@ async function seedPhoto(h: ReturnType<typeof openHarness>, projectId: number) {
   await fetch(`${base}/api/projects/${projectId}/uploads/${up.id}/complete`, { method: "POST" });
 }
 
-test("runs table shows all columns, newest first, with progress and missing duration dash", async () => {
+test("runs table shows all columns, newest first, with reported progress and duration", async () => {
   const folder = await mkdtemp(join(tmpdir(), "aidm-runs-table-"));
   const publicFiles = join(folder, "public"), dataFolder = join(folder, "data");
   await mkdir(publicFiles); await mkdir(dataFolder);
@@ -62,7 +62,7 @@ test("runs table shows all columns, newest first, with progress and missing dura
   const rev1 = await (await post(`/api/projects/${projectId}/run-review`, runBody)).json() as any;
   const run1 = await (await post(`/api/projects/${projectId}/runs`, { ...runBody, name: "Flight 1", revision: rev1.revision })).json() as any;
   await eventually(async () => h.runs.get(run1.id)?.state === "queued");
-  engine.setTask(h.runs.get(run1.id)!.taskUuid!, { statusCode: 40, results: EMPTY_ZIP });
+  engine.setTask(h.runs.get(run1.id)!.taskUuid!, { statusCode: 40, processingTime: 65000, results: EMPTY_ZIP });
   await eventually(async () => h.runs.get(run1.id)?.state === "completed");
 
   // Middle run: failed
@@ -131,9 +131,9 @@ test("runs table shows all columns, newest first, with progress and missing dura
     expect(await evaluate(`document.querySelector('a[href="#/runs/${run3.id}"]') !== null`)).toBe(true);
     expect(await evaluate(`document.querySelector('a[href="#/runs/${run1.id}"]') !== null`)).toBe(true);
 
-    // Duration column: all show dash (no processingTime)
+    // Use engine-reported durations and leave an unreported duration as a dash.
     const durations = await evaluate(`[...document.querySelectorAll('main table tbody tr')].map(tr=>[...tr.querySelectorAll('td')][5]?.textContent?.trim())`);
-    for (const d of durations as string[]) expect(d).toBe("-");
+    expect(durations).toEqual(["1 s", "-", "1 min 5 s"]);
 
     // Archive size for Flight 1 (22 bytes = "22 B")
     expect(await evaluate(`document.querySelector('main').textContent.includes('22 B')`)).toBe(true);
@@ -162,7 +162,7 @@ test("runs table shows all columns, newest first, with progress and missing dura
 
     // Opening a row reaches the production run route.
     await evaluate(`document.querySelector('a[href="#/runs/${run1.id}"]').click();true`);
-    await wait(`location.hash === '#/runs/${run1.id}' && document.querySelector('main h1')?.textContent === 'Run ${run1.id}'`);
+    await wait(`location.hash === '#/runs/${run1.id}' && document.querySelector('main h1')?.textContent === 'Flight 1'`);
     await send("Page.navigate", { url: h.base + `/#/projects/${projectId}/runs` });
     await wait("document.querySelector('main table')");
 
@@ -353,9 +353,14 @@ test("runs table actions: popover keyboard, delete confirmation, retry redirect 
     await wait(`${btn("Delete run")} !== null`);
     await click("Delete run");
     await wait("document.querySelector('dialog[open]')");
-    expect(await evaluate("document.activeElement?.textContent")).toBe("Keep");
-    expect(await evaluate("document.querySelector('dialog[open]')?.textContent")).toContain('Its settings, log and results are deleted. The project photos stay.');
-    await activate("Keep");
+    expect(await evaluate("document.activeElement?.textContent")).toBe("Keep run");
+    const deletionText = await evaluate("document.querySelector('dialog[open]')?.textContent");
+    expect(deletionText).toContain('Delete run "Bad run"?');
+    expect(deletionText).toContain("Local result archive: 0 B");
+    expect(deletionText).toContain("This run's settings and log");
+    expect(deletionText).toContain("This run on Work node");
+    expect(deletionText).toContain("The project, its photos and imported folders stay.");
+    await activate("Keep run");
     await evaluate("new Promise(resolve => requestAnimationFrame(() => resolve(true)))");
     expect(await evaluate("document.querySelector('dialog[open]')")).toBeNull();
     // Keeping the run leaves its row available.
@@ -367,18 +372,18 @@ test("runs table actions: popover keyboard, delete confirmation, retry redirect 
     await clickExpr(badRunMoreBtn);
     await click("Delete run");
     await wait("document.querySelector('dialog[open]')");
-    await click("Delete this run");
+    await click("Delete run and 0 B");
     await wait("document.querySelector('main [role=alert]')?.textContent.includes('The run could not be deleted')");
     expect(await evaluate(`document.querySelector('a[href="#/runs/${runFailed.id}"]') !== null`)).toBe(true);
+    expect(await evaluate("document.querySelector('dialog[open]')")).toBeNull();
     engine.token = originalToken;
-    await click("Keep");
 
     // Delete: confirm sends DELETE and removes run from list
     await clickExpr(badRunMoreBtn);
     await wait(`${btn("Delete run")} !== null`);
     await click("Delete run");
     await wait("document.querySelector('dialog[open]')");
-    await click("Delete this run");
+    await click("Delete run and 0 B");
     await wait(`document.querySelector('a[href="#/runs/${runFailed.id}"]') === null && document.querySelector('a[href="#/runs/${runComp.id}"]') !== null && !document.querySelector('dialog[open]')`);
     expect(await evaluate(`document.querySelector('a[href="#/runs/${runFailed.id}"]')`)).toBeNull();
 

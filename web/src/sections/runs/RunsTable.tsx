@@ -10,10 +10,10 @@ import { Popover } from "../../controls/Popover.tsx";
 import { Progress } from "../../controls/Progress.tsx";
 import { RUN_STATE_TONES, StatusPill } from "../../controls/StatusPill.tsx";
 import { Table } from "../../controls/Table.tsx";
-import { formatBytes } from "../../format.ts";
+import { formatBytes, formatDuration } from "../../format.ts";
 import { t } from "../../i18n/translate.ts";
 import { sectionHash } from "../../router.ts";
-import { RunDeleteConfirmation } from "./RunDeleteConfirmation.tsx";
+import { DeleteConfirmation } from "../details/DeleteConfirmation.tsx";
 
 function runDisplayName(run: RunView): string {
   if (run.sample) return t("run.sample_name");
@@ -45,6 +45,7 @@ function RunTableRow({ run, busy, onDelete, onAgain, onAuthRequired }: TableRowP
   const name = runDisplayName(run);
   const engineLabel = run.engineLocal ? t("run.engine_local") : (run.engineName ?? t("runs.not_reported"));
   const presetLabel = run.presetName || (run.preset ? t(`run_start.preset.${run.preset}`) : t("runs.not_reported"));
+  const durationLabel = run.processingTime != null && run.processingTime >= 0 ? formatDuration(run.processingTime / 1000) : t("runs.not_reported");
   const archiveSize = run.results?.archiveSize;
   const sizeLabel = archiveSize != null ? formatBytes(archiveSize) : t("runs.not_reported");
   const canRetry = run.state === "failed" && !run.sample;
@@ -86,7 +87,7 @@ function RunTableRow({ run, busy, onDelete, onAgain, onAuthRequired }: TableRowP
         )}
       </td>
       <td><time dateTime={run.createdAt}>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(run.createdAt))}</time></td>
-      <td>{t("runs.not_reported")}</td>
+      <td>{durationLabel}</td>
       <td>{sizeLabel}</td>
       <td>
         <a href={`#/runs/${run.id}`}>{t("runs.open")}</a>{" "}
@@ -171,7 +172,7 @@ export function RunsTable({ project, onAgain, onAuthRequired }: Props) {
     } catch (error) {
       const problem = asApiFailure(error);
       if (problem.code === "auth.passphrase_required") onAuthRequired();
-      else setDeleteFailure(problem);
+      else { setDeleteFailure(problem); setDeleting(null); }
     } finally {
       deletePending.current = false;
       setDeleteBusy(false);
@@ -184,6 +185,7 @@ export function RunsTable({ project, onAgain, onAuthRequired }: Props) {
     <section className="runs-section" aria-labelledby="run-history-title">
       <h2 id="run-history-title">{t("run_manage.history")}</h2>
       {failure && <ErrorMessage failure={failure} />}
+      {deleteFailure && <p role="alert" className="error">{t("runs.delete_failed")}</p>}
       {!view && !failure && <p role="status">{t("runs.loading")}</p>}
       {view && runs.length === 0 ? (
         <RunsEmptyState project={project} />
@@ -229,13 +231,13 @@ export function RunsTable({ project, onAgain, onAuthRequired }: Props) {
           {t("upload.next")}
         </Button>
       )}
-      <RunDeleteConfirmation
-        run={deleting}
-        failure={deleteFailure}
+      {deleting && <DeleteConfirmation
+        target={{ kind: "run", run: deleting }}
+        open
         busy={deleteBusy}
         onConfirm={handleDeleteConfirm}
         onCancel={() => { setDeleting(null); setDeleteFailure(null); }}
-      />
+      />}
     </section>
   );
 }
