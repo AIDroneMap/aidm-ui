@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import fixtureOptions from "../../../test-support/fixtures/task-api-2.6.1-options.json";
+import fixtureOptions from "../../../test-support/fixtures/task-api-2.7.0-options.json";
 import type { EngineOption } from "../../../shared/engine-options.ts";
 import { reconcileOptions } from "../../../server/options/reconcile.ts";
 import { planPreset } from "../../../shared/run-plan.ts";
@@ -44,7 +44,7 @@ test("edited settings survive review and are reconciled before changing engines"
       const reconciled = reconcileOptions(reported);
       const plan = planPreset(preset, reconciled, options);
       const detail = (value: any) => ({ ...value, help: "", unexplained: false });
-      return Response.json({ project: { id: 1, name: "Field" }, engine: { id: engine, name: engine === 1 ? "Local" : "Remote", kind: engine === 1 ? "local" : "remote", gpu: engine === 1 ? false : null, info: { version: "2.6.1" }, imageLimit: null, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: planPreset(id, reconciled).departures.map(detail) })), wayIn: "upload", photos: { included: 3, excluded: 0, total: 3, bytes: 123 }, facts: null, options: plan.departures.map(detail), outputs: plan.outputs, alwaysProduced: [], revision: `revision-${engine}-${JSON.stringify(options)}`, blocked: null,
+      return Response.json({ project: { id: 1, name: "Field" }, engine: { id: engine, name: engine === 1 ? "Local" : "Remote", kind: engine === 1 ? "local" : "remote", gpu: engine === 1 ? false : null, info: { version: "2.7.0" }, imageLimit: null, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: planPreset(id, reconciled).departures.map(detail) })), wayIn: "upload", photos: { included: 3, excluded: 0, total: 3, bytes: 123 }, facts: null, options: plan.departures.map(detail), outputs: plan.outputs, alwaysProduced: [], revision: `revision-${engine}-${JSON.stringify(options)}`, blocked: null,
         settings: { options: reconciled, facts: { bands: false, videos: false }, matcherWarning: engine === 1 && plan.effectiveOptions.some(option => option.name === "matcher-type" && option.value === "hamming") ? warning : null } });
     }
     if (url.pathname.endsWith("/runs")) { posted = await request.json(); return Response.json({ id: 99 }, { status: 202 }); }

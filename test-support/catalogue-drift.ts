@@ -1,10 +1,9 @@
 import type { EngineOption, ReconciledOption } from "../shared/engine-options.ts";
 import { OPTION_CATALOGUE } from "../shared/option-catalogue.ts";
 
-// The test-mode packages of API 2.6.1 and 2.7.0 bundle the same older option list, so a check
-// against a test-mode API sees the same differences whichever version serves it. Keep this
-// exception exact so that a refreshed fixture or any further drift fails the test instead of
-// spreading.
+// A test-mode package serves the option list bundled in its release, which is older than the engine's
+// current list. Keep this exception exact so that a refreshed bundle or any further drift fails the
+// test instead of spreading.
 // Source: https://github.com/AIDroneMap/aidm-api/blob/4cd431575a2186d7733ba20cf882543ec864a7b9/tests/odm_options.json
 // Identical Git blob in the 2.7.0 package: 7b897173fddd91a5165424fcce7c2f00cfb6c69b.
 const LEGACY_TEST_OPTIONS = {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { EngineTestView, EngineView } from "../../shared/api-types.ts";
+import type { EngineOption } from "../../shared/engine-options.ts";
 import { FakeTaskApi, WRONG_TOKEN_MESSAGE } from "../../test-support/fake-task-api.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
@@ -429,25 +430,35 @@ test("the drift check permits exactly four differences for the bundled test list
   const engine = await addEngine();
   const options = async () => (await (await send("GET", `/api/engines/${engine.id}/options`)).json()).options;
 
-  // The stand-in's default list is the one the test-mode packages of both 2.6.1 and 2.7.0 bundle.
-  expect(() => assertCatalogueDrift([], "2.6.1", "test-mode")).toThrow("Catalogue drift");
+  // The list a test-mode package bundles differs from the recorded engine list by four names each way.
+  const current = ["gps-z-offset", "matcher-order", "report-units", "sfm-no-partial"];
+  const retired = [
+    { name: "build-overviews", type: "bool", value: "false", domain: "", help: "Build orthophoto overviews for faster display in programs such as QGIS. Default: %(default)s" },
+    { name: "pc-rectify", type: "bool", value: "false", domain: "", help: "Perform ground rectification on the point cloud. This means that wrongly classified ground points will be re-classified and gaps will be filled. Useful for generating DTMs. Default: %(default)s" },
+    { name: "pc-tile", type: "bool", value: "false", domain: "", help: "Reduce the memory usage needed for depthmap fusion by splitting large scenes into tiles. Turn this on if your machine doesn't have much RAM and/or you've set --pc-quality to high or ultra. Experimental. Default: %(default)s" },
+    { name: "texturing-skip-local-seam-leveling", type: "bool", value: "false", domain: "", help: "Skip the blending of colors near seams. Default: %(default)s" },
+  ] satisfies EngineOption[];
+  fake.options = [...(structuredClone(recorded) as typeof fake.options).filter((option) => !current.includes(option.name)), ...retired];
+
+  expect(() => assertCatalogueDrift([], "2.7.0", "test-mode")).toThrow("Catalogue drift");
   const bundled = await options();
-  expect(() => assertCatalogueDrift(bundled, "2.6.1", "test-mode")).not.toThrow();
   expect(() => assertCatalogueDrift(bundled, "2.7.0", "test-mode")).not.toThrow();
+  // The exception follows the list, not the API version.
+  expect(() => assertCatalogueDrift(bundled, "2.8.0", "test-mode")).not.toThrow();
   // The same list is not an engine's: its four differences are drift there.
   expect(() => assertCatalogueDrift(bundled, "2.7.0", "engine")).toThrow("Catalogue drift");
   // One of the permitted differences going away is drift too.
   fake.options.push({ name: "report-units", type: "enum", value: "m", domain: ["m", "ft"], help: "Back again" });
   const returned = await options();
-  expect(() => assertCatalogueDrift(returned, "2.6.1", "test-mode")).toThrow("report-units");
+  expect(() => assertCatalogueDrift(returned, "2.7.0", "test-mode")).toThrow("report-units");
   fake.options.pop();
   // So is one name too many on either side.
   fake.options.push({ name: "brand-new-option", type: "bool", value: "false", domain: "", help: "New help" });
   const added = await options();
-  expect(() => assertCatalogueDrift(added, "2.6.1", "test-mode")).toThrow("brand-new-option");
+  expect(() => assertCatalogueDrift(added, "2.7.0", "test-mode")).toThrow("brand-new-option");
   fake.options = fake.options.filter((option) => option.name !== "brand-new-option" && option.name !== "dsm");
   const removed = await options();
-  expect(() => assertCatalogueDrift(removed, "2.6.1", "test-mode")).toThrow("dsm");
+  expect(() => assertCatalogueDrift(removed, "2.7.0", "test-mode")).toThrow("dsm");
 
   // The list a released 2.7.0 package reports behind a real engine matches the catalogue exactly.
   fake.options = structuredClone(recorded) as typeof fake.options;
