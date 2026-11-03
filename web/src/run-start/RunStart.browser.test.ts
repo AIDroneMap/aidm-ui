@@ -43,16 +43,12 @@ test("review ignores stale engines, blocks above the limit and starts at the lim
     const evaluate = async (expression: string) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.result.exceptionDetails) throw new Error(JSON.stringify(result.result.exceptionDetails)); return result.result.result.value; };
     const wait = (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 4000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(Error('timeout')) : setTimeout(check, 20); check(); })`);
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
-    await wait("document.querySelector('button')");
-    await evaluate("document.querySelector('button').focus()");
-    await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
-    await send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
     await wait("document.querySelectorAll('#run-engine option').length === 2");
     await evaluate("document.querySelector('#run-engine').value = '2'; document.querySelector('#run-engine').dispatchEvent(new Event('change', { bubbles: true }))");
-    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Review run' && !b.disabled)");
+    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Review and start' && !b.disabled)");
     release!();
     await evaluate("new Promise(resolve => setTimeout(resolve, 100))");
-    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Review run').click()");
+    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Review and start').click()");
     await wait("document.body.textContent.includes('Engine: Ready')");
     await wait("document.body.textContent.includes('Task API version: 2')");
     expect(await evaluate("document.body.textContent.includes('Photo limit: 2')")).toBe(true);

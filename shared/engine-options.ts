@@ -9,11 +9,11 @@ export interface EngineOption {
   help: string;
 }
 
-/** Settings facts for one engine. Only an unexplained option carries engine help. */
+/** Settings facts for one engine, with the help the engine reports for each option. */
 export interface ReconciledOption extends Omit<ShownOption, "domain" | "group"> {
   group: OptionGroup | "unexplained";
   domain: EngineOption["domain"];
   unexplained: boolean;
   changes: Array<"type" | "domain" | "defaultValue">;
-  help?: string;
+  help: string;
 }

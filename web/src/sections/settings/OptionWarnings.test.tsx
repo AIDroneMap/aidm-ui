@@ -6,7 +6,7 @@ import { LOST_OUTPUTS, WARNING_CODES, type WarningContext } from "../../../../sh
 import type { SettingsDraft } from "../../../../shared/run-settings.ts";
 import { reconcileOptions } from "../../../../server/options/reconcile.ts";
 import en from "../../i18n/en.json";
-import { SettingsEditor } from "../../run-settings/SettingsEditor.tsx";
+import { SettingsWorkspace } from "./SettingsWorkspace.tsx";
 
 const messages: Record<string, string> = en;
 const options = reconcileOptions(recorded as EngineOption[]);
@@ -15,15 +15,15 @@ const said = (key: string) => messages[key]!.replace("{skip3d}", messages["optio
 const cpu: WarningContext = { engine: { kind: "local", gpu: false, cpuCores: 4 }, photoCount: 50 };
 
 function render(draft: SettingsDraft, context?: WarningContext) {
-  return renderToStaticMarkup(<SettingsEditor options={options} preset="custom" draft={draft} facts={{ bands: false, videos: false }} warningContext={context} onChange={() => {}} onApply={() => {}} onCancel={() => {}} />);
+  return renderToStaticMarkup(<SettingsWorkspace options={options} facts={{ bands: false, videos: false }} preset="custom" loadedName={null} draft={draft} onDraft={() => {}} onPreset={() => {}} engine={null} presets={null} busy={false} disabled={false} warningContext={context} onReview={() => {}} />);
 }
 
 /** The markup of the row whose engine flag is the given name. */
 function row(html: string, name: string): string {
-  const rows = html.split('<div class="settings-editor-row');
-  const found = rows.find((part) => part.includes(`<code>${name}</code>`));
-  if (!found) throw new Error(`No row for ${name}`);
-  return found;
+  const start = html.indexOf(`data-option="${name}"`);
+  if (start < 0) throw new Error(`No row for ${name}`);
+  const next = html.indexOf('data-option="', start + 1);
+  return html.slice(start, next < 0 ? undefined : next);
 }
 
 test("every warning has its words under the warn prefix and nothing else is there", () => {
@@ -79,9 +79,9 @@ test("the stop stage names the stage and lists what the run will not make", () =
   expect(html).not.toContain(`<li>${messages["warn.lost.orthophoto"]}</li>`);
 });
 
-test("warnings never block: with notices showing, Apply stays enabled", () => {
+test("warnings never block: with notices showing, Review and start stays enabled", () => {
   const html = render({ "fast-orthophoto": true, "ignore-gsd": true, "sfm-algorithm": "planar", "optimize-disk-space": true, "use-exif": true }, cpu);
   expect(html.match(/class="notice notice-warn"/g)?.length).toBeGreaterThanOrEqual(5);
-  expect(html).toMatch(/<button[^>]*>Apply/);
-  expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Apply/);
+  expect(html).toMatch(/<button[^>]*>Review and start/);
+  expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Review and start/);
 });

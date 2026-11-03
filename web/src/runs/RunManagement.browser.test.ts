@@ -72,12 +72,12 @@ test("run history, keyboard retry, changed settings and deletion use production 
     expect(await evaluate("document.querySelectorAll('#run-history-title').length")).toBe(1);
     await evaluate(`location.hash='#/runs/${original.id}';true`);
     await activate("Run again with other settings");
-    await wait("document.querySelector('.settings-editor')");
+    await wait("document.querySelector('.settings-row')");
     expect(await evaluate("Number(document.querySelector('#run-engine').value)")).toBe(firstEngine);
-    await field('.settings-editor input[id$="-search"]', "orthophoto-resolution");
-    await wait("document.querySelector('.settings-editor-row input').value==='6'");
-    await field(".settings-editor-row input", "8");
-    await activate("Apply"); await activate("Start run");
+    await field("#settings-search", "orthophoto-resolution");
+    await wait("document.querySelector('.settings-row input').value==='6'");
+    await field(".settings-row input", "8");
+    await activate("Review and start"); await activate("Start run");
     await wait(`location.hash!=='#/runs/${original.id}'&&document.body.textContent.includes('The engine reports 8 running or waiting runs')`);
     const changed = h.runs.latestForProject(project)!;
     expect(changed.taskUuid).toBe(uuid); expect(engine.uploads).toHaveLength(1);
@@ -94,8 +94,8 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await wait(`location.hash==='#/projects/${project}/runs'&&document.querySelector('a[href="#/runs/${original.id}"]')`);
     expect(engine.tasks.size).toBe(0);
     await evaluate(`location.hash='#/runs/${original.id}';true`);
-    await activate("Run again with other settings"); await wait("document.querySelector('.settings-editor')");
-    await activate("Cancel");
+    await activate("Run again with other settings"); await wait("document.querySelector('.settings-row')");
+    await activate("Review and start");
     await evaluate(`document.querySelector('#run-engine').value='${nextEngine}';document.querySelector('#run-engine').dispatchEvent(new Event('change',{bubbles:true}));true`);
     await wait("document.body.textContent.includes('Engine: Other engine')");
     await activate("Start run");

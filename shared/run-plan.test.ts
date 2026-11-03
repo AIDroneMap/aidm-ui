@@ -4,7 +4,7 @@ import type { ReconciledOption } from "./engine-options.ts";
 import { planPreset, SERVER_OUTPUT_KEYS, type RunOutput } from "./run-plan.ts";
 
 const options: ReconciledOption[] = OPTION_CATALOGUE.flatMap((option) =>
-  option.bin === "shown" ? [{ ...option, domain: typeof option.domain === "string" ? option.domain : [...option.domain], unexplained: false, changes: [] }] : [],
+  option.bin === "shown" ? [{ ...option, domain: typeof option.domain === "string" ? option.domain : [...option.domain], unexplained: false, changes: [], help: "" }] : [],
 );
 
 test("the six presets use catalogue deltas and derive outputs", () => {

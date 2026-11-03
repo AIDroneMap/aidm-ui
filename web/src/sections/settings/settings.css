@@ -1,0 +1,311 @@
+/*
+ * The settings workspace: the preset, the engine and "Review and start" on
+ * top, then the rail, the groups and, when open, the comparison side by side.
+ * The window scrolls; the rail and each group heading stay in view.
+ */
+.shell-main > .settings-workspace-host {
+  max-width: none;
+}
+
+.settings-workspace {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.settings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+
+.settings-toolbar .field {
+  margin: 0;
+  min-width: 12rem;
+}
+
+.settings-review {
+  display: grid;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+  max-width: 24rem;
+}
+
+.settings-review-reason {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
+.settings-summary,
+.settings-preset-description {
+  margin: 0;
+}
+
+.settings-preset-description {
+  color: var(--text-2);
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.settings-workspace-comparing .settings-layout {
+  grid-template-columns: 15rem minmax(0, 1fr) minmax(18rem, 26rem);
+}
+
+.settings-rail,
+.settings-compare {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-1);
+}
+
+.settings-rail {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.settings-rail-groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.settings-rail-group {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height-dense);
+  padding: 0 var(--space-3);
+  text-align: start;
+  color: var(--text-1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+}
+
+.settings-rail-group:hover:not(:disabled) {
+  background: var(--surface-1);
+}
+
+.settings-rail-group[aria-current="true"] {
+  font-weight: var(--weight-strong);
+  background: var(--accent-soft);
+  border-inline-start: 3px solid var(--accent);
+}
+
+.settings-rail-group:disabled {
+  color: var(--text-3);
+}
+
+.settings-rail-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.settings-rail-presets {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.settings-main {
+  min-width: 0;
+}
+
+.settings-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* The last group can always reach the top, so the rail can mark it as the one being read. */
+.settings-group:last-child {
+  min-height: 100vh;
+}
+
+.settings-group-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) 0;
+  font-size: var(--text-lg);
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-group-count {
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.settings-group .notice {
+  margin: var(--space-3) 0;
+}
+
+.settings-row {
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-3) 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-row-nested {
+  margin-inline-start: var(--space-6);
+}
+
+.settings-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.settings-row-head .field,
+.settings-row-head .check {
+  margin: 0;
+  min-width: 0;
+}
+
+.settings-flag {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.settings-dot {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  align-self: center;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.settings-row p {
+  margin: var(--space-2) 0;
+}
+
+.settings-row-facts {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.settings-affects {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+
+.settings-row-reason {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--text-2);
+}
+
+.settings-row-error {
+  color: var(--color-error-text);
+}
+
+.settings-row input,
+.settings-row select {
+  max-width: 100%;
+}
+
+.settings-more dd {
+  margin: 0 0 var(--space-2);
+}
+
+.settings-engine-words {
+  margin: var(--space-2) 0 0;
+}
+
+.settings-engine-words figcaption {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.settings-engine-words blockquote {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-2);
+  background: var(--surface-1);
+  border-inline-start: 3px solid var(--border-2);
+}
+
+.settings-empty {
+  color: var(--text-2);
+}
+
+.settings-compare {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.settings-compare-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.settings-compare-header h3 {
+  margin: 0;
+}
+
+.settings-workspace :focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+/* On a narrow window the rail and the comparison sit above the groups and scroll with them. */
+@media (max-width: 64rem) {
+  .settings-layout,
+  .settings-workspace-comparing .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-rail,
+  .settings-compare {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .settings-compare {
+    order: -1;
+  }
+
+  .settings-rail-groups {
+    grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  }
+
+  .settings-review {
+    margin-inline-start: 0;
+  }
+}

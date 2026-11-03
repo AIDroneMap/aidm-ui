@@ -70,9 +70,8 @@ test("project switches sources without losing edits and ignores stale link reads
     await evaluate("new Promise(resolve => setTimeout(resolve, 100))");
     expect(await evaluate("document.body.textContent.includes('4000 x 3000') && document.body.textContent.includes('Photos: 2') && document.body.textContent.includes('Photos without GPS: 1') && !document.body.textContent.includes('first.zip')")).toBe(true);
     expect(await evaluate("document.querySelector('#project-name').value + '|' + document.querySelector('#project-notes').value")).toBe("Unsaved name|Unsaved notes");
-    await pressButton("Choose a preset");
-    await wait("[...document.querySelectorAll('button')].some(button => button.textContent === 'Review run' && !button.disabled)");
-    await pressButton("Review run");
+    await wait("[...document.querySelectorAll('button')].some(button => button.textContent === 'Review and start' && !button.disabled)");
+    await pressButton("Review and start");
     await wait("document.body.textContent.includes('The photo count and size are unknown.')");
     expect(await evaluate("document.body.textContent.includes('engine checks its photo limit') && !document.body.textContent.includes('NaN') && !document.body.textContent.includes('Previous') && !document.body.textContent.includes('Next')")).toBe(true);
     await send("Page.reload");

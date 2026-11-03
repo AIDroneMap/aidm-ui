@@ -34,3 +34,8 @@ test("a process count the engine took from its machine is not a change from the 
   const tiles = reconcileOptions(released().map((option) => option.name === "tiles" ? { ...option, value: "true" } : option)).find((option) => option.name === "tiles");
   expect(tiles?.changes).toEqual(["defaultValue"]);
 });
+
+test("every row keeps the engine's help, so the settings row can quote the engine's own words", () => {
+  const rows = reconcileOptions(released());
+  for (const option of released()) expect(rows.find((row) => row.name === option.name)?.help, option.name).toBe(option.help);
+});
