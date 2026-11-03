@@ -80,11 +80,11 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
     await send("Page.enable"); await send("Network.enable");
     await viewport(1280, 900);
 
-    // Projects, empty: one sentence and one way to start.
+    // Projects shows the sample project row before any run.
     await send("Page.navigate", { url: `${h.base}/#/` });
-    await wait("document.querySelector('.empty-state')");
+    await wait("document.querySelector('main table tbody tr')");
     expect(await heading()).toBe("Projects");
-    expect(await evaluate("document.querySelector('.empty-state').textContent")).toContain("Create a project, then add the photos of a flight.");
+    expect(await evaluate("document.querySelector('main table tbody tr td:first-child a')?.textContent")).toBe("Sample project");
     await noSidewaysScroll();
 
     // The dialog asks for a name and lands on the new project's Photos section.
@@ -161,15 +161,19 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
     }
 
     // Old addresses are replaced by the new ones, without an extra step in the history.
-    for (const [old, now] of [[`#/projects/${projectId}`, `#/projects/${projectId}/photos`], ["#/settings", "#/preferences"], ["#/projects/new", "#/"], ["#/sample", "#/wizard/sample"]]) {
+    for (const [old, now] of [[`#/projects/${projectId}`, `#/projects/${projectId}/photos`], ["#/settings", "#/preferences"], ["#/projects/new", "#/"]]) {
       await go("#/engines"); await wait("document.querySelector('main h1')?.textContent === 'Engines'");
       const before = await evaluate<number>("history.length");
       await go(old!);
       await wait(`location.hash === ${JSON.stringify(now)}`);
       expect(await evaluate<number>("history.length")).toBe(before + 1);
     }
-    // Once the sample job has run, its old address opens the sample project's Runs section.
+    // Before any sample run, #/sample opens the sample project's Runs section.
     const sampleProject = h.ctx.projects.sampleId()!;
+    await go("#/engines"); await wait("document.querySelector('main h1')?.textContent === 'Engines'");
+    await go("#/sample");
+    await wait(`location.hash === '#/projects/${sampleProject}/runs' && document.querySelector('main h1')?.textContent === 'Runs'`);
+    // After a run exists the same redirect applies and the sidebar shows the project name.
     h.runs.create({ projectId: sampleProject, engineId, options: [{ name: "dsm", value: true }], sample: true });
     await go("#/engines"); await wait("document.querySelector('main h1')?.textContent === 'Engines'");
     await go("#/sample");

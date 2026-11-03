@@ -36,11 +36,17 @@ export function DetailsForm({ project, name, notes, working, storage, onName, on
   function submit(event: FormEvent) { event.preventDefault(); onSave(); }
   return <>
     {sample && <p>{t("projects.sample_help")}</p>}
-    <form className="details-form" onSubmit={submit}>
-      {!sample && <TextField id="project-name" label={t("projects.name")} value={name} onChange={event => onName(event.target.value)} required maxLength={200} />}
-      <TextAreaField id="project-notes" label={t("projects.notes")} value={notes} onChange={event => onNotes(event.target.value)} maxLength={100000} />
-      <Button type="submit" disabled={working}>{t("projects.save")}</Button>
-    </form>
+    {sample
+      ? <dl className="details-form">
+          <dt>{t("projects.name")}</dt><dd>{projectName(project)}</dd>
+          <dt>{t("projects.notes")}</dt><dd>{notes}</dd>
+        </dl>
+      : <form className="details-form" onSubmit={submit}>
+          <TextField id="project-name" label={t("projects.name")} value={name} onChange={event => onName(event.target.value)} required maxLength={200} />
+          <TextAreaField id="project-notes" label={t("projects.notes")} value={notes} onChange={event => onNotes(event.target.value)} maxLength={100000} />
+          <Button type="submit" disabled={working}>{t("projects.save")}</Button>
+        </form>
+    }
     <Table className="details-storage" label={t("details.storage")}>
       <tbody>
         <tr><th scope="row">{t("details.uploaded_photos")}</th><td>{files(storage?.photos)}</td></tr>

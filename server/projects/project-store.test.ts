@@ -3,16 +3,19 @@ import { Database } from "bun:sqlite";
 import { applyMigrations, migrations } from "../db/migrations.ts";
 import { ProjectStore } from "./project-store.ts";
 
-test("new projects start with no photos or runs and the sample stays hidden", () => {
+test("new projects start with no photos or runs alongside the sample", () => {
   const db = new Database(":memory:");
   applyMigrations(db, migrations);
   const projects = new ProjectStore(db);
   const project = projects.create("Survey", "Field notes");
-  expect(projects.list()).toEqual([expect.objectContaining({ id: project.id, name: "Survey", notes: "Field notes", photoCount: 0, runCount: 0, latestState: null })]);
+  expect(projects.list()).toEqual([
+    expect.objectContaining({ id: project.id, name: "Survey", notes: "Field notes", photoCount: 0, runCount: 0, latestState: null }),
+    expect.objectContaining({ builtin: "sample", photoCount: 73, runCount: 0, latestState: null }),
+  ]);
   db.close();
 });
 
-test("project facts use source and run activity, and the sample appears only after a run", () => {
+test("project facts use source and run activity to sort the sample with other projects", () => {
   const db = new Database(":memory:");
   applyMigrations(db, migrations);
   const projects = new ProjectStore(db);
@@ -25,6 +28,8 @@ test("project facts use source and run activity, and the sample appears only aft
   const insert = db.query("INSERT INTO runs (project_id, options, state, created_at, updated_at) VALUES (?, '[]', ?, ?, ?)");
   insert.run(first.id, "completed", "2024-03-01T00:00:00.000Z", "2024-03-01T00:00:00.000Z");
   insert.run(first.id, "failed", "2024-04-01T00:00:00.000Z", "2024-05-01T00:00:00.000Z");
+  expect(projects.list().map(p => p.id)).toEqual([first.id, second.id, sample]);
+  expect(projects.get(sample)).toMatchObject({ photoCount: 73, runCount: 0 });
   insert.run(sample, "completed", "2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z");
   expect(projects.list().map(p => p.id)).toEqual([first.id, second.id, sample]);
   expect(projects.get(first.id)).toMatchObject({ photoCount: 0, runCount: 2, latestState: "failed", lastChange: "2024-05-01T00:00:00.000Z" });
@@ -34,7 +39,24 @@ test("project facts use source and run activity, and the sample appears only aft
   expect(projects.get(first.id)?.photoCount).toBe(4);
   expect(projects.setPhotoCount(sample, 4)).toEqual({ ok: false, code: "project.sample_photos_forbidden" });
   expect(projects.get(sample)?.photoCount).toBe(73);
-  expect(projects.update(sample, "Other", "Notes")?.name).toBe("Sample project");
+  expect(projects.update(sample, "Other", "Notes")).toEqual({ ok: false, code: "projects.sample_readonly" });
+  expect(projects.get(sample)).toMatchObject({ name: "Sample project", notes: "" });
+  db.close();
+});
+
+test("updating the sample project is refused and leaves name, notes and updated_at unchanged", () => {
+  const db = new Database(":memory:");
+  applyMigrations(db, migrations);
+  const projects = new ProjectStore(db);
+  const sampleId = (db.query("SELECT id FROM projects WHERE builtin = 'sample'").get() as { id: number }).id;
+  const before = projects.get(sampleId)!;
+  for (const [name, notes] of [["Other", before.notes], [before.name, "Changed"], [before.name, before.notes]] as const) {
+    expect(projects.update(sampleId, name, notes)).toEqual({ ok: false, code: "projects.sample_readonly" });
+  }
+  const after = projects.get(sampleId)!;
+  expect(after.name).toBe(before.name);
+  expect(after.notes).toBe(before.notes);
+  expect(after.lastChange).toBe(before.lastChange);
   db.close();
 });
 

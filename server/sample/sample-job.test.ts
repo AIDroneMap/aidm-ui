@@ -951,7 +951,7 @@ test("deleting the sample project keeps the dataset and allows another sample ru
   await waitRun(run.id, candidate => candidate.state === "completed" && candidate.resultsAvailable);
   expect((await send("DELETE", `/api/projects/${sampleId}`)).status).toBe(204);
   expect(harness.runs.builtinProjectId("sample")).toBe(sampleId);
-  expect((await getJson<unknown[]>("/api/projects")).length).toBe(0);
+  expect(await getJson<unknown[]>("/api/projects")).toEqual([expect.objectContaining({ id: sampleId, builtin: "sample", runCount: 0 })]);
   expect(harness.sample.datasetFile()).toEqual(before);
   expect((await startSample(engine.id)).status).toBe(202);
 });

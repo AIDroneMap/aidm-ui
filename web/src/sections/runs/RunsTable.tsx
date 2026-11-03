@@ -5,6 +5,7 @@ import { api, asApiFailure, type ApiFailure } from "../../api.ts";
 import { ErrorMessage } from "../../components/ErrorMessage.tsx";
 import { EmptyState } from "../../controls/EmptyState.tsx";
 import { IconEllipsis, IconPlay } from "../../icons/icons.tsx";
+import { SampleRunEmptyState } from "./SampleRunEmptyState.tsx";
 import { Button } from "../../controls/Button.tsx";
 import { Popover } from "../../controls/Popover.tsx";
 import { Progress } from "../../controls/Progress.tsx";
@@ -188,7 +189,9 @@ export function RunsTable({ project, onAgain, onAuthRequired }: Props) {
       {deleteFailure && <p role="alert" className="error">{t("runs.delete_failed")}</p>}
       {!view && !failure && <p role="status">{t("runs.loading")}</p>}
       {view && runs.length === 0 ? (
-        <RunsEmptyState project={project} />
+        project.builtin === "sample"
+          ? <SampleRunEmptyState onAuthRequired={onAuthRequired} />
+          : <RunsEmptyState project={project} />
       ) : (
         view && (
           <div className="runs-table-scroll" role="region" aria-label={t("runs.title")} tabIndex={0}>

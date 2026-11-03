@@ -18,7 +18,7 @@ export function RunsSection({ project, onAuthRequired }: { project: ProjectView;
   return (
     <>
       <PageHeader title={t("runs.title")} subtitle={projectName(project)} />
-      {project.builtin === "sample" && <SampleJobPage embedded onAuthRequired={onAuthRequired} />}
+      {project.builtin === "sample" && project.runCount > 0 && <SampleJobPage embedded onAuthRequired={onAuthRequired} />}
       <RunsTable
         project={project}
         onAgain={handleAgain}

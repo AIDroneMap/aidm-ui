@@ -14,7 +14,7 @@ import { redirectFromHash, routeFromHash, SAMPLE_HASH, sectionHash, useHash, wiz
 import { ProjectScreen } from "./shell/ProjectScreen.tsx";
 import { Shell } from "./shell/Shell.tsx";
 import { useWorkspaceProject } from "./shell/useWorkspaceProject.ts";
-import type { SampleView, SessionView, WizardView } from "../../shared/api-types.ts";
+import type { ProjectView, SessionView, WizardView } from "../../shared/api-types.ts";
 
 type Session = "loading" | "login" | "ready";
 
@@ -67,15 +67,15 @@ function Screens() {
     if (moved !== null) window.location.replace(moved);
   }, [moved]);
 
-  // The sample job page became the sample project's Runs section. Before its first run that project has no
-  // workspace yet, so the address goes to the wizard step that offers the sample job.
+  // Saved links to #/sample redirect to the sample project's Runs section.
   const sample = hash === SAMPLE_HASH;
   useEffect(() => {
     if (!sample || session !== "ready") return;
     let current = true;
-    api<SampleView>("GET", "/api/sample").then(
-      (view) => {
-        if (current) window.location.replace(view.run ? sectionHash(view.run.projectId, "runs") : wizardHash("sample"));
+    api<ProjectView[]>("GET", "/api/projects").then(
+      (projects) => {
+        const sampleProject = projects.find((p) => p.builtin === "sample");
+        if (current) window.location.replace(sampleProject ? sectionHash(sampleProject.id, "runs") : "#/");
       },
       () => {
         if (current) window.location.replace("#/");

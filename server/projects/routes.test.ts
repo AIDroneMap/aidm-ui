@@ -21,7 +21,7 @@ test("project routes validate, create, read, edit and delete metadata", async ()
   expect(created.status).toBe(201);
   const project = await created.json() as ProjectView;
   expect(project).toMatchObject({ name: "Survey", notes: "Field", photoCount: 0, runCount: 0 });
-  expect(await (await send("GET", "/api/projects")).json()).toEqual([project]);
+  expect(await (await send("GET", "/api/projects")).json()).toEqual([project, expect.objectContaining({ builtin: "sample", photoCount: 73, runCount: 0 })]);
   const path = `/api/projects/${project.id}`;
   expect(await (await send("GET", path)).json()).toEqual(project);
   expect((await send("PUT", path, { name: "", notes: "" })).status).toBe(400);
@@ -176,4 +176,27 @@ test("a run after project deletion keeps the first lines already on its engine",
     expect(harness.tracker.log(nextRun.id, 0).lines).toEqual(["first new line", "second new line"]);
     expect(nextRun.id).toBeGreaterThan(oldRun.id);
   } finally { await fake.stop(); }
+});
+
+test("the sample project refuses metadata updates and keeps its name and notes", async () => {
+  const projects = await (await send("GET", "/api/projects")).json() as { id: number; name: string; notes: string; builtin: string }[];
+  const sample = projects.find(p => p.builtin === "sample")!;
+  const response = await send("PUT", `/api/projects/${sample.id}`, { name: "Renamed", notes: "Changed" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: { code: "projects.sample_readonly", data: {} } });
+  const after = await (await send("GET", `/api/projects/${sample.id}`)).json() as { name: string; notes: string };
+  expect(after.name).toBe(sample.name);
+  expect(after.notes).toBe(sample.notes);
+});
+
+test("the sample is listed before its first run and still refuses every way of bringing photos in", async () => {
+  const projects = await (await send("GET", "/api/projects")).json() as ProjectView[];
+  expect(projects).toEqual([expect.objectContaining({ builtin: "sample", photoCount: 73, runCount: 0, latestState: null })]);
+  const sample = projects[0]!;
+  expect(await (await send("GET", `/api/projects/${sample.id}`)).json()).toEqual(sample);
+  for (const [path, method] of [["uploads", "POST"], ["import", "PUT"], ["link", "PUT"]] as const) {
+    const response = await send(method, `/api/projects/${sample.id}/${path}`, {});
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "project.sample_photos_forbidden", data: {} } });
+  }
 });
