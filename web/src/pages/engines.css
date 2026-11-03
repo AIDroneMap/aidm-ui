@@ -119,3 +119,8 @@
 .local-update h3 {
   margin: 0 0 var(--space-2);
 }
+
+/* A status line that says nothing yet takes no room. */
+#local-advanced p[role="status"]:empty {
+  margin: 0;
+}

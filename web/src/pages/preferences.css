@@ -45,3 +45,7 @@
 .preferences > .screen-loading {
   margin-bottom: var(--space-6);
 }
+
+.preferences legend {
+  padding: 0;
+}
