@@ -14,9 +14,15 @@ test("details label name and notes, and offer deletion", () => {
   expect(html).toContain('class="field text-area-field"><label for="project-notes"');
   expect(html).toContain("Delete project");
   expect(untranslatedText(html, [project.name, project.notes])).toEqual([]);
-  const sample = form({ ...project, builtin: "sample" });
+  const sample = form({ ...project, builtin: "sample", notes: "<flight>" });
   expect(sample).not.toContain('id="project-name"');
   expect(sample).toContain("cannot be renamed");
+  expect(sample).not.toContain('id="project-notes"');
+  expect(sample).not.toContain("Save project");
+  expect(sample).toContain("Sample project");
+  expect(sample).toContain("&lt;flight&gt;");
+  expect(sample).not.toContain("<flight>");
+  expect(sample).not.toContain("<form");
 });
 
 test("the Details section is titled Details and names its project", () => {

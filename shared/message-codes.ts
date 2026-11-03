@@ -75,6 +75,7 @@ export const MESSAGE_CODES = [
   "project.not_found",
   "project.name_required",
   "project.sample_photos_forbidden",
+  "projects.sample_readonly",
   "project.deletion_incomplete",
   "project.deletion_engine_missing",
   "project.deletion_busy",

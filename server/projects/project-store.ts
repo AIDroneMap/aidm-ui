@@ -16,7 +16,7 @@ export class ProjectStore {
       (SELECT state FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS latestState,
       (SELECT COUNT(*) FROM runs r WHERE r.project_id = p.id AND r.state NOT IN (${FINISHED})) AS activeRunCount,
       MAX(p.updated_at, COALESCE((SELECT MAX(updated_at) FROM runs r WHERE r.project_id = p.id), p.updated_at)) AS lastChange
-      FROM projects p WHERE p.builtin IS NULL OR EXISTS (SELECT 1 FROM runs r WHERE r.project_id = p.id)
+      FROM projects p
       ORDER BY lastChange DESC, p.id DESC`).all() as Project[];
     return rows.map((row) => ({
       ...row,
@@ -42,8 +42,11 @@ export class ProjectStore {
     return this.list().find((project) => project.id === id) ?? null;
   }
 
-  update(id: number, name: string, notes: string): Project | null {
-    this.db.query("UPDATE projects SET name = CASE WHEN builtin IS NULL THEN ? ELSE name END, notes = ?, updated_at = ? WHERE id = ?")
+  update(id: number, name: string, notes: string): Project | null | { ok: false; code: "projects.sample_readonly" } {
+    const row = this.db.query("SELECT builtin FROM projects WHERE id = ?").get(id) as { builtin: string | null } | null;
+    if (row === null) return null;
+    if (row.builtin !== null) return { ok: false, code: "projects.sample_readonly" };
+    this.db.query("UPDATE projects SET name = ?, notes = ?, updated_at = ? WHERE id = ?")
       .run(name, notes, new Date().toISOString(), id);
     return this.get(id);
   }

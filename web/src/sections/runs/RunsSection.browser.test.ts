@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { openHarness, eventually } from "../../../../server/testing/harness.ts";
 import { assetsFromFolder } from "../../../../server/http/static-assets.ts";
 import { FakeTaskApi } from "../../../../test-support/fake-task-api.ts";
+import { FakeFileServer } from "../../../../test-support/fake-file-server.ts";
+import { writeStoredZip } from "../../../../test-support/stored-zip-writer.ts";
+import { SAMPLE_DATASET, type SampleDatasetEntry } from "../../../../server/sample/sample-dataset.ts";
 import { browserPath } from "../../controls/browser-path.ts";
 import { startBrowser } from "../../controls/browser-start.ts";
 import { findBrowserPage } from "../../controls/browser-target.ts";
@@ -430,6 +434,155 @@ test("runs table actions: popover keyboard, delete confirmation, retry redirect 
   } finally {
     for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error("test ended")); }
     socket?.close(); await browser?.stop(); await h.stop(); await engine.stop();
+    await rm(folder, { recursive: true, force: true });
+  }
+}, 120000);
+
+test("the sample project starts from its Runs empty state with the wizard's request in both themes", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "aidm-sample-project-"));
+  const publicFiles = join(folder, "public");
+  await mkdir(publicFiles);
+  const assets = await buildFixture(publicFiles);
+  const zipPath = join(folder, "dataset.zip");
+  writeStoredZip(zipPath, [
+    { name: "DJI_0001.JPG", data: new TextEncoder().encode("synthetic image 1") },
+    { name: "DJI_0002.JPG", data: new TextEncoder().encode("synthetic image 2") },
+    { name: "DJI_0003.JPG", data: new TextEncoder().encode("synthetic image 3") },
+  ]);
+  const zipBytes = new Uint8Array(readFileSync(zipPath));
+  const files = new FakeFileServer({ "/dataset.zip": zipBytes });
+  await files.start();
+  const dataset: SampleDatasetEntry = {
+    ...SAMPLE_DATASET, imageCount: 3, url: files.url("/dataset.zip"), size: zipBytes.length,
+    sha256: new Bun.CryptoHasher("sha256").update(zipBytes).digest("hex"), fileName: "test-dataset.zip",
+  };
+  const engine = new FakeTaskApi(); await engine.start();
+  let h: ReturnType<typeof openHarness> | undefined;
+  let browser: Awaited<ReturnType<typeof startBrowser>> | undefined;
+  let socket: WebSocket | undefined;
+  const pending = new Map<number, { resolve(v: any): void; reject(e: Error): void; timer: Timer }>();
+  const starts: Array<{ url: string; body: string }> = [];
+  try {
+    browser = await startBrowser(await browserPath(), join(folder, "profile"), "about:blank");
+    socket = new WebSocket((await findBrowserPage(Number(browser.port))).webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => { socket!.onopen = () => resolve(); socket!.onerror = () => reject(new Error("browser connection")); });
+    let next = 0;
+    socket.onmessage = event => {
+      const m = JSON.parse(String(event.data));
+      if (m.method === "Network.requestWillBeSent") {
+        const request = m.params.request;
+        if (request.method === "POST" && new URL(request.url).pathname === "/api/sample/start") {
+          starts.push({ url: request.url, body: request.postData });
+        }
+      }
+      const item = pending.get(m.id);
+      if (!item) return;
+      pending.delete(m.id); clearTimeout(item.timer);
+      m.error ? item.reject(new Error(JSON.stringify(m.error))) : item.resolve(m.result);
+    };
+    const send = (method: string, params: object = {}) => new Promise<any>((resolve, reject) => {
+      const id = ++next;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + " timeout")); }, 10000);
+      pending.set(id, { resolve, reject, timer }); socket!.send(JSON.stringify({ id, method, params }));
+    });
+    const evaluate = async (expression: string) => {
+      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+      if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+      return result.result.value;
+    };
+    const wait = async (condition: string) => {
+      try {
+        await evaluate(`new Promise((resolve,reject)=>{const end=Date.now()+8000;const tick=()=>(${condition})?resolve(true):Date.now()>end?reject(Error("timeout")):setTimeout(tick,20);tick()})`);
+      } catch {
+        throw new Error(`Waiting for ${condition}: ${await evaluate("document.body.innerText")}`);
+      }
+    };
+    const key = async (key: "Tab" | "Enter" | " ") => {
+      const code = key === " " ? "Space" : key;
+      const windowsVirtualKeyCode = key === "Tab" ? 9 : key === "Enter" ? 13 : 32;
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, ...(key === "Enter" ? { text: "\r" } : key === " " ? { text: " " } : {}) });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode });
+    };
+    const activate = async (selector: string) => {
+      await evaluate("document.activeElement?.blur(); true");
+      for (let step = 0; step < 40; step++) {
+        await key("Tab");
+        if (await evaluate(`document.activeElement?.matches(${JSON.stringify(selector)})`)) {
+          expect(await evaluate("getComputedStyle(document.activeElement).outlineStyle")).not.toBe("none");
+          await key("Enter"); return;
+        }
+      }
+      throw new Error(`Keyboard did not reach ${selector}`);
+    };
+    await send("Page.enable"); await send("Network.enable");
+    await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+
+    for (const theme of ["light", "dark"]) {
+      await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+      h = openHarness({ assets, runPollMs: 10, sampleDataset: dataset });
+      const current = h;
+      h.settings.set("wizard.completed", true);
+      const sampleId = h.ctx.projects.sampleId()!;
+      const requestStart = starts.length;
+      await send("Page.navigate", { url: h.base + "/#/" });
+      await wait("document.querySelector('main table tbody tr')");
+      expect(await evaluate("document.querySelector('main table tbody tr td:first-child a')?.textContent")).toBe("Sample project");
+      expect(await evaluate("document.querySelector('main table tbody tr td:nth-child(2)')?.textContent")).toBe("3");
+      expect(await evaluate("getComputedStyle(document.documentElement).backgroundColor")).toBe(theme === "light" ? "rgb(255, 255, 255)" : "rgb(20, 22, 20)");
+      await activate(`main a[href='#/projects/${sampleId}/photos']`);
+      await wait("document.querySelector('main h1')?.textContent === 'Photos'");
+      expect(await evaluate("document.querySelector('main input[type=file]')")).toBeNull();
+      await activate(`nav.sidebar a[href='#/projects/${sampleId}/runs']`);
+      await wait("document.querySelector('main .empty-state')?.textContent.includes('No engine can run the sample job yet.')");
+      expect(await evaluate("document.querySelector('main .empty-state button')?.disabled")).toBe(true);
+      const engineId = h.engineStore.addRemote({ name: "Field engine", address: engine.address, token: engine.token }).id;
+      await eventually(async () => current.sample.view().engines.some(offer => offer.engineId === engineId && offer.offered));
+      await send("Page.reload");
+      await wait("document.querySelector('main .empty-state button:not(:disabled)')");
+      expect(await evaluate("document.querySelectorAll('main .empty-state button, main .empty-state a').length")).toBe(1);
+      expect(await evaluate("document.querySelector('main .empty-state button').textContent")).toBe("Run the sample job");
+      expect(await evaluate("document.querySelectorAll('main button').length")).toBe(1);
+      expect(await evaluate("document.querySelector('main select')?.labels[0]?.textContent")).toBe("Engine");
+      expect(await evaluate("document.documentElement.scrollWidth <= innerWidth")).toBe(true);
+
+      await evaluate("location.hash = '#/sample'; true");
+      await wait(`location.hash === '#/projects/${sampleId}/runs' && document.querySelector('main .empty-state button:not(:disabled)')`);
+      await activate("main .empty-state button");
+      await wait("location.hash.startsWith('#/runs/')");
+      const runId = Number((await evaluate("location.hash") as string).split("/")[2]);
+      await eventually(async () => current.runs.get(runId)?.state === "queued");
+      const run = h.runs.get(runId)!;
+      expect(run).toMatchObject({ engineId, sample: true, preset: "map-with-heights" });
+      const sampleTask = engine.tasks.get(run.taskUuid!)!;
+      expect(sampleTask.committed).toBe(true);
+      expect(sampleTask.images).toEqual(["DJI_0001.JPG", "DJI_0002.JPG", "DJI_0003.JPG"]);
+      expect(starts.slice(requestStart)).toEqual([{ url: h.base + "/api/sample/start", body: JSON.stringify({ engineId }) }]);
+
+      // The unchanged wizard sends the same request and options to the same engine.
+      engine.setTask(run.taskUuid!, { statusCode: 30 });
+      await eventually(async () => current.runs.get(runId)?.state === "failed");
+      await send("Page.navigate", { url: h.base + "/#/wizard/sample" });
+      await wait("[...document.querySelectorAll('main button')].some(b => b.textContent === 'Start again')");
+      await evaluate("[...document.querySelectorAll('main button')].find(b => b.textContent === 'Start again').focus(); true");
+      await key("Enter");
+      await wait("document.querySelector('#sample-engine')");
+      await activate("main .actions button:not(:disabled)");
+      await eventually(async () => current.sample.view().run?.id !== runId && current.sample.view().run?.state === "queued");
+      const wizardRun = h.sample.view().run!;
+      const wizardTask = engine.tasks.get(h.runs.get(wizardRun.id)!.taskUuid!)!;
+      expect(wizardTask.options).toEqual(sampleTask.options);
+      expect(wizardRun.preset).toBe(run.preset);
+      expect(starts.slice(requestStart)).toEqual([
+        { url: h.base + "/api/sample/start", body: JSON.stringify({ engineId }) },
+        { url: h.base + "/api/sample/start", body: JSON.stringify({ engineId }) },
+      ]);
+      expect(await evaluate("document.documentElement.scrollWidth <= innerWidth")).toBe(true);
+      await send("Page.navigate", { url: "about:blank" });
+      await h.stop(); h = undefined;
+    }
+  } finally {
+    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error("test ended")); }
+    socket?.close(); await browser?.stop(); await h?.stop(); await engine.stop(); await files.stop();
     await rm(folder, { recursive: true, force: true });
   }
 }, 120000);

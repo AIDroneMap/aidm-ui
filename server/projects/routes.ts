@@ -182,8 +182,10 @@ export function projectRoutes(ctx: RouteContext): RouteTable {
         const input = await fields(req);
         if (input instanceof Response) return input;
         if (ctx.projectDeletion.isDeleting(id)) return errorResponse(409, "project.deletion_busy");
-        const project = ctx.projects.update(id, input.name, input.notes);
-        return project === null ? errorResponse(404, "project.not_found") : Response.json(project);
+        const result = ctx.projects.update(id, input.name, input.notes);
+        if (result === null) return errorResponse(404, "project.not_found");
+        if ("ok" in result) return errorResponse(409, result.code);
+        return Response.json(result);
       },
       DELETE: async req => {
         const id = idOf(req.params.id ?? "");
