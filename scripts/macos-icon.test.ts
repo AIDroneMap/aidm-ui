@@ -37,11 +37,12 @@ test("every committed icon PNG is a PNG of the size its name says", () => {
   }
 });
 
-test("the icns file has its head, the types ic07 to ic14, and each chunk holds the PNG of its size unchanged", () => {
+test("the icns file has its head, the types icp4 to icp6 and ic07 to ic14, and each chunk holds the PNG of its size unchanged", () => {
   const pngs = readIconPngs();
   const chunks = chunksOf(icns(pngs));
-  expect(chunks.map(([type]) => type)).toEqual(["ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"]);
-  const sizes: Record<string, number> = { ic07: 128, ic08: 256, ic09: 512, ic10: 1024, ic11: 32, ic12: 64, ic13: 256, ic14: 512 };
+  expect(chunks.map(([type]) => type)).toEqual(["icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"]);
+  const sizes: Record<string, number> = { icp4: 16, icp5: 32, icp6: 64, ic07: 128, ic08: 256, ic09: 512, ic10: 1024, ic11: 32, ic12: 64, ic13: 256, ic14: 512 };
+  expect(new Set(Object.values(sizes))).toEqual(new Set(ICON_SIZES));
   for (const [type, bytes] of chunks) {
     const size = sizes[type] as number;
     expect(pngSize(bytes)).toEqual({ width: size, height: size });

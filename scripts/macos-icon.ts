@@ -11,14 +11,18 @@ import { join } from "node:path";
 
 export const ICON_FOLDER = join(import.meta.dir, "..", "assets", "icon");
 
-/** The PNG sizes in assets/icon/, as aidm-ui-<size>.png. The icns file uses all but 16. */
+/** The PNG sizes in assets/icon/, as aidm-ui-<size>.png. */
 export const ICON_SIZES = [16, 32, 64, 128, 256, 512, 1024] as const;
 
 /**
- * Each chunk type and the pixel size of the PNG it holds: ic07 to ic10 at 1x,
- * ic11 to ic14 at 2x. macOS draws the 16 pixel size from these.
+ * Each chunk type and the pixel size of the PNG it holds: icp4 to icp6 and
+ * ic07 to ic10 at 1x, ic11 to ic14 at 2x. Finder's list view draws the small
+ * 1x sizes, icp4 and icp5.
  */
 export const ICNS_CHUNKS: readonly (readonly [type: string, size: number])[] = [
+  ["icp4", 16],
+  ["icp5", 32],
+  ["icp6", 64],
   ["ic07", 128],
   ["ic08", 256],
   ["ic09", 512],
