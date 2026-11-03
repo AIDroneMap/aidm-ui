@@ -25,7 +25,7 @@ export function reconcileOptions(engine: readonly EngineOption[]): ReconciledOpt
     if (option.type !== catalogue.type) changes.push("type");
     if (!sameDomain(catalogue.domain, option.domain)) changes.push("domain");
     if (value !== catalogue.defaultValue && !catalogue.machineDefault) changes.push("defaultValue");
-    result.push({ ...catalogue, type: option.type, domain: option.domain, defaultValue: value, changes, unexplained: false });
+    result.push({ ...catalogue, type: option.type, domain: option.domain, defaultValue: value, changes, unexplained: false, help: option.help });
   }
   for (const option of engine) {
     if (known.has(option.name)) continue;
