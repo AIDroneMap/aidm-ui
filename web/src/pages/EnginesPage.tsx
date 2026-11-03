@@ -1,5 +1,9 @@
 import { Button } from "../controls/Button.tsx";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { EmptyState } from "../controls/EmptyState.tsx";
+import { Notice } from "../controls/Notice.tsx";
+import { ENGINE_STATE_TONES, StatusPill } from "../controls/StatusPill.tsx";
+import { IconCpu, IconPlus } from "../icons/icons.tsx";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { ConnectionHelp } from "../components/ConnectionHelp.tsx";
 import { EngineLog } from "../components/EngineLog.tsx";
@@ -9,6 +13,8 @@ import { LocalSwitch } from "../components/LocalSwitch.tsx";
 import { formatCount, formatMemory, parseEngineList, sameAddress, stateChanges } from "../engines.ts";
 import { t } from "../i18n/translate.ts";
 import { useEngineLog, useLocalEngine } from "../localEngine.ts";
+import { ScreenLoading } from "./ScreenLoading.tsx";
+import "./engines.css";
 import {
   MIN_TASK_API_VERSION,
   type EngineAddRequest,
@@ -81,6 +87,7 @@ function RemoveAsk(props: {
       <Button
         ref={first}
         type="button"
+        variant="danger"
         aria-label={t("engines.remove_confirm_named", { name: engine.name })}
         onClick={() => props.onConfirm(engine)}
       >
@@ -117,6 +124,8 @@ export interface EngineListProps {
   localDiagnosed?: boolean;
   /** How the local engine is installed, when the page has it. */
   localKind?: "container" | "native" | null;
+  /** The one action of the empty list: adding an engine. */
+  emptyAction?: ReactNode;
 }
 
 const LOG_ID = "engine-log";
@@ -127,23 +136,37 @@ function displayName(engine: EngineView): string {
 }
 
 export function EngineList(props: EngineListProps) {
-  if (props.engines.length === 0) return <p>{t("engines.empty")}</p>;
+  if (props.engines.length === 0) {
+    return (
+      <EmptyState icon={<IconCpu />} action={props.emptyAction}>
+        {t("engines.empty")}
+      </EmptyState>
+    );
+  }
   return (
     <ul className="engine-list" aria-label={t("engines.list_label")}>
       {props.engines.map((engine) => (
         <li key={engine.id} className="engine">
-          <h2>{displayName(engine)}</h2>
-          <p>{engine.kind === "local" && engine.address.startsWith("unix:") ? t("engines.address_socket") : <code>{engine.address}</code>}</p>
-          <p>
-            <span className="state">
-              {t(engine.enabled || engine.kind === "local" ? "engines.state" : "engines.state_last_known", {
-                state: t(`engine.state.${engine.state}`),
-              })}
-            </span>
+          <div className="engine-head">
+            <h2>{displayName(engine)}</h2>
+            {/* A remote engine that is switched off shows the last state it had, so its colour says nothing about now. */}
+            <StatusPill tone={engine.enabled || engine.kind === "local" ? ENGINE_STATE_TONES[engine.state] : "neutral"}>
+              <span className="state">
+                {t(engine.enabled || engine.kind === "local" ? "engines.state" : "engines.state_last_known", {
+                  state: t(`engine.state.${engine.state}`),
+                })}
+              </span>
+            </StatusPill>
             {!engine.enabled && engine.kind === "remote" && <span className="badge">{t("engines.disabled")}</span>}
+          </div>
+          <p className="engine-address">
+            {engine.kind === "local" && engine.address.startsWith("unix:") ? t("engines.address_socket") : <code>{engine.address}</code>}
           </p>
           {engine.info && <EngineInfo info={engine.info} supported={engine.supported} />}
-          {engine.problem && !(engine.kind === "local" && props.localDiagnosed === true) && <EngineNote error={engine.problem} kind="problem" />}
+          {/* An engine that does not answer is offline, a warning; any other problem is a failure. */}
+          {engine.problem && !(engine.kind === "local" && props.localDiagnosed === true) && (
+            <EngineNote error={engine.problem} kind={engine.state === "unreachable" ? "warning" : "problem"} />
+          )}
           {engine.warning && <EngineNote error={engine.warning} kind="warning" />}
           {engine.kind === "local" && props.localKind === "native" && <p>{t("local.package.native")}</p>}
           {engine.kind === "local" ? (
@@ -214,6 +237,8 @@ export interface EngineFormProps {
   onTest: () => void;
   onSave: () => void;
   onCancel: () => void;
+  /** The name field, which takes the focus when the form opens. */
+  nameRef?: Ref<HTMLInputElement>;
 }
 
 const ADDRESS_CODES: readonly string[] = ["engine.address_invalid", "engine.https_required"];
@@ -230,11 +255,12 @@ export function EngineForm(props: EngineFormProps) {
     props.onSave();
   };
   return (
-    <form onSubmit={submit} aria-labelledby="engine-form-title">
+    <form onSubmit={submit} aria-labelledby="engine-form-title" className="engine-form">
       <h2 id="engine-form-title">{t(props.mode === "add" ? "engine.form.add_title" : "engine.form.edit_title")}</h2>
       <div className="field">
         <label htmlFor="engine-name">{t("engine.form.name")}</label>
         <input
+          ref={props.nameRef}
           id="engine-name"
           type="text"
           autoComplete="off"
@@ -349,6 +375,7 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
   const [announcement, setAnnouncement] = useState("");
   const [logOpen, setLogOpen] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  const nameField = useRef<HTMLInputElement>(null);
   const previous = useRef<EngineView[] | null>(null);
   // The latest callback, so the long-lived effects below never call a stale one.
   const authRequired = useRef(onAuthRequired);
@@ -405,6 +432,22 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     }
     previous.current = engines;
   }, [engines]);
+
+  // The form opens above the list, away from the button that opened it, so the focus goes to its first field.
+  const formFor = form === null ? null : (form.id ?? "new");
+  useEffect(() => {
+    if (formFor !== null) nameField.current?.focus();
+  }, [formFor]);
+
+  const openForm = (next: FormState) => {
+    setAskingToRemove(null);
+    setForm(next);
+  };
+
+  const closeForm = () => {
+    setForm(null);
+    heading.current?.focus();
+  };
 
   const change = (patch: Partial<FormState>) =>
     setForm((existing) => (existing ? { ...existing, ...patch } : existing));
@@ -468,48 +511,33 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
     }
   };
 
+  const addButton = (
+    <Button type="button" onClick={() => openForm({ ...EMPTY_FORM })}>
+      <IconPlus />
+      {t("engines.add")}
+    </Button>
+  );
+  const empty = engines !== null && engines.length === 0;
+
   return (
-    <>
-      <h1 ref={heading} tabIndex={-1}>
-        {t("engines.title")}
-      </h1>
+    <div className="engines">
+      <header className="page-header">
+        <div className="page-header-text">
+          <h1 ref={heading} tabIndex={-1}>
+            {t("engines.title")}
+          </h1>
+          <p className="page-header-subtitle">{t("engines.subtitle")}</p>
+        </div>
+        {/* The empty list holds the one way to add an engine; no second button says the same. */}
+        {form === null && !empty && <div className="page-header-actions">{addButton}</div>}
+      </header>
       <p role="status" className="visually-hidden">
         {announcement}
       </p>
-      {!live && <p role="status" className="hint">{t("engines.live_paused")}</p>}
+      {!live && <Notice tone="warn">{t("engines.live_paused")}</Notice>}
       {failure && <ErrorMessage failure={failure} />}
-      {engines === null ? (
-        !failure && <p>{t("engines.loading")}</p>
-      ) : (
-        <EngineList
-          engines={engines}
-          askingToRemove={askingToRemove}
-          onEdit={(engine) => {
-            setAskingToRemove(null);
-            setForm({ ...EMPTY_FORM, id: engine.id, name: engine.name, address: engine.address, savedAddress: engine.address });
-          }}
-          onSetEnabled={(engine, enabled) => void setEnabled(engine, enabled)}
-          onAskRemove={(engine) => setAskingToRemove(engine.id)}
-          onConfirmRemove={(engine) => void remove(engine)}
-          onKeep={() => setAskingToRemove(null)}
-          log={{ open: logOpen, lines: logLines, onToggle: () => setLogOpen((open) => !open) }}
-          localKind={local.view?.installed?.kind ?? null}
-          localSwitch={
-            local.view?.installed ? (
-              <LocalSwitch view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} />
-            ) : undefined
-          }
-          localConnection={
-            local.view ? <ConnectionHelp view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} /> : undefined
-          }
-          localDiagnosed={local.view?.connection?.problem != null}
-        />
-      )}
-      {local.view && (local.view.installed !== null || local.view.runtime.available.length > 0) && (
-        <LocalAdvanced view={local.view} onView={local.setView} onAuthRequired={onAuthRequired} />
-      )}
-      <section aria-label={t("engines.add")}>
-        {form ? (
+      {form && (
+        <section aria-label={t(form.id === null ? "engines.add" : "engine.form.edit_title")}>
           <EngineForm
             mode={form.id === null ? "add" : "edit"}
             name={form.name}
@@ -525,14 +553,39 @@ export function EnginesPage({ onAuthRequired }: { onAuthRequired: () => void }) 
             saving={form.saving}
             onTest={() => void test()}
             onSave={() => void save()}
-            onCancel={() => setForm(null)}
+            onCancel={closeForm}
+            nameRef={nameField}
           />
-        ) : (
-          <Button type="button" onClick={() => setForm({ ...EMPTY_FORM })}>
-            {t("engines.add")}
-          </Button>
-        )}
-      </section>
-    </>
+        </section>
+      )}
+      {engines === null ? (
+        !failure && <ScreenLoading text={t("engines.loading")} />
+      ) : (
+        <EngineList
+          engines={engines}
+          askingToRemove={askingToRemove}
+          onEdit={(engine) => openForm({ ...EMPTY_FORM, id: engine.id, name: engine.name, address: engine.address, savedAddress: engine.address })}
+          onSetEnabled={(engine, enabled) => void setEnabled(engine, enabled)}
+          onAskRemove={(engine) => setAskingToRemove(engine.id)}
+          onConfirmRemove={(engine) => void remove(engine)}
+          onKeep={() => setAskingToRemove(null)}
+          log={{ open: logOpen, lines: logLines, onToggle: () => setLogOpen((open) => !open) }}
+          localKind={local.view?.installed?.kind ?? null}
+          localSwitch={
+            local.view?.installed ? (
+              <LocalSwitch view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} />
+            ) : undefined
+          }
+          localConnection={
+            local.view ? <ConnectionHelp view={local.view} onView={local.setView} onAuthRequired={() => authRequired.current()} /> : undefined
+          }
+          localDiagnosed={local.view?.connection?.problem != null}
+          emptyAction={form === null ? addButton : undefined}
+        />
+      )}
+      {local.view && (local.view.installed !== null || local.view.runtime.available.length > 0) && (
+        <LocalAdvanced view={local.view} onView={local.setView} onAuthRequired={onAuthRequired} />
+      )}
+    </div>
   );
 }
