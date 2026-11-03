@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { RunView } from "../../../shared/api-types.ts";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { Button } from "../controls/Button.tsx";
-import { Dialog } from "../controls/Dialog.tsx";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { parseRunEvent } from "../runs.ts";
+import { DeleteConfirmation } from "../sections/details/DeleteConfirmation.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
 
 const outputNames = ["orthophoto", "surface", "ground", "point-cloud", "textured-model", "glb", "report"];
@@ -14,8 +14,6 @@ export function Results({ run: view, onChange }: { run: RunView; onChange: (run:
   const [working, setWorking] = useState(false);
   const [asking, setAsking] = useState(false);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (asking) dialog.current?.showModal(); }, [asking]);
   useEffect(() => {
     if (view.results?.state !== "fetching") return;
     const source = new EventSource(`/api/runs/${view.id}/events`);
@@ -48,10 +46,6 @@ export function Results({ run: view, onChange }: { run: RunView; onChange: (run:
       <ul>{results.outputs.filter(output => outputNames.includes(output.name)).map(output => <li key={output.name}><a href={`/api/runs/${view.id}/outputs/${encodeURIComponent(output.name)}`} download>{t(`results.output.${output.name}`)}</a>{t("results.size_suffix", { size: formatBytes(output.size) })}</li>)}</ul>
       <Button className="secondary" disabled={working} onClick={() => setAsking(true)}>{t("results.delete")}</Button>
     </>}
-    {asking && <Dialog ref={dialog} label={t("results.delete_title")} onCancel={event => { event.preventDefault(); if (!working) setAsking(false); }}>
-      <h3>{t("results.delete_title")}</h3><p>{t("results.delete_explain")}</p>
-      <Button className="secondary" disabled={working} onClick={() => setAsking(false)}>{t("results.keep")}</Button>{" "}
-      <Button disabled={working} onClick={() => void change("DELETE")}>{t("results.delete")}</Button>
-    </Dialog>}
+    <DeleteConfirmation target={{ kind: "results", run: view }} open={asking} busy={working} onConfirm={() => void change("DELETE")} onCancel={() => setAsking(false)} />
   </section>;
 }

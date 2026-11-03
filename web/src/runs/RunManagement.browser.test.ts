@@ -90,7 +90,7 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await activate("Delete run");
     await wait("document.querySelector('dialog[open]')");
     await activate("Keep run"); expect(engine.tasks.size).toBe(1);
-    await activate("Delete run"); await activate("Delete this run");
+    await activate("Delete run"); await activate("Delete run and 0 B");
     await wait(`location.hash==='#/projects/${project}/runs'&&document.querySelector('a[href="#/runs/${original.id}"]')`);
     expect(engine.tasks.size).toBe(0);
     await evaluate(`location.hash='#/runs/${original.id}';true`);

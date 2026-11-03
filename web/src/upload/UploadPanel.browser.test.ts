@@ -165,7 +165,7 @@ test("resumes after a connection cut and reload through the Photos section", asy
     await send("Page.setInterceptFileChooserDialog", { enabled: true });
     await send("Page.navigate", { url });
     await wait("document.querySelector('.drop-zone-title')?.textContent === 'Add the photos of your flight'");
-    expect(await evaluate("document.querySelectorAll('.thumbnail-grid, .key-value, table').length")).toBe(0);
+    expect(await evaluate("document.querySelectorAll('.thumbnail-grid, .key-value, table:not(.details-storage)').length")).toBe(0);
     await focusByTab("document.activeElement.textContent === 'Choose files'");
     await focusByTab("document.activeElement.textContent === 'Choose a folder to upload'");
     await pick("Choose files", file);
@@ -220,7 +220,7 @@ test("resumes after a connection cut and reload through the Photos section", asy
     // The thumbnail is missing on the server and shows the neutral frame, not a broken picture.
     await wait("document.querySelector('.thumbnail-none') && !document.querySelector('.thumbnail-grid img')");
     expect(await evaluate("[...document.querySelectorAll('.key-value-row')].some(row => row.textContent.includes('Photo storage') && row.textContent.includes('2 MiB'))")).toBe(true);
-    expect(await evaluate("document.querySelector('table')")).toBeNull();
+    expect(await evaluate("document.querySelector('table:not(.details-storage)')")).toBeNull();
     await addMore();
     await evaluate(`(() => { const data = new DataTransfer(); data.items.add(new File(['x'], 'notes.txt')); data.items.add(new File(['x'], 'archive.zip')); document.querySelector('.drop-zone').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })); })()`);
     await wait("document.querySelector('.photos-intake summary')?.textContent.includes('Skipped files: 2')");

@@ -1,0 +1,4 @@
+.details-delete-content,
+.confirm-danger .dialog-title {
+  overflow-wrap: anywhere;
+}
