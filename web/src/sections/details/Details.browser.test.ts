@@ -139,7 +139,7 @@ test("Details and all three deletion questions use production routes and preserv
       await onlyConfirmRed(false);
       expect((await request("GET", `/api/projects/${project.id}`)).status).toBe(200);
 
-      await go(`#/runs/${run.id}`, `Run ${run.id}`);
+      await go(`#/runs/${run.id}`, "First flight");
       await wait("document.querySelector('main button') && [...document.querySelectorAll('main button')].some(b => b.textContent === 'Delete run')");
       const runButton = "main section[aria-label] .actions button:last-child";
       await openQuestion(runButton, 'Delete run "First flight"?', [`Local result archive: ${archive.length} B`, "This run's settings and log", "This run on Field engine", "The project, its photos and imported folders stay."], `Delete run and ${archive.length} B`);
