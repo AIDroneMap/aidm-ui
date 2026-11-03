@@ -573,6 +573,29 @@ export interface ProjectPhotoFactsView {
   nextOffset: number | null;
 }
 
+/** One photo of the project, with the facts a map, a timeline or a grid needs. A missing fact is null, never a guess. */
+export interface PhotoPosition {
+  sha256: string;
+  name: string;
+  make: string | null;
+  model: string | null;
+  flightId: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  altitude: number | null;
+  captureTime: string | null;
+  excluded: boolean;
+}
+
+export interface ProjectPhotoPositionsView {
+  photos: PhotoPosition[];
+  nextOffset: number | null;
+  /** Photos whose facts the server has not read yet. */
+  pendingMetadata: number;
+  /** True when this browser is on the computer that runs the server, the only place a local folder can be chosen. */
+  localImportAllowed: boolean;
+}
+
 export interface FolderImportView {
   available: boolean;
   state: "none" | "ready" | "changed" | "missing";

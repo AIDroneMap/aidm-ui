@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, opendir, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BigIntStats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import type { Database } from "bun:sqlite";
 import { classifyUploadFile } from "../../shared/upload-files.ts";
 import { readPhotoMetadata } from "../photos/metadata.ts";
@@ -134,25 +135,31 @@ export class ImportStore {
     } catch { return "unreadable"; }
     finally { this.db.query("DELETE FROM project_import_entries WHERE project_id = ? AND generation = ? AND NOT EXISTS (SELECT 1 FROM project_imports WHERE project_id = ? AND generation = ?)").run(id, generation, id, generation); this.busy.delete(id); }
   }
+  private async guardRoot(root: string): Promise<void> {
+    const data = await this.dataPath();
+    if (within(root, data) || within(data, root)) throw new ImportUnavailable("changed");
+  }
+  private async validateEntry(root: string, id: number, generation: string, row: Entry): Promise<void> {
+    const path = await this.safePath(root, row.name);
+    const info = await lstat(path, { bigint: true });
+    if (row.kind === "directory" ? !info.isDirectory() : !info.isFile()) throw new ImportUnavailable("changed");
+    if (signature(info) !== row.signature) {
+      // Linking changes ctime. Verify the bytes before accepting that metadata change.
+      if (row.kind === "directory" || contentIdentity(signature(info)) !== contentIdentity(row.signature)) throw new ImportUnavailable("changed");
+      const previous = row.signature;
+      await this.digest(root, row);
+      this.db.query("UPDATE project_import_entries SET signature=? WHERE project_id=? AND generation=? AND name=? AND signature=?").run(row.signature, id, generation, row.name, previous);
+    }
+  }
   private async validate(root: string, id: number, generation: string): Promise<void> {
     try {
-      const data = await this.dataPath();
-      if (within(root, data) || within(data, root)) throw new ImportUnavailable("changed");
+      await this.guardRoot(root);
       const statement = this.db.query("SELECT name, kind, size, signature, sha256 FROM project_import_entries WHERE project_id = ? AND generation = ? AND name >= ? ORDER BY name LIMIT 1");
       let next = "";
       for (;;) {
         const row = statement.get(id, generation, next) as Entry | null;
         if (!row) break;
-        const path = await this.safePath(root, row.name);
-        const info = await lstat(path, { bigint: true });
-        if (row.kind === "directory" ? !info.isDirectory() : !info.isFile()) throw new ImportUnavailable("changed");
-        if (signature(info) !== row.signature) {
-          // Linking changes ctime. Verify the bytes before accepting that metadata change.
-          if (row.kind === "directory" || contentIdentity(signature(info)) !== contentIdentity(row.signature)) throw new ImportUnavailable("changed");
-          const previous = row.signature;
-          await this.digest(root, row);
-          this.db.query("UPDATE project_import_entries SET signature=? WHERE project_id=? AND generation=? AND name=? AND signature=?").run(row.signature, id, generation, row.name, previous);
-        }
+        await this.validateEntry(root, id, generation, row);
         next = `${row.name}\0`;
       }
     } catch (error) { throw unavailable(error); }
@@ -163,6 +170,33 @@ export class ImportStore {
       await this.validate(h.path, id, h.generation);
       if (this.header(id)?.generation !== h.generation) throw new ImportUnavailable("changed");
     }
+  }
+  /**
+   * Runs `use` on one photo of the import, given by checksum, after the same checks every other read makes:
+   * the folder and the path are real and not links, and the file is the one that was scanned. If anything
+   * about it moves while `use` runs, this throws instead of returning. Null when the import holds no such photo.
+   */
+  async withPhoto<T>(id: number, sha256: string, use: (file: FileHandle, size: number) => Promise<T>): Promise<T | null> {
+    const h = this.header(id);
+    if (!h) return null;
+    if (this.busy.has(id)) throw new ImportUnavailable("changed");
+    const entry = this.db.query(`SELECT name, kind, size, signature, sha256 FROM project_import_entries WHERE project_id=? AND generation=? AND kind='photo' AND sha256=?
+      ORDER BY CASE WHEN lower(name) GLOB '*.raw' OR lower(name) GLOB '*.bmp' THEN 1 ELSE 0 END, name LIMIT 1`).get(id, h.generation, sha256) as Entry | null;
+    if (!entry) return null;
+    try {
+      await this.guardRoot(h.path);
+      await this.validateEntry(h.path, id, h.generation, entry);
+      const file = await open(await this.safePath(h.path, entry.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const before = await file.stat({ bigint: true });
+        if (!before.isFile() || signature(before) !== entry.signature) throw new ImportUnavailable("changed");
+        const result = await use(file, entry.size);
+        if (signature(await file.stat({ bigint: true })) !== entry.signature) throw new ImportUnavailable("changed");
+        if (signature(await lstat(await this.safePath(h.path, entry.name), { bigint: true })) !== entry.signature) throw new ImportUnavailable("changed");
+        if (this.header(id)?.generation !== h.generation) throw new ImportUnavailable("changed");
+        return result;
+      } finally { await file.close(); }
+    } catch (error) { throw unavailable(error); }
   }
   async view(id: number, offset: number, limit: number) {
     const h = this.header(id);

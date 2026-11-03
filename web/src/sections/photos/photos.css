@@ -1,0 +1,16 @@
+.photos-visuals { display: grid; gap: var(--space-6); min-width: 0; }
+.photos-visuals section { min-width: 0; }
+.photos-visuals h2 { margin-bottom: var(--space-4); }
+.photos-pages { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+.photo-positions-canvas { background: var(--surface-2); height: 24rem; min-height: 16rem; width: 100%; border: 1px solid var(--border-1); border-radius: var(--radius-card); }
+.photo-flight-key { display: flex; flex-wrap: wrap; gap: var(--space-4); list-style: none; padding: 0; }
+.photo-flight-key li { display: flex; align-items: center; gap: var(--space-2); }
+.photo-flight-key li > span { width: .75rem; height: .75rem; border-radius: 50%; }
+.capture-minutes { display: flex; gap: var(--space-2); padding: var(--space-3); overflow-x: auto; max-width: 100%; list-style: none; }
+.capture-minutes li { min-width: 9rem; display: grid; gap: var(--space-1); font-variant-numeric: tabular-nums; }
+.capture-minute-bar { display: block; min-width: .25rem; height: .5rem; background: var(--accent); }
+.photos-visuals .thumbnail-grid { grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); }
+.photos-visuals .timeline-text { overflow-wrap: anywhere; }
+@media (max-width: 48rem) { .photo-positions-canvas { background: var(--surface-2); height: 18rem; } }
+
+.photos-visuals .timeline-label small { display: block; font-weight: var(--weight-regular); }
