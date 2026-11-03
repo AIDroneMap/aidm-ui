@@ -4,7 +4,7 @@
 
 AIDM UI lets a single operator create projects, bring in photos, review settings, run an engine, and view or download the results. It installs the engine on the operator's computer and can attach to a chosen task API endpoint.
 
-> **Status: pre-alpha, not for use.** Projects, photo intake, reviewed settings, run history, downloads and offline viewers are implemented under specification #58. [Milestone 2](docs/milestones/0002-own-flight.md) records the completed checks and known limits. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
+> **Status: pre-alpha, not for use.** Specification #125 rebuilt the interface as a desktop-class application: a sidebar, project sections, every task API option in Settings, a Review screen, a run screen by stage, results and viewers first, and one design system with light and dark themes. [Milestone 3](docs/milestones/0003-desktop-class-interface.md) records what merged, how it was tested and its known limits. [Milestone 2](docs/milestones/0002-own-flight.md) records projects, photo intake, retained runs, downloads and offline viewers under specification #58. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
 
 ## Install and test
 
