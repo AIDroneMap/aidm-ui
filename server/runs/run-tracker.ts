@@ -1,7 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { lstat, realpath, rm } from "node:fs/promises";
 import type { RunLogView, RunView } from "../../shared/api-types.ts";
+import { failureOf, failureRange, stagesOf, type RunFailureView, type RunStageView, type StageAnnouncement } from "../../shared/run-stages.ts";
 import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import type { UnreachableLines } from "../task-api/unreachable-lines.ts";
 import { readLogJson, stageStarted, summaryFromOutput, summaryLine } from "./run-summary.ts";
@@ -67,6 +68,14 @@ interface Following {
   stageSeen: Array<{ name: string; at: number }>;
 }
 
+/** What the run screen shows of the engine's progress, kept next to the run's log so it outlives a restart of aidm-ui. */
+interface Timing {
+  /** The engine's processing time at its latest answer, in milliseconds. */
+  processingTime: number | null;
+  /** Every line of the log that started a stage, with when aidm-ui saw it. */
+  announced: StageAnnouncement[];
+}
+
 /** Follows the tasks of runs on their engines, saves what they report, and tells whoever listens. */
 export class RunTracker {
   recoverMissing: ((id: number) => Promise<boolean>) | undefined;
@@ -82,6 +91,9 @@ export class RunTracker {
   private readonly live = new Map<number, Live>();
   /** Lines saved per run, counted once from the file. It is also the next line to ask the engine for. */
   private readonly lineCounts = new Map<number, number>();
+  private readonly timings = new Map<number, Timing>();
+  /** The failure of a failed run, worked out once: a finished run never changes. */
+  private readonly failures = new Map<number, RunFailureView>();
   private readonly listeners = new Map<number, Set<(event: RunEvent) => void>>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private started = false;
@@ -172,6 +184,7 @@ export class RunTracker {
     }
     this.runs.remove(run.id);
     this.live.delete(run.id); this.lineCounts.delete(run.id); this.listeners.delete(run.id);
+    this.timings.delete(run.id); this.failures.delete(run.id);
   }
 
   view(runId: number): RunView | null {
@@ -222,6 +235,8 @@ export class RunTracker {
     const record = Object.keys(saved).length > 0 ? this.runs.update(runId, saved) : this.runs.get(runId);
     if (record === null) return;
     if (isFinished(record.state)) {
+      // The engine's last processing time stays with the run.
+      if (this.timings.has(runId)) this.saveTiming(runId);
       this.summarise(record, this.following.get(runId));
       this.following.delete(runId);
       live.step = null;
@@ -244,6 +259,8 @@ export class RunTracker {
   private viewOf(run: RunRecord): RunView {
     const live = this.live.get(run.id);
     const results = this.results.view(run.id);
+    const timing = this.timingOf(run.id);
+    const stages = stagesOf(timing.announced, run.restartedAtLine, run.state);
     return {
       ...(run.state === "queued" ? { queueCount: live?.queueCount ?? null } : {}),
       id: run.id,
@@ -268,7 +285,50 @@ export class RunTracker {
       resultsAvailable: results?.state === "ready",
       ...(results ? { results } : {}),
       createdAt: run.createdAt,
+      processingTime: timing.processingTime,
+      stages,
+      failure: run.state === "failed" ? this.failureView(run, stages) : null,
     };
+  }
+
+  private failureView(run: RunRecord, stages: RunStageView[]): RunFailureView {
+    let failure = this.failures.get(run.id);
+    if (failure === undefined) {
+      const range = failureRange(this.lineCount(run.id), run.restartedAtLine);
+      failure = failureOf(stages, range, this.readLines(run.id, range.from, range.to - range.from));
+      this.failures.set(run.id, failure);
+    }
+    return failure;
+  }
+
+  private timingPath(runId: number): string {
+    return join(this.dataFolder, "runs", String(runId), "stages.json");
+  }
+
+  /**
+   * The run's stage announcements and processing time, read once: from the
+   * file kept next to the log, or for a run that has none yet, from the stage
+   * lines of its log, whose times are then unknown.
+   */
+  private timingOf(runId: number): Timing {
+    let timing = this.timings.get(runId);
+    if (timing === undefined) {
+      timing = readTiming(this.timingPath(runId)) ?? { processingTime: null, announced: announcedIn(this.readFile(runId)) };
+      this.timings.set(runId, timing);
+    }
+    return timing;
+  }
+
+  /** Never stops a run: the times are a convenience, so a failure to write them is only a line in the diagnosis log. */
+  private saveTiming(runId: number): void {
+    const timing = this.timings.get(runId);
+    if (timing === undefined) return;
+    try {
+      mkdirSync(join(this.dataFolder, "runs", String(runId)), { recursive: true });
+      writeFileSync(this.timingPath(runId), JSON.stringify(timing));
+    } catch (error) {
+      this.logLine(`Run ${runId}: the stage times could not be saved: ${describe(error)}`);
+    }
   }
 
   private emit(runId: number, event: RunEvent): void {
@@ -315,7 +375,13 @@ export class RunTracker {
   }
 
   /** The engine started the task over, so its output begins again from its line 0, at the end of what we hold. */
+  /** The processing time of the attempt before it no longer counts, until the new one reports its own. */
   private markRestart(runId: number): void {
+    const timing = this.timingOf(runId);
+    if (timing.processingTime !== null) {
+      timing.processingTime = null;
+      this.saveTiming(runId);
+    }
     this.update(runId, { restarted: true, restartedAtLine: this.lineCount(runId) });
   }
 
@@ -361,13 +427,25 @@ export class RunTracker {
     return lines;
   }
 
-  private saveLines(runId: number, lines: string[]): void {
+  /** Saves the lines and notes the stages they start. True when one starts a stage. */
+  private saveLines(runId: number, lines: string[]): boolean {
+    const timing = this.timingOf(runId);
     const before = this.lineCount(runId);
     const path = this.logPath(runId);
     mkdirSync(join(this.dataFolder, "runs", String(runId)), { recursive: true });
     // One engine line is one file line, so the line count is also the engine's next line number.
     appendFileSync(path, lines.map((line) => `${line.replace(/[\r\n]+/g, " ")}\n`).join(""));
     this.lineCounts.set(runId, before + lines.length);
+    const at = new Date().toISOString();
+    let started = false;
+    lines.forEach((line, index) => {
+      const name = stageStarted(line);
+      if (name === null) return;
+      timing.announced.push({ name, line: before + index, at });
+      started = true;
+    });
+    if (started) this.saveTiming(runId);
+    return started;
   }
 
   /** A run that was being prepared when aidm-ui stopped cannot go on. */
@@ -469,6 +547,11 @@ export class RunTracker {
       // The whole output was asked for; keep only what follows the last line held, as on any other poll.
       output = { ok: true, value: output.value.slice(held - 1) };
     }
+    // Taken after the restart checks, which forget the time of the attempt before. When the output shows a
+    // restart the info did not, the info was read before the restart and its time belongs to the old attempt.
+    const timing = this.timingOf(runId);
+    const timeMoved = !shorter && processingTime !== null && processingTime >= 0 && timing.processingTime !== processingTime;
+    if (timeMoved) timing.processingTime = processingTime;
     const before = this.current(runId, following);
     if (before === null) return;
     if (!output.ok) {
@@ -476,6 +559,7 @@ export class RunTracker {
       return;
     }
     const newLines = held > 0 ? output.value.slice(1) : output.value;
+    let stageStartedNow = false;
 
     following.failedPolls = 0;
     following.notFoundPolls = 0;
@@ -486,7 +570,7 @@ export class RunTracker {
         if (stage !== null && !following.stageSeen.some((seen) => seen.name === stage)) following.stageSeen.push({ name: stage, at });
       }
       const from = this.lineCount(runId);
-      this.saveLines(runId, newLines);
+      stageStartedNow = this.saveLines(runId, newLines);
       this.emit(runId, { type: "log", lines: newLines, from });
     }
 
@@ -502,6 +586,8 @@ export class RunTracker {
     const queueCount = queue?.ok ? queue.value.queueCount : null;
     if (before.state !== state || before.progress !== progress || before.engineMessage !== message || this.live.get(runId)?.queueCount !== queueCount) {
       this.update(runId, { state, progress, engineMessage: message, queueCount });
+    } else if (timeMoved || stageStartedNow) {
+      this.emit(runId, { type: "run", run: this.viewOf(before) });
     }
   }
 
@@ -529,6 +615,30 @@ export class RunTracker {
       this.update(runId, { state: "engine_unreachable" });
     }
   }
+}
+
+function readTiming(path: string): Timing | null {
+  try {
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Timing> | null;
+    const processingTime = parsed?.processingTime;
+    const announced = parsed?.announced;
+    if (!(processingTime === null || typeof processingTime === "number") || !Array.isArray(announced)) return null;
+    const valid = announced.every((item: Partial<StageAnnouncement> | null) =>
+      typeof item?.name === "string" && typeof item.line === "number" && (item.at === null || typeof item.at === "string"));
+    return valid ? { processingTime, announced } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The stage lines of a saved log, with no times: aidm-ui did not keep them when it saved these lines. */
+function announcedIn(text: string): StageAnnouncement[] {
+  if (text === "") return [];
+  return text.split("\n").flatMap((line, index) => {
+    const name = stageStarted(line);
+    return name === null ? [] : [{ name, line: index, at: null }];
+  });
 }
 
 /** Lines in a log file's text: every line ends with a newline, and a last one that does not still counts. */

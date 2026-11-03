@@ -8,6 +8,7 @@ import {
   type SampleView,
 } from "../../../shared/api-types.ts";
 import en from "../i18n/en.json";
+import type { RunStage } from "../../../shared/run-stages.ts";
 import { untranslatedText, unlabelledInputs } from "../test-helpers.ts";
 import { RunProgress, SampleIntro, SampleJobPage, type RunProgressProps, type SampleIntroProps } from "./SampleJobPage.tsx";
 
@@ -76,7 +77,6 @@ const runData = ["Barn engine", "line one\nline two"];
 function renderRun(view: Partial<RunView>, overrides: Partial<RunProgressProps> = {}): string {
   return renderToStaticMarkup(
     <RunProgress
-      stage={null}
       run={{ ...run, ...view }}
       lines={["line one", "line two"]}
       connectionLost={false}
@@ -263,16 +263,13 @@ test("processing shows the engine's progress as a percentage", () => {
   expect(html).toContain('<label for="run-processing">');
 });
 
-test("the log is a labelled, focusable region", () => {
+test("the log is folded behind its line count", () => {
   const html = renderRun({ state: "processing" });
-  expect(html).toContain('<h3 id="run-log-title">Log</h3>');
-  expect(html).toMatch(/<pre[^>]*aria-labelledby="run-log-title"/);
-  expect(html).toMatch(/<pre[^>]*tabindex="0"/);
-  expect(html).toContain("line one\nline two");
-});
-
-test("an empty log says so", () => {
-  expect(renderRun({}, { lines: [] })).toContain("Nothing has been logged yet.");
+  expect(html).toMatch(/<details[^>]*id="run-log"/);
+  expect(html).toContain("Engine log (2 lines)");
+  expect(html).not.toContain("line one\nline two");
+  expect(renderRun({}, { lines: [] })).toContain("Engine log (0 lines)");
+  expect(renderRun({}, { lines: ["one"] })).toContain("Engine log (1 line)");
 });
 
 test("a run in progress can be cancelled", () => {
@@ -303,21 +300,6 @@ test("a restarted run says so", () => {
   expect(renderRun({ state: "queued" })).not.toContain("started over");
 });
 
-test("the log shows a separator, in the interface's words, where the engine's output began again", () => {
-  const html = renderRun(
-    { state: "queued", restarted: true },
-    { lines: ["old one", "old two", "new one"], lineCount: 3, restartedAtLine: 2 },
-  );
-  expect(html).toContain("old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one");
-  // A run that did not restart has no separator.
-  expect(renderRun({ state: "processing" }, { restartedAtLine: null })).not.toContain("restarted here");
-  expect(
-    untranslatedText(html, [
-      "Barn engine",
-      "old one\nold two\nThe engine restarted here. The lines below are from its new start.\nnew one",
-    ]),
-  ).toEqual([]);
-});
 
 test("a completed run offers the results", () => {
   const html = renderRun({ state: "completed", resultsAvailable: true });
@@ -380,7 +362,7 @@ test("the page has its own heading, and leaves it out when it sits inside a scre
 });
 
 test("the run page explains the current stage", () => {
-  const html = renderRun({ state: "processing" }, { stage: "odm_dem", lines: ["Running odm_dem stage"] });
+  const html = renderRun({ state: "processing", stages: [{ name: "odm_dem", state: "running", startedAt: null }] });
   expect(html).toContain("Make elevation models");
   expect(html).toContain("surface and terrain models");
 });
@@ -389,16 +371,12 @@ test("each engine stage is shown in translated words", () => {
   const stages = ["dataset", "split", "merge", "opensfm", "openmvs", "odm_filterpoints", "odm_meshing", "mvs_texturing", "odm_georeferencing", "odm_dem", "odm_orthophoto", "odm_report", "odm_postprocess"];
   const messages: Record<string, string> = en;
   for (const stage of stages) {
-    const html = renderRun({ state: "processing" }, { stage: stage as RunProgressProps["stage"], lines: [`Running ${stage} stage`] });
+    const html = renderRun({ state: "processing", stages: [{ name: stage as RunStage, state: "running", startedAt: null }] });
     expect(html).toContain(messages[`run.stage.${stage}.name`]!);
     expect(html).toContain(messages[`run.stage.${stage}.description`]!);
   }
 });
 
-test("a restart clears the previous stage until a new stage starts", () => {
-  const html = renderRun({ state: "processing", restarted: true }, { lines: ["Running odm_dem stage"], lineCount: 1, restartedAtLine: 1 });
-  expect(html).not.toContain("Make elevation models");
-});
 
 
 test("sample titles are translated and operator names remain data", () => {

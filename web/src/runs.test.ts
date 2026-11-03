@@ -1,4 +1,3 @@
-import { EMPTY_STAGE_PROGRESS, reduceStageProgress } from "./runs.ts";
 import { expect, test } from "bun:test";
 import type { RunView } from "../../shared/api-types.ts";
 import { EMPTY_LOG, MAX_LOG_LINES, isFinished, linesWithRestart, mergeLog, parseLogEvent, parseRunEvent } from "./runs.ts";
@@ -105,37 +104,4 @@ test("the separator is counted from the first line the page dropped, and left ou
   // Line 10 is the first one still held.
   expect(linesWithRestart(log, 12, SEPARATOR).indexOf(SEPARATOR)).toBe(2);
   expect(linesWithRestart(log, 5, SEPARATOR)).toBe(log.lines);
-});
-
-
-test("stage remains after ordinary log lines leave it outside the display window", () => {
-  let progress = reduceStageProgress(EMPTY_STAGE_PROGRESS, { from: 0, lines: ["Running odm_dem stage"] });
-  let log = mergeLog(EMPTY_LOG, 0, ["Running odm_dem stage"]);
-  const ordinary = Array(MAX_LOG_LINES).fill("working");
-  progress = reduceStageProgress(progress, { from: 1, lines: ordinary });
-  log = mergeLog(log, 1, ordinary);
-  expect(log.lines).not.toContain("Running odm_dem stage");
-  expect(progress.stage).toBe("odm_dem");
-});
-
-test("replaying saved pages retains the latest stage and rejects delayed older pages", () => {
-  let progress = reduceStageProgress(EMPTY_STAGE_PROGRESS, { from: 0, lines: ["Running dataset stage", "working"] });
-  progress = reduceStageProgress(progress, { from: 2, lines: ["Running odm_dem stage"] });
-  progress = reduceStageProgress(progress, { from: 3, lines: Array(MAX_LOG_LINES).fill("working") });
-  progress = reduceStageProgress(progress, { from: 0, lines: ["Running dataset stage"] });
-  expect(progress.stage).toBe("odm_dem");
-  expect(progress.line).toBe(2);
-});
-
-test("restart boundaries do not move backwards and ignore older stage lines", () => {
-  let progress = reduceStageProgress(EMPTY_STAGE_PROGRESS, { from: 0, lines: ["Running dataset stage"] });
-  progress = reduceStageProgress(progress, { restartedAtLine: 2 });
-  expect(progress.stage).toBeNull();
-  progress = reduceStageProgress(progress, { from: 2, lines: ["Running odm_dem stage"], restartedAtLine: 2 });
-  progress = reduceStageProgress(progress, { from: 0, lines: ["Running dataset stage"], restartedAtLine: 1 });
-  expect(progress).toMatchObject({ stage: "odm_dem", line: 2, restartedAtLine: 2 });
-  progress = reduceStageProgress(progress, { from: 3, lines: ["Running future_stage stage"] });
-  expect(progress).toMatchObject({ stage: null, line: 3 });
-  progress = reduceStageProgress(progress, { from: 2, lines: ["Running odm_dem stage"] });
-  expect(progress.stage).toBeNull();
 });

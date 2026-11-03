@@ -12,7 +12,7 @@ import { MapPanel } from "../map/MapView.tsx";
 import { sectionHash } from "../router.ts";
 
 export function RunPage({ runId, onProject, onAuthRequired }: { runId: string; /** Told the run's project once the run has loaded, so the sidebar shows that project. */ onProject?: (projectId: number) => void; onAuthRequired: () => void }) {
-  const { run, setRun, log, stage, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel } = useRun(onAuthRequired);
+  const { run, setRun, log, restartedAtLine, connectionLost, cancelling, failure, setFailure, fail, cancel } = useRun(onAuthRequired);
   useEffect(() => {
     let current = true;
     api<RunView>("GET", `/api/runs/${runId}`).then(
@@ -22,15 +22,28 @@ export function RunPage({ runId, onProject, onAuthRequired }: { runId: string; /
     return () => { current = false; };
   }, [runId]);
   const [again, setAgain] = useState<string | null>(null);
-  const model = run?.id === Number(runId) && run.results?.state === "ready" ? run.results.outputs.find(output => output.name === "glb") : undefined;
+  const loaded = run?.id === Number(runId) ? run : null;
+  const ready = loaded?.results?.state === "ready";
+  const model = ready ? loaded.results!.outputs.find(output => output.name === "glb") : undefined;
+  if (!loaded) return <><h1>{t("run.title", { id: runId })}</h1>{failure ? <ErrorMessage failure={failure} /> : <p>{t("run.loading")}</p>}</>;
   return <>
-    {run && <a href={sectionHash(run.projectId, "runs")}>{t("run.back_to_project")}</a>}
-    <h1>{t("run.title", { id: runId })}</h1>
-    {run ? <RunProgress run={run} stage={stage} lines={log.lines} lineCount={log.count} restartedAtLine={restartedAtLine} connectionLost={connectionLost} cancelling={cancelling} failure={failure} onCancel={() => void cancel()} />
-      : failure ? <ErrorMessage failure={failure} /> : <p>{t("run.loading")}</p>}
-    {run?.id === Number(runId) && run.results?.state === "ready" && <MapPanel key={runId} runId={runId} />}
-    {run?.id === Number(runId) && <RunActions key={runId} run={run} onAuthRequired={onAuthRequired} onAgain={() => setAgain(runId)} />}
-    {again === runId && run && <RunStart key={`again-${runId}`} projectId={run.projectId} sourceRunId={run.id} onAuthRequired={onAuthRequired} />}
-    {model && <ModelPanel key={runId} runId={runId} size={model.size} />}
+    <RunProgress
+      run={loaded}
+      lines={log.lines}
+      lineCount={log.count}
+      restartedAtLine={restartedAtLine}
+      connectionLost={connectionLost}
+      cancelling={cancelling}
+      failure={failure}
+      onCancel={() => void cancel()}
+      level={1}
+      back={<a href={sectionHash(loaded.projectId, "runs")}>{t("run.back_to_project")}</a>}
+      actions={<RunActions key={runId} run={loaded} onAuthRequired={onAuthRequired} onAgain={() => setAgain(runId)} />}
+      viewers={ready && <>
+        <MapPanel key={`map-${runId}`} runId={runId} />
+        {model && <ModelPanel key={`model-${runId}`} runId={runId} size={model.size} />}
+      </>}
+    />
+    {again === runId && <RunStart key={`again-${runId}`} projectId={loaded.projectId} sourceRunId={loaded.id} onAuthRequired={onAuthRequired} />}
   </>;
 }

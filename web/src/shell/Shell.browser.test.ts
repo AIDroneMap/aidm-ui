@@ -152,7 +152,8 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
         await wait("document.querySelector('main h1') && !document.querySelector('nav.sidebar')");
         continue;
       }
-      const title = route.screen === "projects" ? "Projects" : route.screen === "engines" ? "Engines" : route.screen === "preferences" ? "Preferences" : route.screen === "run" ? `Run ${run.id}`
+      // A loaded run is titled by its name; its number shows only while it loads.
+      const title = route.screen === "projects" ? "Projects" : route.screen === "engines" ? "Engines" : route.screen === "preferences" ? "Preferences" : route.screen === "run" ? "First"
         : { photos: "Photos", settings: "Settings", review: "Review", runs: "Runs", results: "Results", details: "Details" }[route.section];
       await wait(`location.hash === ${JSON.stringify(address)} && document.querySelector('main h1')?.textContent === ${JSON.stringify(title)} && document.querySelector('nav.sidebar')`);
       if (route.screen === "project" && route.viewer) await wait(`document.querySelector('main a[href="#/projects/${projectId}/results/${run.id}"]')`);
