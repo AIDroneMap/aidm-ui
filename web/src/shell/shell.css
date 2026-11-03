@@ -130,3 +130,30 @@
     transform: translateX(-100%);
   }
 }
+
+/*
+ * The state dot beside Engines: one colour per state, with the state in words
+ * for screen readers. The badge around it drops its pill, so only the dot shows.
+ */
+.nav-badge:has(.shell-engine-dot),
+.nav-item[aria-current="page"] .nav-badge:has(.shell-engine-dot) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  padding: 0;
+  background: none;
+}
+
+.shell-engine-dot {
+  box-sizing: border-box;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+}
+
+.shell-engine-dot-ready { background: var(--ok); }
+.shell-engine-dot-busy { background: var(--running); }
+.shell-engine-dot-unreachable { background: var(--warn); }
+/* Nothing installed is no fault: a hollow ring in the quiet text colour. */
+.shell-engine-dot-not_installed { border: 2px solid var(--text-3); }

@@ -1,0 +1,242 @@
+/*
+ * The wizard: the first run, with no sidebar. One column in the middle of the
+ * window: the name, the five steps, and one panel for the screen of the step.
+ */
+.wizard {
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.wizard-brand {
+  margin: 0 0 var(--space-6);
+  font-weight: var(--weight-strong);
+  color: var(--accent);
+}
+
+.wizard-panel {
+  padding: var(--space-8);
+  background: var(--surface-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+}
+
+.wizard-panel h1 {
+  margin-top: 0;
+}
+
+/* The steps: a number in a ring, filled once the step is done or under way, and the step's name under it. */
+.wizard-steps {
+  margin-bottom: var(--space-6);
+}
+
+.wizard-steps > p {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.wizard-steps ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: wizard-step;
+}
+
+.wizard-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  border-bottom: 3px solid var(--border-1);
+  counter-increment: wizard-step;
+}
+
+/* The number is drawn, not said: the line above the list already says which step this is. */
+.wizard-steps li::before {
+  content: counter(wizard-step);
+  content: counter(wizard-step) / "";
+  display: grid;
+  place-content: center;
+  box-sizing: border-box;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-weight: var(--weight-medium);
+  border: 2px solid var(--border-2);
+  border-radius: 50%;
+}
+
+.wizard-steps li.wizard-step-done {
+  border-bottom-color: var(--accent);
+}
+
+.wizard-steps li.wizard-step-done::before {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.wizard-steps li[aria-current="step"] {
+  font-weight: var(--weight-strong);
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+}
+
+.wizard-steps li[aria-current="step"]::before {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Back sits on the left, the way on to the right, under a hairline. */
+.wizard-nav {
+  justify-content: flex-end;
+  margin: var(--space-8) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-1);
+}
+
+.wizard-nav > .secondary:first-child {
+  margin-right: auto;
+}
+
+/* The machine check: one row per check, with the result as a pill in its colour and its icon. */
+.check-lines {
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+}
+
+.check-lines li {
+  display: grid;
+  grid-template-columns: 9rem 7.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.check-lines li + li {
+  border-top: 1px solid var(--border-1);
+}
+
+.check-name {
+  font-weight: var(--weight-medium);
+}
+
+.check-message {
+  color: var(--text-2);
+}
+
+.result {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-1);
+  padding: 0.125rem var(--space-2) 0.125rem var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-pill);
+}
+
+.result-pass { color: var(--ok); background: var(--ok-soft); }
+.result-warn { color: var(--warn); background: var(--warn-soft); }
+.result-fail { color: var(--danger); background: var(--danger-soft); }
+
+.marker {
+  display: inline-flex;
+}
+
+.marker .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (max-width: 36rem) {
+  .wizard-panel {
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .check-lines li {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A way to go on: a panel for each, in the panel of the screen. */
+.choice {
+  margin: var(--space-4) 0;
+  padding: var(--space-4) var(--space-6);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+}
+
+.choice h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.choice > p,
+.choice ul {
+  margin: 0 0 var(--space-3);
+}
+
+.choice > :last-child {
+  margin-bottom: 0;
+}
+
+/* The refused state: the requirement in one sentence, and nothing else. */
+.wizard-refused {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border-2);
+}
+
+.install-total {
+  font-weight: var(--weight-medium);
+}
+
+/* The steps of an install, each with its size and where it stands. */
+.install-steps {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.install-steps li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  border-left: 3px solid var(--border-2);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+}
+
+.install-steps li[aria-current="step"] {
+  font-weight: var(--weight-medium);
+  border-left-color: var(--running);
+}
+
+.install-steps li.install-step-done {
+  border-left-color: var(--ok);
+}
+
+.install-steps li.install-step-failed {
+  font-weight: var(--weight-medium);
+  border-left-color: var(--danger);
+}
+
+.install-step-state {
+  color: var(--text-2);
+  white-space: nowrap;
+}

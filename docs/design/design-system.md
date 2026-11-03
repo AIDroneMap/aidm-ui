@@ -134,7 +134,7 @@ The icons: ArrowLeft, Box, Check, ChevronDown, ChevronRight, Circle, CircleCheck
 
 ## Screens and sections
 
-The shell in `web/src/shell/` puts the sidebar around every screen except the wizard and the login. Inside a project it lists the six sections with their badges: the photo count, a spinner while the latest run is unfinished, and the number of runs with results. Below 64 rem the sidebar keeps its icons. On a window under 64 rem that is much taller than wide, such as a tablet held upright, it hides behind a menu button and slides over the screen with its words; following a link or pressing Escape closes it.
+The shell in `web/src/shell/` puts the sidebar around every screen except the wizard and the login. Inside a project it lists the six sections with their badges: the photo count, a spinner while the latest run is unfinished, and the number of runs with results. Engines carries a dot for every engine together: ready (an engine can take a run), busy (work is waiting or running on one), unreachable (engines are there but none answers, or none is switched on and supported) and not installed (there is none, or it is still being installed). The dot's colour repeats its state, which screen readers hear in words. Below 64 rem the sidebar keeps its icons. On a window under 64 rem that is much taller than wide, such as a tablet held upright, it hides behind a menu button and slides over the screen with its words; following a link or pressing Escape closes it.
 
 Every address is in `ROUTE_MAP` in `web/src/router.ts`, with the screen it opens, and old addresses are in `redirectFromHash`. The router test and the sidebar journey in `web/src/shell/Shell.browser.test.ts` walk that list.
 
@@ -148,6 +148,8 @@ Each section has a folder of its own, and its words sit under its own prefix in 
 | Runs | `web/src/sections/runs/` | `runs` |
 | Results | `web/src/sections/results/` | `results` |
 | Details | `web/src/sections/details/` | `details` |
+
+Engines, Preferences and the wizard are screens of the application, not sections. They live in `web/src/pages/` with a stylesheet each (`engines.css`, `preferences.css`, `wizard.css`) and keep their prefixes `engines`, `engine`, `local`, `preferences` and `wizard`. The wizard has no sidebar: one centred panel under the five steps. Its refused state, when this computer cannot run the engine, is one sentence under `wizard.refused.` that names the requirement and nothing else.
 
 `danger`, `affects` and `warn` hold the words of the danger area, the option tags and the option warnings. `nav` holds the sidebar's, `projects` the Projects screen's and `preferences` the Preferences screen's. Each prefix is one block of keys in `en.json`; add a key next to the others of its prefix.
 

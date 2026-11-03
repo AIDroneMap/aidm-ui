@@ -20,6 +20,7 @@ import { t } from "../i18n/translate.ts";
 import { projectName } from "../pages/ProjectsPage.tsx";
 import { sectionHash, type Route, type Section } from "../router.ts";
 import { PAGE_VERSION } from "../version.ts";
+import { useEngineDot, type EngineDot } from "./engine-dot.ts";
 import { runActive } from "./useWorkspaceProject.ts";
 import "./shell.css";
 
@@ -56,6 +57,8 @@ type Props = {
   project: ProjectView | null;
   /** The viewers take the whole width; every other screen keeps a readable line length. */
   wide?: boolean;
+  /** The dot beside Engines, for a test; null hides it. Left out, the dot follows the server's engine list. */
+  engineDot?: EngineDot | null;
   children: ReactNode;
 };
 
@@ -65,7 +68,9 @@ type Props = {
  * tablet held upright it hides behind a menu button and slides over the
  * content, so nothing scrolls sideways.
  */
-export function Shell({ route, project, wide, children }: Props) {
+export function Shell({ route, project, wide, engineDot: given, children }: Props) {
+  const live = useEngineDot();
+  const engineDot = given === undefined ? live : given;
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLButtonElement>(null);
   const nav = useRef<HTMLDivElement>(null);
@@ -103,7 +108,13 @@ export function Shell({ route, project, wide, children }: Props) {
         <Sidebar label={t("nav.label")} expanded={open} header={<span title={t("nav.version", { version: PAGE_VERSION })}>{t("app.name")}</span>}>
           <NavSection>
             <NavItem href="#/" icon={<IconFolder />} label={t("nav.projects")} current={route.screen === "projects"} />
-            <NavItem href="#/engines" icon={<IconCpu />} label={t("nav.engines")} current={route.screen === "engines"} />
+            <NavItem
+              href="#/engines"
+              icon={<IconCpu />}
+              label={t("nav.engines")}
+              current={route.screen === "engines"}
+              {...(engineDot === null ? {} : { badge: <span className={`shell-engine-dot shell-engine-dot-${engineDot}`} />, badgeLabel: t(`nav.engines_${engineDot}`) })}
+            />
             <NavItem href="#/preferences" icon={<IconSettings />} label={t("nav.preferences")} current={route.screen === "preferences"} />
           </NavSection>
           {project && <ProjectItems project={project} route={route} />}

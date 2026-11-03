@@ -2,6 +2,8 @@ import { BasemapSettings } from "../basemap/BasemapSettings.tsx";
 import { ThemePreference } from "../preferences/ThemePreference.tsx";
 import { Toggle } from "../controls/Toggle.tsx";
 import { Button } from "../controls/Button.tsx";
+import { NumberField } from "../controls/NumberField.tsx";
+import { TextField } from "../controls/TextField.tsx";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, asApiFailure, upload, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
@@ -10,6 +12,8 @@ import { UpdateCheckQuestion } from "../components/UpdateCheckQuestion.tsx";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { messageParams } from "../machine.ts";
+import { ScreenLoading } from "./ScreenLoading.tsx";
+import "./preferences.css";
 import {
   DEFAULT_PORT,
   PASSPHRASE_MIN_LENGTH,
@@ -95,7 +99,7 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   return (
     <div role="group" aria-label={t("preferences.dataset.delete_ask")} className="actions">
       <p>{t("preferences.dataset.delete_ask")}</p>
-      <Button ref={first} type="button" onClick={onConfirm}>
+      <Button ref={first} type="button" variant="danger" onClick={onConfirm}>
         {t("preferences.dataset.delete_confirm")}
       </Button>
       <Button type="button" className="secondary" onClick={onKeep}>
@@ -105,13 +109,59 @@ function DatasetDeleteAsk({ onConfirm, onKeep }: { onConfirm: () => void; onKeep
   );
 }
 
+/** The top of the screen. The heading takes the focus when the screen opens, as on every screen of the shell. */
+function PreferencesHeader() {
+  return (
+    <header className="page-header">
+      <div className="page-header-text">
+        <h1 tabIndex={-1}>{t("preferences.title")}</h1>
+        <p className="page-header-subtitle">{t("preferences.subtitle")}</p>
+      </div>
+    </header>
+  );
+}
+
+/**
+ * The import of the sample photos from a zip file. The browser's file field
+ * stays hidden; the project's button opens it, as on the Photos section.
+ */
+function DatasetImport({ working, onImport }: { working: boolean; onImport: (file: File) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="field">
+      <input
+        ref={input}
+        id="settings-dataset-import"
+        type="file"
+        className="visually-hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        accept=".zip,application/zip"
+        disabled={working}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          // Cleared, so the same file can be chosen again after a refusal.
+          event.target.value = "";
+          if (file !== undefined) onImport(file);
+        }}
+      />
+      <Button variant="secondary" disabled={working} aria-describedby="settings-dataset-import-hint" onClick={() => input.current?.click()}>
+        {t("preferences.dataset.import_label")}
+      </Button>
+      <p id="settings-dataset-import-hint" className="hint">
+        {t("preferences.dataset.import_hint")}
+      </p>
+    </div>
+  );
+}
+
 export function PreferencesForm(props: PreferencesFormProps) {
   const { settings } = props;
   if (!settings) {
     return (
       <>
-        <h1>{t("preferences.title")}</h1>
-        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <p>{t("preferences.loading")}</p>}
+        <PreferencesHeader />
+        {props.failure ? <ErrorMessage failure={props.failure.error} /> : <ScreenLoading text={t("preferences.loading")} />}
       </>
     );
   }
@@ -129,30 +179,25 @@ export function PreferencesForm(props: PreferencesFormProps) {
 
   return (
     <>
-      <h1>{t("preferences.title")}</h1>
+      <PreferencesHeader />
 
       <section aria-labelledby="settings-port-title">
         <h2 id="settings-port-title">{t("preferences.port.title")}</h2>
         <p>{t("preferences.port.current", { port: settings.listeningPort })}</p>
         <form onSubmit={submitPort}>
-          <div className="field">
-            <label htmlFor="settings-port">{t("preferences.port.label")}</label>
-            <input
-              id="settings-port"
-              type="number"
-              inputMode="numeric"
-              min={PORT_MIN}
-              max={PORT_MAX}
-              placeholder={String(DEFAULT_PORT)}
-              aria-invalid={portInvalid ? "true" : undefined}
-              aria-describedby={portInvalid ? "settings-port-hint settings-port-error" : "settings-port-hint"}
-              value={props.portDraft}
-              onChange={(event) => props.onPortDraftChange(event.target.value)}
-            />
-            <p id="settings-port-hint" className="hint">
-              {t("preferences.port.hint", { port: DEFAULT_PORT })}
-            </p>
-          </div>
+          <NumberField
+            id="settings-port"
+            label={t("preferences.port.label")}
+            hint={t("preferences.port.hint", { port: DEFAULT_PORT })}
+            inputMode="numeric"
+            min={PORT_MIN}
+            max={PORT_MAX}
+            placeholder={String(DEFAULT_PORT)}
+            aria-invalid={portInvalid ? "true" : undefined}
+            aria-describedby={portInvalid ? "settings-port-error" : undefined}
+            value={props.portDraft}
+            onChange={(event) => props.onPortDraftChange(event.target.value)}
+          />
           <Failure props={props} section="port" id="settings-port-error" />
           <Button type="submit" disabled={props.saving === "port"}>
             {props.saving === "port" ? t("common.saving") : t("preferences.port.save")}
@@ -177,22 +222,17 @@ export function PreferencesForm(props: PreferencesFormProps) {
 
         {!lanOn && props.lanWantsOn && (
           <form onSubmit={submitLan}>
-            <div className="field">
-              <label htmlFor="settings-passphrase">{t("preferences.lan.passphrase_label")}</label>
-              <input
-                id="settings-passphrase"
-                type="password"
-                autoComplete="new-password"
-                minLength={PASSPHRASE_MIN_LENGTH}
-                required
-                aria-describedby="settings-passphrase-hint"
-                value={props.passphrase}
-                onChange={(event) => props.onPassphraseChange(event.target.value)}
-              />
-              <p id="settings-passphrase-hint" className="hint">
-                {t("preferences.lan.passphrase_hint", { min: PASSPHRASE_MIN_LENGTH })}
-              </p>
-            </div>
+            <TextField
+              id="settings-passphrase"
+              type="password"
+              label={t("preferences.lan.passphrase_label")}
+              hint={t("preferences.lan.passphrase_hint", { min: PASSPHRASE_MIN_LENGTH })}
+              autoComplete="new-password"
+              minLength={PASSPHRASE_MIN_LENGTH}
+              required
+              value={props.passphrase}
+              onChange={(event) => props.onPassphraseChange(event.target.value)}
+            />
             <Failure props={props} section="lan" />
             <Button type="submit" disabled={props.saving === "lan"}>
               {props.saving === "lan" ? t("common.saving") : t("preferences.lan.save")}
@@ -276,25 +316,7 @@ export function PreferencesForm(props: PreferencesFormProps) {
               </BusyButton>
             </div>
           ))}
-        <div className="field">
-          <label htmlFor="settings-dataset-import">{t("preferences.dataset.import_label")}</label>
-          <input
-            id="settings-dataset-import"
-            type="file"
-            accept=".zip,application/zip"
-            aria-describedby="settings-dataset-import-hint"
-            disabled={props.datasetWorking !== null}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              // Cleared, so the same file can be chosen again after a refusal.
-              event.target.value = "";
-              if (file !== undefined) props.onDatasetImport(file);
-            }}
-          />
-          <p id="settings-dataset-import-hint" className="hint">
-            {t("preferences.dataset.import_hint")}
-          </p>
-        </div>
+        <DatasetImport working={props.datasetWorking !== null} onImport={props.onDatasetImport} />
         <Failure props={props} section="dataset" />
         <p role="status">
           {props.datasetWorking === "import"
@@ -489,7 +511,7 @@ export function PreferencesPage({
     }
   };
 
-  return (<>
+  return (<div className="preferences">
     <PreferencesForm
       settings={settings}
       failure={failure}
@@ -527,5 +549,5 @@ export function PreferencesPage({
     />
     <ThemePreference />
     <BasemapSettings onAuthRequired={onAuthRequired} />
-  </>);
+  </div>);
 }

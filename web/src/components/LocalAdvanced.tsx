@@ -4,6 +4,9 @@ import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { capsRequest, gibDraft, memoryInputMax } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
+import { Checkbox } from "../controls/Checkbox.tsx";
+import { NumberField } from "../controls/NumberField.tsx";
+import { RadioGroup } from "../controls/RadioGroup.tsx";
 import { BusyButton } from "./BusyButton.tsx";
 import { LocalUpdate } from "./LocalUpdate.tsx";
 import type { ForceCpuRequest, LocalEngineView, RuntimeChoiceRequest, RuntimeId } from "../../../shared/api-types.ts";
@@ -75,42 +78,32 @@ export function AdvancedForm(props: AdvancedFormProps) {
 
       {/* The browser's own number check is off: the answer to a wrong number is a sentence with the limits. */}
       <form onSubmit={submit} noValidate>
-        <div className="field">
-          <label htmlFor="local-memory">{t("local.advanced.memory")}</label>
-          <input
-            id="local-memory"
-            type="number"
-            inputMode="decimal"
-            step={0.5}
-            min={MIN_MEMORY_GIB}
-            max={memoryInputMax(caps.maxMemoryBytes)}
-            aria-invalid={memoryInvalid ? "true" : undefined}
-            aria-describedby={memoryInvalid ? "local-memory-hint local-caps-error" : "local-memory-hint"}
-            value={props.memoryDraft}
-            onChange={(event) => props.onMemoryDraftChange(event.target.value)}
-          />
-          <p id="local-memory-hint" className="hint">
-            {t("local.advanced.memory_hint", { max: formatBytes(caps.maxMemoryBytes) })}
-          </p>
-        </div>
-        <div className="field">
-          <label htmlFor="local-cpus">{t("local.advanced.cpus")}</label>
-          <input
-            id="local-cpus"
-            type="number"
-            inputMode="numeric"
-            step={1}
-            min={1}
-            max={caps.maxCpus}
-            aria-invalid={cpusInvalid ? "true" : undefined}
-            aria-describedby={cpusInvalid ? "local-cpus-hint local-caps-error" : "local-cpus-hint"}
-            value={props.cpusDraft}
-            onChange={(event) => props.onCpusDraftChange(event.target.value)}
-          />
-          <p id="local-cpus-hint" className="hint">
-            {t("local.advanced.cpus_hint", { max: caps.maxCpus })}
-          </p>
-        </div>
+        <NumberField
+          id="local-memory"
+          label={t("local.advanced.memory")}
+          hint={t("local.advanced.memory_hint", { max: formatBytes(caps.maxMemoryBytes) })}
+          inputMode="decimal"
+          step={0.5}
+          min={MIN_MEMORY_GIB}
+          max={memoryInputMax(caps.maxMemoryBytes)}
+          aria-invalid={memoryInvalid ? "true" : undefined}
+          aria-describedby={memoryInvalid ? "local-caps-error" : undefined}
+          value={props.memoryDraft}
+          onChange={(event) => props.onMemoryDraftChange(event.target.value)}
+        />
+        <NumberField
+          id="local-cpus"
+          label={t("local.advanced.cpus")}
+          hint={t("local.advanced.cpus_hint", { max: caps.maxCpus })}
+          inputMode="numeric"
+          step={1}
+          min={1}
+          max={caps.maxCpus}
+          aria-invalid={cpusInvalid ? "true" : undefined}
+          aria-describedby={cpusInvalid ? "local-caps-error" : undefined}
+          value={props.cpusDraft}
+          onChange={(event) => props.onCpusDraftChange(event.target.value)}
+        />
         <Applied view={view} />
         <p>{t("local.advanced.next_start")}</p>
         {props.failure && (
@@ -127,22 +120,16 @@ export function AdvancedForm(props: AdvancedFormProps) {
       </form>
 
       <div className="field">
-        <div className="check">
-          <input
-            id="local-force-cpu"
-            type="checkbox"
-            checked={view.forceCpu}
-            aria-describedby="local-force-cpu-hint"
-            aria-disabled={props.forceCpuSaving ? "true" : undefined}
-            onChange={(event) => {
-              if (!props.forceCpuSaving) props.onForceCpuChange(event.target.checked);
-            }}
-          />
-          <label htmlFor="local-force-cpu">{t("local.advanced.force_cpu")}</label>
-        </div>
-        <p id="local-force-cpu-hint" className="hint">
-          {t("local.advanced.force_cpu_hint")}
-        </p>
+        <Checkbox
+          id="local-force-cpu"
+          label={t("local.advanced.force_cpu")}
+          hint={t("local.advanced.force_cpu_hint")}
+          checked={view.forceCpu}
+          aria-disabled={props.forceCpuSaving ? "true" : undefined}
+          onChange={(event) => {
+            if (!props.forceCpuSaving) props.onForceCpuChange(event.target.checked);
+          }}
+        />
         {props.forceCpuFailure && (
           <p role="alert" className="error">
             {failureText(props.forceCpuFailure)}
@@ -153,27 +140,18 @@ export function AdvancedForm(props: AdvancedFormProps) {
 
       {/* A program on this computer runs without a container tool, so there is nothing to choose. */}
       {choices.length > 1 && view.installed?.kind !== "native" && (
-        <fieldset aria-describedby="local-runtime-hint">
-          <legend>{t("local.runtime.legend")}</legend>
-          {([null, ...choices] as (RuntimeId | null)[]).map((choice) => {
-            const id = `local-runtime-${choice ?? "auto"}`;
-            return (
-              <div className="check" key={id}>
-                <input
-                  id={id}
-                  type="radio"
-                  name="local-runtime"
-                  value={choice ?? "auto"}
-                  checked={view.runtime.preferred === choice}
-                  aria-disabled={props.runtimeSaving ? "true" : undefined}
-                  onChange={() => {
-                    if (!props.runtimeSaving) props.onRuntimeChange(choice);
-                  }}
-                />
-                <label htmlFor={id}>{t(choice === null ? "local.runtime.auto" : `local.runtime.${choice}`)}</label>
-              </div>
-            );
-          })}
+        <RadioGroup
+          name="local-runtime"
+          legend={t("local.runtime.legend")}
+          describedBy="local-runtime-hint"
+          busy={props.runtimeSaving}
+          options={(["auto", ...choices] as const).map((choice) => ({
+            value: choice,
+            label: t(choice === "auto" ? "local.runtime.auto" : `local.runtime.${choice}`),
+          }))}
+          value={view.runtime.preferred ?? "auto"}
+          onChange={(choice) => props.onRuntimeChange(choice === "auto" ? null : choice)}
+        >
           <p id="local-runtime-hint" className="hint">
             {t("local.runtime.hint")}
           </p>
@@ -183,7 +161,7 @@ export function AdvancedForm(props: AdvancedFormProps) {
             </p>
           )}
           <p role="status">{props.runtimeSaved ? t("local.runtime.saved") : ""}</p>
-        </fieldset>
+        </RadioGroup>
       )}
       {props.update}
     </section>

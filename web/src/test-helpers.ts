@@ -44,6 +44,8 @@ export function untranslatedText(html: string, data: string[] = []): string[] {
 export function unlabelledInputs(html: string): string[] {
   const missing: string[] = [];
   for (const match of html.matchAll(/<input\b[^>]*>/g)) {
+    // A field hidden from screen readers and from Tab, opened by a labelled button, has no label of its own.
+    if (match[0].includes('aria-hidden="true"') && match[0].includes('tabindex="-1"')) continue;
     const id = /\bid="([^"]*)"/.exec(match[0])?.[1];
     if (!id || !html.includes(`for="${id}"`)) missing.push(id ?? match[0]);
   }

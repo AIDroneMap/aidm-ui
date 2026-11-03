@@ -81,7 +81,7 @@ test("a refused memory limit shows both limits in GiB and marks the field", () =
   });
   expect(html).toContain("Memory must be between 1.0 GiB and 29.8 GiB.");
   expect(html).toContain('aria-invalid="true"');
-  expect(html).toContain('aria-describedby="local-memory-hint local-caps-error"');
+  expect(html).toContain('aria-describedby="local-caps-error local-memory-hint"');
   expect(html).toContain('id="local-caps-error"');
   expect(untranslatedText(html)).toEqual([]);
 });
