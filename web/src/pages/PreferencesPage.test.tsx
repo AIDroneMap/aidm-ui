@@ -128,7 +128,7 @@ test("a bad port marks the field invalid and points it at the hint and the error
   const failure = new ApiFailure(400, "preferences.port_invalid", { min: 1, max: 65535 });
   const html = render({ failure: { section: "port", error: failure }, portDraft: "99999" });
   expect(html).toContain('aria-invalid="true"');
-  expect(html).toContain('aria-describedby="settings-port-hint settings-port-error"');
+  expect(html).toContain('aria-describedby="settings-port-error settings-port-hint"');
   expect(html).toContain('<p id="settings-port-error" role="alert"');
 
   const fine = render();
@@ -249,12 +249,12 @@ test("deleting asks first, with Delete and Keep, and says that the photos downlo
   expect(html).not.toContain(">Delete the sample photos</button>");
 });
 
-test("without a kept zip there is no delete button, and the import is labelled", () => {
+test("without a kept zip there is no delete button, and the import is a labelled button that opens a hidden zip field", () => {
   const html = render();
   expect(html).toContain("The sample photos are not on this computer yet.");
   expect(html).not.toContain("Delete the sample photos</button>");
-  expect(html).toContain('<label for="settings-dataset-import">Import the sample photos from a file</label>');
-  expect(html).toMatch(/<input id="settings-dataset-import" type="file" accept="[^"]*"[^>]*aria-describedby="settings-dataset-import-hint"/);
+  expect(html).toContain('<button type="button" class="secondary" aria-describedby="settings-dataset-import-hint">Import the sample photos from a file</button>');
+  expect(html).toMatch(/<input id="settings-dataset-import" type="file" class="visually-hidden" tabindex="-1" aria-hidden="true" accept="\.zip,application\/zip"\/>/);
   expect(unlabelledInputs(html)).toEqual([]);
 });
 
@@ -268,6 +268,7 @@ test("an import in progress, a deletion and a refused file are said in the sampl
   const importing = render({ datasetWorking: "import" });
   expect(importing).toContain('<p role="status">Importing...</p>');
   expect(importing).toMatch(/<input id="settings-dataset-import"[^>]*disabled=""/);
+  expect(importing).toMatch(/<button[^>]*disabled=""[^>]*>Import the sample photos from a file<\/button>/);
   expect(render({ dataset: kept, datasetWorking: "delete" })).toContain("Deleting...</button>");
   expect(render({ datasetDone: "deleted" })).toContain('<p role="status">The sample photos are deleted.</p>');
   expect(render({ datasetDone: "imported" })).toContain('<p role="status">The sample photos are imported.</p>');

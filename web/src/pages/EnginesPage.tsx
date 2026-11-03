@@ -1,6 +1,7 @@
 import { Button } from "../controls/Button.tsx";
 import { EmptyState } from "../controls/EmptyState.tsx";
 import { Notice } from "../controls/Notice.tsx";
+import { TextField } from "../controls/TextField.tsx";
 import { ENGINE_STATE_TONES, StatusPill } from "../controls/StatusPill.tsx";
 import { IconCpu, IconPlus } from "../icons/icons.tsx";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
@@ -257,52 +258,41 @@ export function EngineForm(props: EngineFormProps) {
   return (
     <form onSubmit={submit} aria-labelledby="engine-form-title" className="engine-form">
       <h2 id="engine-form-title">{t(props.mode === "add" ? "engine.form.add_title" : "engine.form.edit_title")}</h2>
-      <div className="field">
-        <label htmlFor="engine-name">{t("engine.form.name")}</label>
-        <input
-          ref={props.nameRef}
-          id="engine-name"
-          type="text"
-          autoComplete="off"
-          value={props.name}
-          onChange={(event) => props.onNameChange(event.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="engine-address">{t("engine.form.address")}</label>
-        <input
-          id="engine-address"
-          type="text"
-          inputMode="url"
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          aria-invalid={addressInvalid ? "true" : undefined}
-          aria-describedby={addressInvalid ? "engine-address-hint engine-form-error" : "engine-address-hint"}
-          value={props.address}
-          onChange={(event) => props.onAddressChange(event.target.value)}
-        />
-        <p id="engine-address-hint" className="hint">
-          {t("engine.form.address_hint")}
-        </p>
-      </div>
-      <div className="field">
-        <label htmlFor="engine-token">{t("engine.form.token")}</label>
-        <input
-          id="engine-token"
-          type="password"
-          autoComplete="off"
-          aria-describedby="engine-token-hint"
-          required={tokenRequired}
-          value={props.token}
-          onChange={(event) => props.onTokenChange(event.target.value)}
-        />
-        <p id="engine-token-hint" className="hint">
-          {tokenRequired
+      <TextField
+        ref={props.nameRef}
+        id="engine-name"
+        label={t("engine.form.name")}
+        autoComplete="off"
+        value={props.name}
+        onChange={(event) => props.onNameChange(event.target.value)}
+      />
+      <TextField
+        id="engine-address"
+        label={t("engine.form.address")}
+        hint={t("engine.form.address_hint")}
+        inputMode="url"
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        aria-invalid={addressInvalid ? "true" : undefined}
+        aria-describedby={addressInvalid ? "engine-form-error" : undefined}
+        value={props.address}
+        onChange={(event) => props.onAddressChange(event.target.value)}
+      />
+      <TextField
+        id="engine-token"
+        type="password"
+        label={t("engine.form.token")}
+        hint={
+          tokenRequired
             ? t("engine.token_required")
-            : t(props.mode === "add" ? "engine.form.token_hint_add" : "engine.form.token_hint_edit")}
-        </p>
-      </div>
+            : t(props.mode === "add" ? "engine.form.token_hint_add" : "engine.form.token_hint_edit")
+        }
+        autoComplete="off"
+        required={tokenRequired}
+        value={props.token}
+        onChange={(event) => props.onTokenChange(event.target.value)}
+      />
 
       {props.failure && (
         <>

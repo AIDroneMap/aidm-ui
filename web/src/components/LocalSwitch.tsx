@@ -2,6 +2,7 @@ import { useRef, useState, type Ref } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
+import { Toggle } from "../controls/Toggle.tsx";
 import { BusyButton } from "./BusyButton.tsx";
 import { ErrorMessage } from "./ErrorMessage.tsx";
 import type { LocalEngineEnabledRequest, LocalEngineView } from "../../../shared/api-types.ts";
@@ -23,24 +24,17 @@ export interface SwitchProps {
 export function SwitchView({ view, busy, failure, onToggle, onStartAgain, switchRef }: SwitchProps) {
   return (
     <div className="local-switch">
-      <div className="check">
-        <input
-          ref={switchRef}
-          id="local-enabled"
-          type="checkbox"
-          role="switch"
-          checked={view.enabled}
-          aria-describedby="local-enabled-hint"
-          aria-disabled={busy ? "true" : undefined}
-          onChange={(event) => {
-            if (!busy) onToggle(event.target.checked);
-          }}
-        />
-        <label htmlFor="local-enabled">{t("local.switch.label")}</label>
-      </div>
-      <p id="local-enabled-hint" className="hint">
-        {t("local.switch.hint")}
-      </p>
+      <Toggle
+        ref={switchRef}
+        id="local-enabled"
+        label={t("local.switch.label")}
+        hint={t("local.switch.hint")}
+        checked={view.enabled}
+        aria-disabled={busy ? "true" : undefined}
+        onChange={(event) => {
+          if (!busy) onToggle(event.target.checked);
+        }}
+      />
       <div role="status">
         {view.restarts && (
           <p>

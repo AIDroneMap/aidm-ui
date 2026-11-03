@@ -203,7 +203,7 @@ test("a refused plain HTTP address shows its text and marks the address", () => 
   expect(html).toContain('role="alert"');
   expect(html).toContain("This address needs https://.");
   expect(html).toContain('aria-invalid="true"');
-  expect(html).toContain('aria-describedby="engine-address-hint engine-form-error"');
+  expect(html).toContain('aria-describedby="engine-form-error engine-address-hint"');
   expect(untranslatedText(html, ["http://example.com"])).toEqual([]);
 });
 

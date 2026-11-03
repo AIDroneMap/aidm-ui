@@ -35,6 +35,26 @@ test("a radio group is a fieldset with a legend, one native radio per choice and
   expect(html).toContain('<input id="mode-move" type="radio" name="mode" value="move"/><label for="mode-move">Move</label>');
 });
 
+test("a busy radio group marks its choices unavailable, keeps them in the tab order, and carries its description and what follows", () => {
+  const changes: string[] = [];
+  const element = <RadioGroup name="mode" legend="How" value="copy" busy describedBy="mode-note" onChange={(value) => changes.push(value)} options={[{ value: "copy", label: "Copy" }, { value: "move", label: "Move" }]}><p id="mode-note">Applies next time</p></RadioGroup>;
+  const html = renderToStaticMarkup(element);
+  expect(html).toStartWith('<fieldset class="radio-group" aria-describedby="mode-note"><legend>How</legend>');
+  expect(html.match(/aria-disabled="true"/g)?.length).toBe(2);
+  expect(html).not.toMatch(/(?<!aria-)disabled=/);
+  expect(html).toEndWith('<p id="mode-note">Applies next time</p></fieldset>');
+  // A change while busy is ignored; once free, it goes through.
+  const input = (group: typeof element, value: string) => {
+    const fieldset = group.type(group.props) as { props: { children: Array<unknown> } };
+    const options = fieldset.props.children[1] as Array<{ props: { children: Array<{ props: { value?: string; onChange?: () => void } }> } }>;
+    return options.map((option) => option.props.children[0]).find((child) => child?.props.value === value)!;
+  };
+  input(element, "move").props.onChange!();
+  expect(changes).toEqual([]);
+  input(<RadioGroup {...element.props} busy={false} />, "move").props.onChange!();
+  expect(changes).toEqual(["move"]);
+});
+
 test("a segmented control is a radio group whose legend can be for screen readers only", () => {
   const html = renderToStaticMarkup(<SegmentedControl name="theme" legend="Theme" hideLegend value="dark" onChange={noop} options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} />);
   expect(html).toContain('<legend class="visually-hidden">Theme</legend>');

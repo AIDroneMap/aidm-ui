@@ -1,3 +1,4 @@
+import { RadioGroup } from "../controls/RadioGroup.tsx";
 import { t } from "../i18n/translate.ts";
 import type { UpdateCheck } from "../../../shared/api-types.ts";
 
@@ -19,31 +20,18 @@ const OPTIONS: readonly UpdateCheck[] = ["daily", "never"];
 export function UpdateCheckQuestion(props: UpdateCheckQuestionProps) {
   const sentId = `${props.idPrefix}-update-sent`;
   return (
-    <fieldset aria-describedby={sentId}>
-      <legend>{t("updates.question")}</legend>
-      {OPTIONS.map((option) => {
-        const id = `${props.idPrefix}-update-${option}`;
-        return (
-          <div className="check" key={option}>
-            <input
-              id={id}
-              type="radio"
-              name={`${props.idPrefix}-update-check`}
-              value={option}
-              checked={props.value === option}
-              disabled={props.loading}
-              aria-disabled={props.saving ? "true" : undefined}
-              onChange={() => {
-                if (!props.saving) props.onChange(option);
-              }}
-            />
-            <label htmlFor={id}>{t(`updates.option.${option}`)}</label>
-          </div>
-        );
-      })}
+    <RadioGroup
+      name={`${props.idPrefix}-update`}
+      legend={t("updates.question")}
+      describedBy={sentId}
+      busy={props.saving}
+      options={OPTIONS.map((option) => ({ value: option, label: t(`updates.option.${option}`), disabled: props.loading }))}
+      value={props.value}
+      onChange={props.onChange}
+    >
       <p id={sentId} className="hint">
         {t("updates.sent")}
       </p>
-    </fieldset>
+    </RadioGroup>
   );
 }
