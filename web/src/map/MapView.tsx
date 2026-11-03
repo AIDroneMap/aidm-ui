@@ -1,6 +1,7 @@
 import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { isBasemapSettings, type BasemapSettings } from "../../../shared/basemap.ts";
 import type { RunMapView } from "../../../shared/map.ts";
+import { Button } from "../controls/Button.tsx";
 import { Toolbar } from "../controls/Toolbar.tsx";
 import { IconArrowLeft } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
@@ -16,7 +17,7 @@ class MapErrorBoundary extends Component<{ children: ReactNode; onRetry: () => v
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() {
-    if (this.state.failed) return <>{this.props.back && <BackToolbar back={this.props.back} />}<div role="alert"><p>{t("map.error")}</p><button onClick={this.props.onRetry}>{t("map.retry")}</button></div></>;
+    if (this.state.failed) return <>{this.props.back && <BackToolbar back={this.props.back} />}<div role="alert"><p>{t("map.error")}</p><Button onClick={this.props.onRetry}>{t("map.retry")}</Button></div></>;
     return this.props.children;
   }
 }
@@ -68,8 +69,8 @@ function MapStates({ runId, back, open }: { runId: string; back?: string; open: 
   return <>
     {back && !drawn && <BackToolbar back={back} />}
     {open && !view && !failed && <p role="status">{t("map.loading")}</p>}
-    {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><button onClick={retry}>{t("basemap.retry")}</button></div>}
-    {failed && <div role="alert"><p>{t("map.error")}</p><button onClick={retry}>{t("map.retry")}</button></div>}
+    {basemapFailed && <div role="alert"><p>{t("basemap.settings_failed")}</p><Button onClick={retry}>{t("basemap.retry")}</Button></div>}
+    {failed && <div role="alert"><p>{t("map.error")}</p><Button onClick={retry}>{t("map.retry")}</Button></div>}
     {view?.state === "unavailable" && <p role="status">{t("map.unavailable")}</p>}
     {view?.state === "ready" && view.layers.length > 0 && <MapErrorBoundary key={`${runId}-${mapAttempt}`} back={back} onRetry={() => setMapAttempt(value => value + 1)}><Suspense fallback={<p role="status">{t("map.loading")}</p>}><MapCanvas runId={runId} layers={view.layers} basemap={basemap} back={back} onRetry={() => setMapAttempt(value => value + 1)} /></Suspense></MapErrorBoundary>}
     {view?.state === "ready" && view.layers.length === 0 && <p role="status">{t("map.unavailable")}</p>}
@@ -81,7 +82,7 @@ export function MapPanel({ runId }: { runId: string }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { setOpen(false); }, [runId]);
   return <section aria-label={t("map.title")}>
-    {!open && <button onClick={() => setOpen(true)}>{t("map.open")}</button>}
+    {!open && <Button onClick={() => setOpen(true)}>{t("map.open")}</Button>}
     <MapStates runId={runId} open={open} />
   </section>;
 }

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Button } from "../controls/Button.tsx";
 import { t } from "../i18n/translate.ts";
 import "./model.css";
 
@@ -9,7 +10,7 @@ export function ModelPanel({ runId, size }: { runId: string; size: number }) {
   useEffect(() => { setOpenRun(null); }, [runId]);
   const open = openRun === runId;
   return <section>
-    <button type="button" onClick={() => setOpenRun(open ? null : runId)}>{t(open ? "model.close" : "model.open")}</button>
+    <Button onClick={() => setOpenRun(open ? null : runId)}>{t(open ? "model.close" : "model.open")}</Button>
     {open && <Suspense fallback={<p role="status">{t("model.loading")}</p>}><ModelView key={runId} runId={runId} size={size} /></Suspense>}
   </section>;
 }

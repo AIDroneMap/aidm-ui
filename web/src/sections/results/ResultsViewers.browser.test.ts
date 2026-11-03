@@ -181,15 +181,15 @@ test("Results opens a tile-less orthophoto on the map through range requests and
     await wait(`document.querySelector('.model-viewer-canvas canvas').toDataURL() === ${JSON.stringify(first)}`);
     expect(requests.filter(request => !request.url.startsWith(`${h.base}/`) && !request.url.startsWith("data:") && !request.url.startsWith("blob:"))).toEqual([]);
 
-    // In both themes the Results screen and the map's toolbar keep their text and controls readable.
+    // In both themes the Results screen and the map's toolbar keep their text and controls readable, with no browser default look.
     for (const theme of ["light", "dark"] as const) {
       await evaluate(`localStorage.setItem(${JSON.stringify(THEME_KEY)}, ${JSON.stringify(theme)}); location.hash = "#/projects/${project.id}/results"; location.reload(); true`);
       await wait(`document.documentElement.dataset.theme === ${JSON.stringify(theme)} && document.querySelector('main a.viewer-tile') && document.querySelector('main .results-danger')`);
       await evaluate(`(${installAudits.toString()})(); true`);
-      expect(await evaluate("[...audits.textContrast(document.querySelector('main')), ...audits.edgeContrast(document.querySelector('main'))]")).toEqual([]);
+      expect(await evaluate("[...audits.textContrast(document.querySelector('main')), ...audits.edgeContrast(document.querySelector('main')), ...audits.nativeLooks(document.querySelector('main'))]")).toEqual([]);
       await evaluate(`location.hash = "#/projects/${project.id}/results/${run.id}/map"; true`);
       await wait(`document.querySelector('.result-map-full[data-orthophoto="drawn"]')`);
-      expect(await evaluate("[...audits.textContrast(document.querySelector('main [role=toolbar]')), ...audits.edgeContrast(document.querySelector('main [role=toolbar]'))]")).toEqual([]);
+      expect(await evaluate("[...audits.textContrast(document.querySelector('main [role=toolbar]')), ...audits.edgeContrast(document.querySelector('main [role=toolbar]')), ...audits.nativeLooks(document.querySelector('main [role=toolbar]'))]")).toEqual([]);
     }
   } finally {
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error("test finished")); }

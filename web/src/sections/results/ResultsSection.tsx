@@ -7,6 +7,7 @@ import { Button } from "../../controls/Button.tsx";
 import { EmptyState } from "../../controls/EmptyState.tsx";
 import { Notice } from "../../controls/Notice.tsx";
 import { PageHeader } from "../../controls/PageHeader.tsx";
+import { Select } from "../../controls/Select.tsx";
 import { RUN_STATE_TONES, StatusPill } from "../../controls/StatusPill.tsx";
 import { IconMap } from "../../icons/icons.tsx";
 import { t } from "../../i18n/translate.ts";
@@ -65,15 +66,14 @@ export function ResultsSection({ project, runId, viewer, onChange, onAuthRequire
   return <>
     <PageHeader title={t("results.title")} subtitle={projectName(project)} />
     {selected === undefined ? <NoResults runs={runs} /> : <>
-      {archives.length > 0 && <div className="results-switcher field">
-        <label htmlFor="results-run">{t("results.switcher")}</label>
-        <select id="results-run" value={archives.some((archive) => archive.runId === selected) ? selected : ""} onChange={(event) => { window.location.hash = resultsHash(project.id, Number(event.target.value)); }}>
+      {archives.length > 0 && <div className="results-switcher">
+        <Select id="results-run" label={t("results.switcher")} value={archives.some((archive) => archive.runId === selected) ? selected : ""} onChange={(event) => { window.location.hash = resultsHash(project.id, Number(event.target.value)); }}>
           {!archives.some((archive) => archive.runId === selected) && <option value="" disabled>{t("results.switcher_other")}</option>}
           {archives.map((archive) => {
             const run = runs?.find((item) => item.id === archive.runId);
             return <option key={archive.runId} value={archive.runId}>{run ? t("results.run_option", { name: runLabel(run), date: dateFormat.format(new Date(run.createdAt)) }) : t("run.title", { id: archive.runId })}</option>;
           })}
-        </select>
+        </Select>
       </div>}
       <RunResults key={selected} project={project} runId={selected} onChange={onChange} onAuthRequired={onAuthRequired} />
     </>}

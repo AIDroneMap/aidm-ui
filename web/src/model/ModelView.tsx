@@ -5,6 +5,7 @@ import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import dracoJs from "three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?url";
 import dracoWasm from "three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Button } from "../controls/Button.tsx";
 import { Toolbar } from "../controls/Toolbar.tsx";
 import { IconArrowLeft, IconRotateCcw } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
@@ -172,7 +173,7 @@ export default function ModelView({ runId, back }: { runId: string; size: number
     <Toolbar label={t("results.model.toolbar")}>
       <a className="button" href={back}><IconArrowLeft /> {t("results.back")}</a>
       <span className="toolbar-separator" />
-      <button type="button" className="secondary" disabled={state !== "ready"} onClick={() => reset.current()}><IconRotateCcw /> {t("model.reset")}</button>
+      <Button variant="secondary" disabled={state !== "ready"} onClick={() => reset.current()}><IconRotateCcw /> {t("model.reset")}</Button>
     </Toolbar>
     {state === "loading" && <p role="status">{t("model.loading")}</p>}
     {state === "error" && <p role="alert">{t("model.error")}</p>}
@@ -183,6 +184,6 @@ export default function ModelView({ runId, back }: { runId: string; size: number
     {state === "loading" && <p role="status">{t("model.loading")}</p>}
     {state === "error" && <p role="alert">{t("model.error")}</p>}
     <div ref={container} />
-    {state === "ready" && <><p>{t("model.instructions")}</p><button type="button" onClick={() => reset.current()}>{t("model.reset")}</button></>}
+    {state === "ready" && <><p>{t("model.instructions")}</p><Button onClick={() => reset.current()}>{t("model.reset")}</Button></>}
   </div>;
 }

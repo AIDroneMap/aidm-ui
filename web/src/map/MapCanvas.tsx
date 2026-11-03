@@ -5,6 +5,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { BasemapSettings } from "../../../shared/basemap.ts";
 import { mapRequest } from "../basemap/map-request.ts";
 import type { MapLayer } from "../../../shared/map.ts";
+import { Button } from "../controls/Button.tsx";
+import { Checkbox } from "../controls/Checkbox.tsx";
 import { Toolbar } from "../controls/Toolbar.tsx";
 import { IconArrowLeft } from "../icons/icons.tsx";
 import { t } from "../i18n/translate.ts";
@@ -108,10 +110,10 @@ export default function MapCanvas({ runId, layers, basemap, onRetry, back }: Pro
     if (map.current?.getLayer(BASEMAP)) map.current.setLayoutProperty(BASEMAP, "visibility", next ? "visible" : "none");
   }
 
-  const layerChoice = <fieldset disabled={!loaded}><legend>{t("map.layers")}</legend>{layers.map(layer => <label key={layer.name}><input type="checkbox" checked={visible[layer.name] ?? false} onChange={() => toggle(layer)} /> {t(`map.layer.${layer.name}`)}</label>)}</fieldset>;
+  const layerChoice = <fieldset disabled={!loaded}><legend>{t("map.layers")}</legend>{layers.map(layer => <Checkbox key={layer.name} id={`map-layer-${runId}-${layer.name}`} label={t(`map.layer.${layer.name}`)} checked={visible[layer.name] ?? false} onChange={() => toggle(layer)} />)}</fieldset>;
   const notices = <>
     {basemapFailed && basemap && <p role="alert">{t("basemap.failed", { url: basemap.url })}</p>}
-    {failed && <div role="alert"><p>{t("map.tile_error")}</p><button onClick={onRetry}>{t("map.retry")}</button></div>}
+    {failed && <div role="alert"><p>{t("map.tile_error")}</p><Button onClick={onRetry}>{t("map.retry")}</Button></div>}
     {(orthophoto === "compression" || orthophoto === "format" || orthophoto === "error") && <p role="alert">{t(`results.map.orthophoto_${orthophoto}`)}</p>}
     {orthophoto === "reading" && <p role="status">{t("results.map.orthophoto_reading")}</p>}
   </>;
@@ -123,7 +125,7 @@ export default function MapCanvas({ runId, layers, basemap, onRetry, back }: Pro
       <a className="button" href={back}><IconArrowLeft /> {t("results.back")}</a>
       <span className="toolbar-separator" />
       {layerChoice}
-      {basemap?.enabled && <label className="map-basemap-choice"><input type="checkbox" checked={basemapShown} disabled={!loaded} onChange={toggleBasemap} /> {t("results.map.basemap")}</label>}
+      {basemap?.enabled && <Checkbox id={`map-basemap-${runId}`} label={t("results.map.basemap")} checked={basemapShown} disabled={!loaded} onChange={toggleBasemap} />}
       <span className="toolbar-spacer" />
       <span className="map-coordinates" aria-live="off">{coordinates ?? t("results.map.outside")}</span>
     </Toolbar>
