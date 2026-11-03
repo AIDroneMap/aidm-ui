@@ -5,7 +5,6 @@ import type { Route } from "../router.ts";
 import { DetailsSection } from "../sections/details/DetailsSection.tsx";
 import { PhotosSection } from "../sections/photos/PhotosSection.tsx";
 import { ResultsSection } from "../sections/results/ResultsSection.tsx";
-import { ReviewSection } from "../sections/review/ReviewSection.tsx";
 import { RunsSection } from "../sections/runs/RunsSection.tsx";
 import { SettingsSection } from "../sections/settings/SettingsSection.tsx";
 import type { WorkspaceProject } from "./useWorkspaceProject.ts";
@@ -23,8 +22,8 @@ export function ProjectScreen({ route, workspace, onAuthRequired }: { route: Pro
 function Section({ route, project, refresh, onAuthRequired }: { route: ProjectRoute; project: ProjectView; refresh(): void; onAuthRequired(): void }) {
   switch (route.section) {
     case "photos": return <PhotosSection project={project} onChange={refresh} onAuthRequired={onAuthRequired} />;
-    case "settings": return <SettingsSection project={project} onAuthRequired={onAuthRequired} />;
-    case "review": return <ReviewSection project={project} />;
+    // One element for both sections, so the draft of the run outlives the move between them.
+    case "settings": case "review": return <SettingsSection project={project} section={route.section} onAuthRequired={onAuthRequired} />;
     case "runs": return <RunsSection project={project} onAuthRequired={onAuthRequired} />;
     case "results": return <ResultsSection project={project} runId={route.runId} viewer={route.viewer} onChange={refresh} onAuthRequired={onAuthRequired} />;
     case "details": return <DetailsSection project={project} onChange={refresh} onAuthRequired={onAuthRequired} />;

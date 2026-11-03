@@ -32,7 +32,7 @@ test("project switches sources without losing edits and ignores stale link reads
     if (path.endsWith("/photos")) { await Bun.sleep(1000); return Response.json({ files: [], nextOffset: null }); }
     if (path.endsWith("/photo-facts")) { await Bun.sleep(1000); return Response.json({ photoCount: 0, photoBytes: 0, duplicates: 0, videoCount: 0, withoutGps: 0, cameras: [], bands: [], dateSpans: [], flights: [], flightCount: 0, unassignedCount: 0, pendingMetadata: 0, nextOffset: null }); }
     if (path === "/api/engines") return Response.json([{ id: 1, name: "Engine", enabled: true }]);
-    if (path.endsWith("/run-review")) return Response.json({ project: { id: 1, name: "Survey" }, engine: { id: 1, name: "Engine", kind: "remote", info: {}, gpu: null, imageLimit: null, imageLimitReported: false }, preset: "quick-map", presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "link", photos: { included: null, excluded: null, total: null, bytes: null }, facts: null, options: [], outputs: [], alwaysProduced: [], revision: "revision", blocked: null });
+    if (path.endsWith("/run-review")) return Response.json({ project: { id: 1, name: "Survey" }, engine: { id: 1, name: "Engine", kind: "remote", info: {}, gpu: null, imageLimit: null, imageLimitReported: false }, preset: "quick-map", presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "link", photos: { included: null, excluded: null, total: null, bytes: null }, facts: null, options: [], outputs: [], serverSet: [], alwaysProduced: [], revision: "revision", blocked: null });
     return new Response(null, { status: 404 });
   } });
   let browser: Awaited<ReturnType<typeof startBrowser>> | undefined;

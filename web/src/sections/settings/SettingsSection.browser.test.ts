@@ -158,8 +158,8 @@ test("Settings searches, filters to changed in the address, compares and resets,
 
     // Review is reached by keyboard and shows the edited value on the chosen engine.
     await evaluate(`${review}.focus(); true`); await press("Enter");
-    await wait(`document.body.textContent.includes('Engine: Other engine') && document.body.textContent.includes(${JSON.stringify(`${words["option.orthophoto-resolution.name"]} (orthophoto-resolution): 3`)})`);
-    await wait(`[...document.querySelectorAll('button')].some(el => el.textContent === ${JSON.stringify(words["run_start.start"])} && !el.disabled)`);
+    await wait(`location.hash === '#/projects/${project}/review' && document.body.textContent.includes('Engine: Other engine') && [...document.querySelectorAll('.review-options li')].some(item => item.textContent === ${JSON.stringify(`${words["option.orthophoto-resolution.name"]} orthophoto-resolution 3`)})`);
+    await wait(`[...document.querySelectorAll('button')].some(el => el.textContent === ${JSON.stringify(words["review.start"])} && !el.disabled)`);
 
     // Back in Settings, the dark theme keeps the text readable.
     await evaluate(`[...document.querySelectorAll('button')].find(el => el.textContent === ${JSON.stringify(words["settings.back"])}).click(); true`);

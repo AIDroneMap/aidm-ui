@@ -6,9 +6,9 @@ The review revision covers the photo inventory, saved exclusions, preset, engine
 
 Photo metadata is read in bounded batches. Start waits until the flight list is complete. A finite image limit blocks counts above the limit; equality is allowed. Missing and invalid limits remain unreported. A reported null means no limit.
 
-The server requests supported EPT, cloud-optimised GeoTIFF, GLB and tile options. These are requested formats. They do not guarantee a file exists: Quick map bypasses dense reconstruction, for example. The conditional output list follows the effective preset and engine defaults. Available downloads come from the completed archive.
+The server requests the EPT point cloud, the cloud-optimised GeoTIFF and the GLB model, which the task API forces on every task. Map tiles are a settings row that is on by default. These are requested formats. They do not guarantee a file exists: Quick map bypasses dense reconstruction, for example. The conditional output list follows the effective preset and engine defaults. Available downloads come from the completed archive.
 
-For a local engine, the installed package and CPU-only setting determine GPU use. Remote GPU capability remains unreported. Server-owned options and file paths cannot be supplied in the start request.
+For a local engine, the installed package and CPU-only setting give GPU use its default; an edit to it is sent as set. Remote GPU capability remains unreported. File paths cannot be supplied in the start request.
 
 Preparation holds the project's deletion guard. It checks file size and SHA-256, sends selected content to an uncommitted task, and commits only after copying succeeds. Imported originals stay in place. Preparation detects source or exclusion drift and discards the uncommitted task. A cancellation during task creation waits for its bounded response so cleanup has the task identity. Once committed, the existing tracker follows the task and retains its archive.
 

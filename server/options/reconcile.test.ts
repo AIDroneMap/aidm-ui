@@ -39,3 +39,20 @@ test("every row keeps the engine's help, so the settings row can quote the engin
   const rows = reconcileOptions(released());
   for (const option of released()) expect(rows.find((row) => row.name === option.name)?.help, option.name).toBe(option.help);
 });
+
+test("a test-mode list passes the count check with its four retired options unexplained, and with nothing more or less", () => {
+  const retired = ["build-overviews", "pc-rectify", "pc-tile", "texturing-skip-local-seam-leveling"];
+  const missing = ["gps-z-offset", "matcher-order", "report-units", "sfm-no-partial"];
+  const legacy = (names: readonly string[]) => [
+    ...released().filter((option) => !missing.includes(option.name)),
+    ...names.map((name) => ({ name, type: "bool", value: "false", domain: "", help: "Retired" }) satisfies EngineOption),
+  ];
+  const bundled = legacy(retired);
+  expect(() => assertEditorRows(bundled, reconcileOptions(bundled), "2.7.0", "test-mode")).not.toThrow();
+  expect(() => assertEditorRows(bundled, reconcileOptions(bundled), "2.7.0")).toThrow('"unexplained":["build-overviews","pc-rectify","pc-tile","texturing-skip-local-seam-leveling"]');
+  const another = legacy([...retired, "brand-new-option"]);
+  expect(() => assertEditorRows(another, reconcileOptions(another), "2.7.0", "test-mode")).toThrow('"unexplained":["brand-new-option","build-overviews"');
+  const fewer = legacy(retired.slice(1));
+  expect(() => assertEditorRows(fewer, reconcileOptions(fewer), "2.7.0", "test-mode")).toThrow('"unexplained":["pc-rectify"');
+  expect(() => assertEditorRows(bundled, reconcileOptions(bundled).slice(1), "2.7.0", "test-mode")).toThrow('"dropped"');
+});

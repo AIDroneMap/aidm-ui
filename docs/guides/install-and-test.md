@@ -79,7 +79,7 @@ Start with the [public vineyard dataset](https://huggingface.co/datasets/AIDrone
 
 ### Browser upload
 
-On **Projects**, choose **New project** and give it a name. The project opens on **Photos**: select or drop the photos in its upload area. Notes are in **Details**. Wait for preparation to finish. Check the photo count, camera and GPS facts, and any exclusions. In **Settings**, keep the **Quick map** preset, check the selected engine, choose **Review and start**, then **Start run**. Reload while uploading to check that already received chunks resume instead of starting over. After completion, repeat the archive and available-viewer checks above.
+On **Projects**, choose **New project** and give it a name. The project opens on **Photos**: select or drop the photos in its upload area. Notes are in **Details**. Wait for preparation to finish. Check the photo count, camera and GPS facts, and any exclusions. In **Settings**, keep the **Quick map** preset, check the selected engine and choose **Review and start**. **Review** opens. Check the photo count, the engine and its facts, the run name, what comes out, the changed options and the warnings, then choose **Start the run**. Reload while uploading to check that already received chunks resume instead of starting over. After completion, repeat the archive and available-viewer checks above.
 
 ### Import a folder
 

@@ -13,6 +13,7 @@ import { isSupportedVersion } from "../engines/versions.ts";
 import { problemFromFailure } from "../engines/problems.ts";
 import { reconcileOptions } from "../options/reconcile.ts";
 import { validateOptions } from "../options/validate.ts";
+import { serverChosen, sentOptions, withServerDefaults } from "../options/run-options.ts";
 import type { PhotoStore } from "../photos/photo-store.ts";
 import type { RunRecord, RunStore } from "../runs/run-store.ts";
 import { isFinished } from "../runs/run-state.ts";
@@ -25,17 +26,6 @@ import type { ProjectStore } from "./project-store.ts";
 import { RunInputs, RunInputsChanged, type RunInputSnapshot, type SavedRunInputs } from "./run-inputs.ts";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; status: number; error: ApiError };
-
-/**
- * The rows ADR 0012 shows that runs do not send yet. Until the server sets an option only when the
- * operator left its default (#141), a run sends what it sent before these became rows: the server
- * sets the output formats, the map tiles and GPU use, the engine keeps its own process count, and
- * an edit to one of these rows is checked against the engine's domain but does not reach the engine.
- */
-export const NOT_SENT_YET: ReadonlySet<string> = new Set([
-  "max-concurrency", "no-gpu", "tiles", "pc-ept", "cog", "gltf", "cameras", "boundary", "use-exif", "force-gps",
-  "split", "split-overlap", "sm-cluster", "sm-no-align", "merge", "end-with", "rerun-from",
-]);
 
 function refuse(status: number, code: ApiError["code"], data: ApiError["data"] = {}): { ok: false; status: number; error: ApiError } {
   return { ok: false, status, error: { code, data } };
@@ -136,22 +126,23 @@ export class ProjectRuns {
     const editableNames = new Set(supported.map(option => option.name));
     const invalidEdit = validateOptions(edits, reported.value.filter(option => editableNames.has(option.name)));
     if (invalidEdit) return refuse(400, "option.invalid_value", { name: invalidEdit.name });
-    const sent = supported.filter(option => !NOT_SENT_YET.has(option.name));
-    const plan = planPreset(preset, sent, edits);
+    const installed = settings.get("local.package");
+    const gpu = engine.kind === "remote" || installed === null ? null : !settings.get("local.forceCpu") && (isNativePackage(installed) ? installed.native.gpu : installed.container.gpu);
+    // The server's values are the defaults of the rows it used to set, so an edit there is the operator's and is sent as such.
+    const rows = withServerDefaults(supported, { kind: engine.kind, gpu });
+    const locked = new Set(rows.filter(option => option.locked !== null).map(option => option.name));
+    const plan = planPreset(preset, rows, edits.filter(edit => !locked.has(edit.name)));
     const detail = (option: { name: string; value: string | number | boolean; defaultValue: string | number | boolean }): ReviewOption => ({
       ...option, help: reported.value.find(item => item.name === option.name)?.help ?? "", unexplained: supported.find(item => item.name === option.name)?.unexplained ?? true,
     });
-    const installed = settings.get("local.package");
-    const gpu = engine.kind === "remote" || installed === null ? null : !settings.get("local.forceCpu") && (isNativePackage(installed) ? installed.native.gpu : installed.container.gpu);
-    const outputFlags = SERVER_OUTPUT_KEYS.filter(name => reported.value.some(option => option.name === name));
-    const options: TaskOption[] = [...plan.effectiveOptions, ...outputFlags.map(name => ({ name, value: true }))];
-    if (engine.kind === "local" && reported.value.some(option => option.name === "no-gpu")) options.push({ name: "no-gpu", value: gpu !== true });
+    const outputFlags = SERVER_OUTPUT_KEYS.filter(name => locked.has(name));
+    const options: TaskOption[] = sentOptions(plan.effectiveOptions, rows, supported);
     const invalid = validateOptions(options, reported.value);
     let blocked: ApiError | null = null;
     if (snapshot.wayIn !== "link" && !snapshot.photoCount) blocked = { code: "project_run.no_photos", data: {} };
     else if (facts && facts.pendingMetadata > 0) blocked = { code: "project_run.metadata_pending", data: {} };
     else if (snapshot.wayIn !== "link" && info.value.maxImages != null && snapshot.photoCount > info.value.maxImages) blocked = { code: "project_run.image_limit", data: { count: snapshot.photoCount, limit: info.value.maxImages } };
-    else if (plan.unsupportedPresetOptions.length || !outputFlags.includes("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
+    else if (plan.unsupportedPresetOptions.length || !editableNames.has("tiles")) blocked = { code: "project_run.preset_unavailable", data: { names: plan.unsupportedPresetOptions.map(option => option.name) } };
     else if (invalid) blocked = { code: "option.invalid_value", data: { name: invalid.name } };
     else if (this.deps.runs.listUnfinished().some(run => run.projectId === id && run.engineId === engineId)) blocked = { code: "project_run.already_running", data: {} };
     if (archiveUnavailable && !previousTaskMissing) blocked = { code: "run.results_not_ready", data: {} };
@@ -160,13 +151,13 @@ export class ProjectRuns {
       ...(imported ? { importMode: imported } : {}),
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
       ...(presetName !== undefined ? { presetName } : {}),
-      preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, sent).departures.map(detail) })),
+      preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, rows).departures.map(detail) })),
       wayIn: snapshot.wayIn, photos: snapshot.wayIn === "link" ? { included: null, excluded: null, total: null, bytes: null } : { included: snapshot.photoCount, excluded: snapshot.excludedPhotoCount, total: snapshot.totalPhotoCount, bytes: snapshot.photoBytes },
-      settings: { options: supported, facts: {
+      settings: { options: rows, facts: {
         bands: facts ? facts.bands.length > 0 ? true : facts.pendingMetadata > 0 ? null : false : null,
         videos: facts ? facts.videoCount > 0 : null,
       }, matcherWarning: engine.kind === "local" && gpu === false && options.some(option => option.name === "matcher-type" && option.value === "hamming") ? reported.value.find(option => option.name === "matcher-type")?.help ?? null : null },
-      facts, options: plan.departures.map(detail), outputs: plan.outputs, alwaysProduced: outputFlags, revision, blocked,
+      facts, options: plan.departures.map(detail), serverSet: serverChosen(plan.effectiveOptions, rows, supported).map(detail), outputs: plan.outputs, alwaysProduced: outputFlags, revision, blocked,
     } } };
   }
 

@@ -3,7 +3,8 @@ import { OPTION_CATALOGUE, type OptionValue, type PresetId } from "./option-cata
 
 export type RunOutput = "orthophoto" | "dsm" | "dtm" | "3d-model" | "report" | "pc-las" | "pc-csv" | "pc-copc" | "3d-tiles" | "orthophoto-png" | "orthophoto-kmz";
 
-export const SERVER_OUTPUT_KEYS = ["pc-ept", "cog", "gltf", "tiles"] as const;
+/** The formats the task API turns on for every task, which the server sends on as well. Map tiles are a row of their own. */
+export const SERVER_OUTPUT_KEYS = ["pc-ept", "cog", "gltf"] as const;
 
 export interface PresetPlan {
   preset: PresetId;

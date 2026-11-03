@@ -1,0 +1,67 @@
+/*
+ * The Review screen: two columns on a desktop, what goes in on the left and
+ * what comes out on the right, one under the other on a narrow screen. The
+ * notice of a blocked start and the buttons sit under both.
+ */
+.shell-main > .review-host {
+  max-width: none;
+}
+
+.review {
+  display: grid;
+  gap: var(--space-6);
+  max-width: 80rem;
+}
+
+.review-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.review-column {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.review-column section > h2 {
+  margin-top: 0;
+}
+
+.review-options {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-4);
+}
+
+.review-option-name {
+  font-weight: 500;
+}
+
+.review-option-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.review-option-help {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.review-start {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.review-blocked p {
+  margin: 0;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
