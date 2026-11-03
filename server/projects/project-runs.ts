@@ -25,6 +25,18 @@ import type { ProjectStore } from "./project-store.ts";
 import { RunInputs, RunInputsChanged, type RunInputSnapshot, type SavedRunInputs } from "./run-inputs.ts";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; status: number; error: ApiError };
+
+/**
+ * The rows ADR 0012 shows that runs do not send yet. Until the server sets an option only when the
+ * operator left its default (#141), a run sends what it sent before these became rows: the server
+ * sets the output formats, the map tiles and GPU use, the engine keeps its own process count, and
+ * an edit to one of these rows is checked against the engine's domain but does not reach the engine.
+ */
+export const NOT_SENT_YET: ReadonlySet<string> = new Set([
+  "max-concurrency", "no-gpu", "tiles", "pc-ept", "cog", "gltf", "cameras", "boundary", "use-exif", "force-gps",
+  "split", "split-overlap", "sm-cluster", "sm-no-align", "merge", "end-with", "rerun-from",
+]);
+
 function refuse(status: number, code: ApiError["code"], data: ApiError["data"] = {}): { ok: false; status: number; error: ApiError } {
   return { ok: false, status, error: { code, data } };
 }
@@ -124,7 +136,8 @@ export class ProjectRuns {
     const editableNames = new Set(supported.map(option => option.name));
     const invalidEdit = validateOptions(edits, reported.value.filter(option => editableNames.has(option.name)));
     if (invalidEdit) return refuse(400, "option.invalid_value", { name: invalidEdit.name });
-    const plan = planPreset(preset, supported, edits);
+    const sent = supported.filter(option => !NOT_SENT_YET.has(option.name));
+    const plan = planPreset(preset, sent, edits);
     const detail = (option: { name: string; value: string | number | boolean; defaultValue: string | number | boolean }): ReviewOption => ({
       ...option, help: reported.value.find(item => item.name === option.name)?.help ?? "", unexplained: supported.find(item => item.name === option.name)?.unexplained ?? true,
     });
@@ -147,7 +160,7 @@ export class ProjectRuns {
       ...(imported ? { importMode: imported } : {}),
       project: { id, name: project.name }, engine: { id: engine.id, name: engine.name, kind: engine.kind, info: info.value, gpu, imageLimit: info.value.maxImages ?? null, imageLimitReported: info.value.maxImages !== undefined },
       ...(presetName !== undefined ? { presetName } : {}),
-      preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, supported).departures.map(detail) })),
+      preset, presets: PRESET_IDS.map(value => ({ id: value, departures: planPreset(value, sent).departures.map(detail) })),
       wayIn: snapshot.wayIn, photos: snapshot.wayIn === "link" ? { included: null, excluded: null, total: null, bytes: null } : { included: snapshot.photoCount, excluded: snapshot.excludedPhotoCount, total: snapshot.totalPhotoCount, bytes: snapshot.photoBytes },
       settings: { options: supported, facts: {
         bands: facts ? facts.bands.length > 0 ? true : facts.pendingMetadata > 0 ? null : false : null,

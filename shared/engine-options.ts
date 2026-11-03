@@ -1,4 +1,4 @@
-import type { ShownOption } from "./option-catalogue.ts";
+import type { OptionGroup, ShownOption } from "./option-catalogue.ts";
 
 /** Facts returned by the task API's documented /options endpoint. */
 export interface EngineOption {
@@ -10,7 +10,8 @@ export interface EngineOption {
 }
 
 /** Settings facts for one engine. Only an unexplained option carries engine help. */
-export interface ReconciledOption extends Omit<ShownOption, "domain"> {
+export interface ReconciledOption extends Omit<ShownOption, "domain" | "group"> {
+  group: OptionGroup | "unexplained";
   domain: EngineOption["domain"];
   unexplained: boolean;
   changes: Array<"type" | "domain" | "defaultValue">;

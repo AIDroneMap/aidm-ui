@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { openHarness, eventually } from "../../../server/testing/harness.ts";
 import { assetsFromFolder } from "../../../server/http/static-assets.ts";
 import { FakeTaskApi } from "../../../test-support/fake-task-api.ts";
+import { NOT_SENT_YET } from "../../../server/projects/project-runs.ts";
 import { browserPath } from "../controls/browser-path.ts";
 import { startBrowser } from "../controls/browser-start.ts";
 import { findBrowserPage } from "../controls/browser-target.ts";
@@ -89,7 +90,7 @@ test("presets persist, reset, export and import through the real project setting
     expect(await (await fetch(h.base+"/api/presets")).json()).toEqual(saved);
     await click("Review run");await click("Start run");
     await eventually(async()=>engine.tasks.size===1&&[...engine.tasks.values()][0]!.committed);
-    expect([...engine.tasks.values()][0]!.options).toEqual(expect.arrayContaining(exported.options));
+    expect([...engine.tasks.values()][0]!.options).toEqual(expect.arrayContaining(exported.options.filter((option: { name: string }) => !NOT_SENT_YET.has(option.name))));
     expect(h.ctx.tracker.view(h.runs.latestForProject(project)!.id)).toMatchObject({preset:"custom",presetName:"Field map"});
   } finally { for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error("test finished"))}socket?.close();await browser?.stop();await h.stop();await engine.stop();await other.stop();await rm(folder,{recursive:true,force:true}); }
 },60000);

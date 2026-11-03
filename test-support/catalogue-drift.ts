@@ -1,4 +1,4 @@
-import type { ReconciledOption } from "../shared/engine-options.ts";
+import type { EngineOption, ReconciledOption } from "../shared/engine-options.ts";
 import { OPTION_CATALOGUE } from "../shared/option-catalogue.ts";
 
 // The test-mode packages of API 2.6.1 and 2.7.0 bundle the same older option list, so a check
@@ -25,5 +25,22 @@ export function assertCatalogueDrift(options: readonly ReconciledOption[], apiVe
   const expected = list === "test-mode" ? LEGACY_TEST_OPTIONS : { missing: [], unexplained: [] };
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`Catalogue drift for the ${list} list of API ${apiVersion}: ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}.`);
+  }
+}
+
+/**
+ * Checks that the settings editor has one row per option the task API reported (ADR 0012): no row
+ * unexplained, no reported name dropped, no row the API did not report.
+ */
+export function assertEditorRows(reported: readonly EngineOption[], rows: readonly ReconciledOption[], apiVersion: string): void {
+  const offered = new Set(reported.map((option) => option.name));
+  const names = new Set(rows.map((row) => row.name));
+  const problems = {
+    unexplained: rows.filter((row) => row.unexplained).map((row) => row.name),
+    dropped: reported.filter((option) => !names.has(option.name)).map((option) => option.name),
+    extra: rows.filter((row) => !offered.has(row.name)).map((row) => row.name),
+  };
+  if (rows.length !== reported.length || Object.values(problems).some((names) => names.length)) {
+    throw new Error(`Editor rows for API ${apiVersion}: ${rows.length} rows for ${reported.length} options, ${JSON.stringify(problems)}.`);
   }
 }

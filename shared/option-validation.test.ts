@@ -12,7 +12,7 @@ test("shared and server validation agree on option values", () => {
 
 test("domain grammar fails closed and server retains duplicate and unavailable checks", () => {
   const option = { name: "size", type: "float" as const, domain: "float: 0 <= x <= 1", value: "0", help: "" };
-  for (const [domain, value, reason] of [[option.domain, 1, null], [option.domain, 1.1, "domain"], ["mystery", 0, "domain"], ["json", "{", "domain"]] as const) {
+  for (const [domain, value, reason] of [[option.domain, 1, null], [option.domain, 1.1, "domain"], ["mystery", 0, "domain"], ["json", "{", "domain"], ["json", "", null], ["json", "{\"type\": \"Polygon\"}", null], ["json", " ", "domain"]] as const) {
     const type = domain === "json" ? "string" : "float";
     expect(validateOptionValue(type, domain, value)).toBe(reason);
     expect(validateOptions([{ name: "size", value }], [{ ...option, type, domain }])?.reason ?? null).toBe(reason);

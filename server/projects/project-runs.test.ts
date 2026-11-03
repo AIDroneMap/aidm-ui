@@ -4,6 +4,7 @@ import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
 import { openHarness, eventually, type Harness } from "../testing/harness.ts";
 import type { RunReviewView } from "../../shared/run-review.ts";
 import type { RunView } from "../../shared/api-types.ts";
+import recordedOptions from "../../test-support/fixtures/task-api-2.7.0-options.json";
 
 let h: Harness;
 let api: FakeTaskApi;
@@ -90,7 +91,7 @@ test("malformed requests, sample projects, no photos and disabled engines cannot
   expect((await request("GET", `/api/projects/${sample}/run-review?engineId=${engine}&preset=quick-map`)).status).toBe(409);
   await upload("photo.jpg");
   const view = await (await review()).json() as RunReviewView;
-  expect((await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: "quick-map", name: "Run", revision: view.revision, options: [{ name: "tiles", value: false }] })).status).toBe(400);
+  expect((await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: "quick-map", name: "Run", revision: view.revision, options: [{ name: "gcp", value: "points.txt" }] })).status).toBe(400);
   h.engineStore.update(engine, { enabled: false });
   expect((await start(view)).status).toBe(409); expect(api.tasks.size).toBe(0);
 });
@@ -307,14 +308,43 @@ test("edited settings are reviewed, committed and bound to their exact revision"
   expect([...api.tasks.values()][0]!.options).toContainEqual({ name: "orthophoto-resolution", value: 8 });
 });
 
-test("edited review exposes reconciled schema and refuses invalid or server-owned settings", async () => {
+test("the options ADR 0012 shows as rows are checked but not sent by a run until the server sets only untouched defaults", async () => {
+  api.options = structuredClone(recordedOptions) as typeof api.options;
+  await upload("photo.jpg");
+  const before = await (await review()).json() as RunReviewView;
+  expect(before.settings?.options).toHaveLength(recordedOptions.length);
+  const edits = [
+    { name: "max-concurrency", value: 2 }, { name: "no-gpu", value: true }, { name: "tiles", value: false }, { name: "pc-ept", value: false },
+    { name: "cog", value: false }, { name: "gltf", value: false }, { name: "cameras", value: "{}" }, { name: "boundary", value: "{}" },
+    { name: "use-exif", value: true }, { name: "force-gps", value: true }, { name: "split", value: 100 }, { name: "split-overlap", value: 50 },
+    { name: "sm-cluster", value: "http://cluster.invalid" }, { name: "sm-no-align", value: true }, { name: "merge", value: "dem" },
+    { name: "end-with", value: "opensfm" }, { name: "rerun-from", value: "dataset" },
+  ];
+  expect(edits).toHaveLength(17);
+  const response = await request("POST", `/api/projects/${project}/run-review`, { engineId: engine, preset: "quick-map", options: edits });
+  expect(response.status).toBe(200);
+  const view = await response.json() as RunReviewView;
+  expect(view.revision).toBe(before.revision);
+  expect(view.options).toEqual(before.options);
+  const started = await request("POST", `/api/projects/${project}/runs`, { engineId: engine, preset: view.preset, name: "Run", revision: view.revision, options: edits });
+  expect(started.status).toBe(202);
+  await eventually(async () => api.tasks.size === 1 && [...api.tasks.values()][0]!.committed);
+  const sent = [...api.tasks.values()][0]!.options as Array<{ name: string; value: unknown }>;
+  expect(new Set(sent.map(option => option.name)).size).toBe(sent.length);
+  for (const name of ["pc-ept", "cog", "gltf", "tiles"]) expect(sent).toContainEqual({ name, value: true });
+  for (const { name } of edits.filter(({ name }) => !["pc-ept", "cog", "gltf", "tiles"].includes(name))) expect(sent.map(option => option.name)).not.toContain(name);
+  expect(sent).toHaveLength(recordedOptions.length - 17 + 4);
+});
+
+test("edited review exposes reconciled schema and refuses invalid or unoffered settings", async () => {
   api.options.push({ name: "new-setting", type: "int", domain: "integer: 1 <= x <= 4", value: "2", help: "Engine-only help" });
   const value = await (await review()).json() as RunReviewView;
   expect(value.settings?.options).toContainEqual(expect.objectContaining({ name: "new-setting", unexplained: true, help: "Engine-only help" }));
-  expect(value.settings?.options.some(option => option.name === "tiles" || option.name === "no-gpu")).toBe(false);
+  expect(value.settings?.options.filter(option => ["tiles", "no-gpu", "split"].includes(option.name)).map(option => option.name)).toEqual(["tiles", "no-gpu", "split"]);
   expect(value.settings?.facts).toEqual({ bands: false, videos: false });
   for (const options of [
-    [{ name: "no-gpu", value: false }],
+    [{ name: "gcp", value: "points.txt" }],
+    [{ name: "split", value: -1 }],
     [{ name: "orthophoto-resolution", value: -1 }],
     [{ name: "new-setting", value: 5 }],
     [{ name: "new-setting", value: "3" }],

@@ -13,6 +13,8 @@ export function validateOptionValue(type: EngineOption["type"], domain: EngineOp
   if (domain === "string" || domain === "path") return typeof typedValue === "string" ? null : "domain";
   if (domain === "json") {
     if (typeof typedValue !== "string") return "domain";
+    // Empty is the engine's own default for its JSON options, and it reads it as none.
+    if (typedValue === "") return null;
     try { JSON.parse(typedValue); return null; } catch { return "domain"; }
   }
   if (typeof typedValue !== "number") return "domain";

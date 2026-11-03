@@ -398,7 +398,7 @@ test("the token never appears in anything sent to the browser or written to the 
 });
 
 
-test("engine options reconcile facts, hide internal names and keep unknown options last", async () => {
+test("engine options reconcile facts, hide names the task API does not offer and keep unknown options last", async () => {
   fake.options = [
     { name: "new-engine-option", type: "float", value: "2.5", domain: "positive float", help: "Engine explanation" },
     { name: "end-with", type: "string", value: "report", domain: "string", help: "Hidden" },
@@ -413,10 +413,11 @@ test("engine options reconcile facts, hide internal names and keep unknown optio
   const response = await send("GET", `/api/engines/${engine.id}/options`);
   expect(response.status).toBe(200);
   const body = await response.json();
-  expect(body.options.map((option: { name: string }) => option.name)).toEqual(["dsm", "orthophoto-resolution", "new-engine-option"]);
+  expect(body.options.map((option: { name: string }) => option.name)).toEqual(["dsm", "orthophoto-resolution", "tiles", "end-with", "rerun-from", "split", "new-engine-option"]);
   expect(body.options[0]).toMatchObject({ name: "dsm", defaultValue: true, unexplained: false, changes: ["defaultValue"] });
   expect(body.options[1]).toMatchObject({ type: "int", domain: "integer >= 1", defaultValue: 1, changes: ["type", "domain", "defaultValue"] });
-  expect(body.options[2]).toMatchObject({ group: "unexplained", defaultValue: 2.5, unexplained: true, help: "Engine explanation" });
+  expect(body.options[3]).toMatchObject({ name: "end-with", group: "expert", type: "string", unexplained: false, changes: ["type", "domain", "defaultValue"] });
+  expect(body.options[6]).toMatchObject({ group: "unexplained", defaultValue: 2.5, unexplained: true, help: "Engine explanation" });
   fake.options = [{ name: "dtm", type: "bool", value: "false", domain: "", help: "Ground" }];
   const refreshed = await (await send("GET", `/api/engines/${engine.id}/options`)).json();
   expect(refreshed.options.map((option: { name: string }) => option.name)).toEqual(["dtm"]);

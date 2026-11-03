@@ -56,43 +56,70 @@ test("the em dash check finds a dash in each kind of file and ignores other file
   expect(filesWithEmDash(Object.keys(files), (path) => files[path]!)).toEqual(["a.ts", "b.tsx", "c.css", "d.md"]);
 });
 
-import { OPTION_CATALOGUE, PRESET_IDS } from "../../../shared/option-catalogue.ts";
+import { AFFECTS, LOCK_REASONS, OPTION_CATALOGUE, OPTION_GROUPS, PRESET_IDS, type CatalogueOption } from "../../../shared/option-catalogue.ts";
 
 const fields = ["name", "description", "when", "cost", "example"];
+const facts = ["type", "domain", "defaultValue", "presets", "dependencies", "costTag", "affects", "locked"];
 const shown = OPTION_CATALOGUE.filter((option) => option.bin === "shown");
 
-function catalogueErrors(texts: Record<string, string>, options = shown): string[] {
+/**
+ * What keeps the catalogue from being complete: an entry in two places or in none, a shown entry
+ * without one of its facts, and a missing, empty or unknown text in the translation file.
+ */
+function catalogueErrors(texts: Record<string, string>, entries: readonly CatalogueOption[] = OPTION_CATALOGUE): string[] {
+  const errors: string[] = [];
+  const places = new Map<string, number>();
+  for (const entry of entries) places.set(entry.name, (places.get(entry.name) ?? 0) + 1);
+  for (const [name, count] of places) if (count > 1) errors.push(`${name}: in ${count} places`);
   const expected = new Set<string>();
-  for (const option of options) {
-    for (const field of fields) expected.add(`option.${option.name}.${field}`);
+  for (const entry of entries) {
+    if (entry.bin === "not-offered") continue;
+    if (entry.bin !== "shown" || !(OPTION_GROUPS as readonly string[]).includes(entry.group)) { errors.push(`${entry.name}: in no group`); continue; }
+    for (const fact of facts) if (!Object.hasOwn(entry, fact)) errors.push(`${entry.name}: no ${fact}`);
+    if (!Array.isArray(entry.affects) || !entry.affects.length || entry.affects.some((tag) => !(AFFECTS as readonly string[]).includes(tag))) errors.push(`${entry.name}: affects`);
+    if (entry.locked !== null && !(LOCK_REASONS as readonly string[]).includes(entry.locked)) errors.push(`${entry.name}: locked`);
+    for (const field of fields) expected.add(`option.${entry.name}.${field}`);
   }
-  const errors = [...expected].filter((key) => !texts[key]?.trim());
+  for (const key of expected) if (!texts[key]?.trim()) errors.push(key);
   for (const key of Object.keys(texts)) {
     if (key.startsWith("option.") && key !== "option.invalid_value" && !expected.has(key)) errors.push(key);
+  }
+  for (const key of [...OPTION_GROUPS.map((group) => `settings.group.${group}`), ...AFFECTS.map((tag) => `affects.${tag}`), ...LOCK_REASONS.map((reason) => `settings.locked.${reason}`)]) {
+    if (!texts[key]?.trim()) errors.push(key);
   }
   return errors;
 }
 
-test("catalogue words cover exactly the five fields of each shown option", () => {
-  expect(shown).toHaveLength(63);
+test("every catalogue entry sits in one group or the bin, has its facts and has its texts", () => {
+  expect(shown).toHaveLength(80);
   expect(catalogueErrors(messages)).toEqual([]);
 });
 
-test("catalogue coverage rejects missing, empty, unknown and removed option words", () => {
-  const complete = Object.fromEntries(shown.flatMap(({ name }) => fields.map((field) => [`option.${name}.${field}`, "text"])));
-  expect(catalogueErrors({ ...complete, "option.invalid_value": "invalid" })).toEqual([]);
+test("catalogue coverage fails on an entry in two places or none, a missing fact, and a missing, empty or unknown text", () => {
+  const complete = { ...messages };
+  const dsm = shown.find(({ name }) => name === "dsm")!;
+  expect(catalogueErrors({ ...complete, "option.gcp.name": "text" })).toEqual(["option.gcp.name"]);
+  expect(catalogueErrors(complete, [...OPTION_CATALOGUE, { name: "dsm", bin: "not-offered" }])).toEqual(["dsm: in 2 places"]);
+  expect(catalogueErrors(complete, OPTION_CATALOGUE.map((entry) => entry.name === "dsm" ? { ...dsm, group: "what-to-produce" } as unknown as CatalogueOption : entry))).toContain("dsm: in no group");
+  const { affects: _, ...withoutAffects } = dsm;
+  expect(catalogueErrors(complete, OPTION_CATALOGUE.map((entry) => entry.name === "dsm" ? withoutAffects as unknown as CatalogueOption : entry))).toEqual(["dsm: no affects", "dsm: affects"]);
+  expect(catalogueErrors(complete, OPTION_CATALOGUE.map((entry) => entry.name === "dsm" ? { ...dsm, affects: ["speed"] } as unknown as CatalogueOption : entry))).toEqual(["dsm: affects"]);
+  expect(catalogueErrors(complete, OPTION_CATALOGUE.map((entry) => entry.name === "dsm" ? { ...dsm, locked: "forced" } as unknown as CatalogueOption : entry))).toEqual(["dsm: locked"]);
   const missing = { ...complete };
-  delete missing["option.dsm.name"];
-  expect(catalogueErrors(missing)).toContain("option.dsm.name");
-  expect(catalogueErrors({ ...complete, "option.dsm.name": "  " })).toContain("option.dsm.name");
-  expect(catalogueErrors({ ...complete, "option.unknown.name": "text" })).toContain("option.unknown.name");
-  expect(catalogueErrors(complete, shown.filter(({ name }) => name !== "dsm"))).toContain("option.dsm.name");
+  delete missing["option.split.when"];
+  expect(catalogueErrors(missing)).toEqual(["option.split.when"]);
+  expect(catalogueErrors({ ...complete, "option.dsm.name": "  " })).toEqual(["option.dsm.name"]);
+  expect(catalogueErrors({ ...complete, "option.unknown.name": "text" })).toEqual(["option.unknown.name"]);
+  expect(catalogueErrors(complete, OPTION_CATALOGUE.filter(({ name }) => name !== "dsm"))).toEqual(fields.map((field) => `option.dsm.${field}`));
+  for (const key of ["settings.group.expert", "affects.disk", "settings.locked.always-on"]) {
+    const without = { ...complete };
+    delete without[key];
+    expect(catalogueErrors(without)).toEqual([key]);
+  }
 });
 
-test("groups and presets have words and reasons match departures", () => {
-  const groups = new Set(shown.map(({ group }) => group));
-  expect(groups.size).toBe(11);
-  for (const group of groups) expect(messages[`group.${group}`]?.trim()).toBeTruthy();
+test("groups, affects tags and presets have words and reasons match departures", () => {
+  expect(OPTION_GROUPS).toHaveLength(9);
   expect(messages["catalogue.unexplained"]?.trim()).toBeTruthy();
   expect(PRESET_IDS).toHaveLength(6);
   const reasons = new Set<string>();
@@ -106,7 +133,10 @@ test("groups and presets have words and reasons match departures", () => {
   }
   for (const key of reasons) expect(messages[key]?.trim(), key).toBeTruthy();
   expect(Object.keys(messages).filter((key) => /^preset\..+\.reason\./.test(key)).sort()).toEqual([...reasons].sort());
-  expect(Object.keys(messages).filter((key) => key.startsWith("group.")).sort()).toEqual([...groups].map((group) => `group.${group}`).sort());
+  expect(Object.keys(messages).filter((key) => key.startsWith("group."))).toEqual([]);
+  expect(Object.keys(messages).filter((key) => key.startsWith("settings.group."))).toEqual(OPTION_GROUPS.map((group) => `settings.group.${group}`));
+  expect(Object.keys(messages).filter((key) => key.startsWith("affects.") && key !== "affects.title")).toEqual(AFFECTS.map((tag) => `affects.${tag}`));
+  expect(Object.keys(messages).filter((key) => key.startsWith("settings.locked."))).toEqual(LOCK_REASONS.map((reason) => `settings.locked.${reason}`));
   expect(Object.keys(messages).filter((key) => /^preset\.[^.]+\.(name|description)$/.test(key)).sort()).toEqual(PRESET_IDS.flatMap((preset) => [ `preset.${preset}.name`, `preset.${preset}.description` ]).sort());
 });
 
