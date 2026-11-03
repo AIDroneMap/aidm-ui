@@ -26,7 +26,7 @@ test("review ignores stale engines, blocks above the limit and starts at the lim
       if (id === 1) await delayed;
       const preset = url.searchParams.get("preset");
       const pendingMetadata = id === 2 && ++readyReviews === 1 ? 1 : 0;
-      return Response.json({ project: { id: 1, name: "Project" }, engine: { id, name: id === 1 ? "Slow" : "Ready", kind: "remote", info: { version: id === 2 && !pendingMetadata ? "2" : "1", engineVersion: null, cpuCores: 4, totalMemory: null, availableMemory: null, queueCount: 0, maxParallelTasks: null }, gpu: null, imageLimit: id === 1 ? 1 : 2, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "upload", photos: { included: 2, excluded: 0, total: 2, bytes: 10 }, facts: { flights: [], nextOffset: null, pendingMetadata }, options: [], outputs: ["orthophoto"], alwaysProduced: [], revision: `revision-${id}`, blocked: id === 1 ? { code: "project_run.image_limit", data: { count: 2, limit: 1 } } : pendingMetadata ? { code: "project_run.metadata_pending", data: {} } : null });
+      return Response.json({ project: { id: 1, name: "Project" }, engine: { id, name: id === 1 ? "Slow" : "Ready", kind: "remote", info: { version: id === 2 && !pendingMetadata ? "2" : "1", engineVersion: null, cpuCores: 4, totalMemory: null, availableMemory: null, queueCount: 0, maxParallelTasks: null }, gpu: null, imageLimit: id === 1 ? 1 : 2, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "upload", photos: { included: 2, excluded: 0, total: 2, bytes: 10 }, facts: { flights: [], nextOffset: null, pendingMetadata }, options: [], outputs: ["orthophoto"], serverSet: [], alwaysProduced: [], revision: `revision-${id}`, blocked: id === 1 ? { code: "project_run.image_limit", data: { count: 2, limit: 1 } } : pendingMetadata ? { code: "project_run.metadata_pending", data: {} } : null });
     }
     if (url.pathname.endsWith("/runs")) { posted = await request.json(); if (++starts === 1) return Response.json({ error: { code: "project_run.review_changed", data: {} } }, { status: 409 }); return Response.json({ id: 9 }, { status: 202 }); }
     return new Response(null, { status: 404 });
@@ -55,15 +55,15 @@ test("review ignores stale engines, blocks above the limit and starts at the lim
     expect(await evaluate("document.body.textContent.includes('GPU: Not reported')")).toBe(true);
     await evaluate("document.querySelector('#run-engine').value = '1'; document.querySelector('#run-engine').dispatchEvent(new Event('change', { bubbles: true }))");
     await wait("document.body.textContent.includes('Engine: Slow')");
-    expect(await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start run').disabled")).toBe(true);
+    expect(await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start the run').disabled")).toBe(true);
     expect(await evaluate("document.body.textContent.includes('Photo limit: 1')")).toBe(true);
     await evaluate("document.querySelector('#run-engine').value = '2'; document.querySelector('#run-engine').dispatchEvent(new Event('change', { bubbles: true }))");
     await wait("document.body.textContent.includes('Engine: Ready')");
-    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start run').click()");
+    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start the run').click()");
     await wait("document.body.textContent.includes('Reload the review before starting.')");
     await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Reload review').click()");
-    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Start run' && !b.disabled)");
-    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start run').click()");
+    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Start the run' && !b.disabled)");
+    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start the run').click()");
     await wait("location.hash === '#/runs/9'");
     expect(posted).toMatchObject({ engineId: 2, preset: "quick-map", revision: "revision-2" });
   } finally { release?.(); socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }

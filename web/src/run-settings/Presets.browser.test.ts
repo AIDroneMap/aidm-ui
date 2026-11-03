@@ -89,7 +89,7 @@ test("presets persist, reset, export and import through the real project setting
     await field(nameInput,"Imported");await click("Save preset");await click("Delete preset");
     await choose("Field map");await wait("document.body.textContent.includes('Loaded preset: Field map')");
     expect(await (await fetch(h.base+"/api/presets")).json()).toEqual(saved);
-    await click("Review and start");await click("Start run");
+    await click("Review and start");await click("Start the run");
     await eventually(async()=>engine.tasks.size===1&&[...engine.tasks.values()][0]!.committed);
     const sent = [...engine.tasks.values()][0]!.options as Array<{ name: string; value: unknown }>;
     const sentNames = new Set(sent.map(option => option.name));

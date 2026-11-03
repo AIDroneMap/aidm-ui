@@ -21,7 +21,7 @@ test("keyboard import choices survive review and reset on an engine change", asy
     if (url.pathname.endsWith("/run-review")) {
       const body = request.method === "POST" ? await request.json() as any : Object.fromEntries(url.searchParams);
       const engine = Number(body.engineId), available = engine === 1, selected = body.importMode ?? (available ? "in-place" : "copy");
-      return Response.json({ project: { id: 1, name: "Project" }, engine: { id: engine, name: engine === 1 ? "Same machine" : "Other engine", kind: "remote", info: { version: "2.7.0" }, gpu: null, imageLimit: null, imageLimitReported: true }, preset: body.preset, presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "import", importMode: { available, selected, restartRequired: available, selectionRequiresCopy: false }, photos: { included: 2, excluded: 0, total: 2, bytes: 10 }, facts: null, options: [], outputs: ["orthophoto"], alwaysProduced: [], revision: `revision-${engine}-${selected}`, blocked: null });
+      return Response.json({ project: { id: 1, name: "Project" }, engine: { id: engine, name: engine === 1 ? "Same machine" : "Other engine", kind: "remote", info: { version: "2.7.0" }, gpu: null, imageLimit: null, imageLimitReported: true }, preset: body.preset, presets: PRESET_IDS.map(id => ({ id, departures: [] })), wayIn: "import", importMode: { available, selected, restartRequired: available, selectionRequiresCopy: false }, photos: { included: 2, excluded: 0, total: 2, bytes: 10 }, facts: null, options: [], outputs: ["orthophoto"], serverSet: [], alwaysProduced: [], revision: `revision-${engine}-${selected}`, blocked: null });
     }
     if (url.pathname.endsWith("/runs")) { posted = await request.json(); return Response.json({ id: 9 }, { status: 202 }); }
     return new Response(null, { status: 404 });
@@ -45,7 +45,7 @@ test("keyboard import choices survive review and reset on an engine change", asy
     await wait("document.querySelector('input[value=\"in-place\"]:checked')");
     expect(await evaluate("document.body.textContent.includes('Starting this run will restart it')")).toBe(true);
     await evaluate("document.querySelector('input[value=\"in-place\"]').focus()"); await key("ArrowDown", "ArrowDown", 40);
-    await wait("document.querySelector('input[value=copy]:checked') && [...document.querySelectorAll('button')].some(b => b.textContent === 'Start run' && !b.disabled)");
+    await wait("document.querySelector('input[value=copy]:checked') && [...document.querySelectorAll('button')].some(b => b.textContent === 'Start the run' && !b.disabled)");
     expect(await evaluate("document.body.textContent.includes('Starting this run will restart it')")).toBe(false);
     await wait("document.activeElement?.matches('input[value=copy]')");
     expect(await evaluate("document.activeElement?.matches('input[value=copy]')")).toBe(true);
@@ -56,10 +56,10 @@ test("keyboard import choices survive review and reset on an engine change", asy
     await evaluate("document.querySelector('#run-engine').value='1'; document.querySelector('#run-engine').dispatchEvent(new Event('change',{bubbles:true}))");
     await wait("document.querySelector('input[value=\"in-place\"]:checked')");
     await evaluate("document.querySelector('input[value=\"in-place\"]').focus()"); await key("ArrowDown", "ArrowDown", 40);
-    await wait("document.querySelector('input[value=copy]:checked') && [...document.querySelectorAll('button')].some(b => b.textContent === 'Start run' && !b.disabled)");
+    await wait("document.querySelector('input[value=copy]:checked') && [...document.querySelectorAll('button')].some(b => b.textContent === 'Start the run' && !b.disabled)");
     await send("Emulation.setDeviceMetricsOverride", { width: 820, height: 1024, deviceScaleFactor: 1, mobile: false });
     expect(await evaluate("document.documentElement.scrollWidth<=innerWidth")).toBe(true);
-    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start run').focus()"); await key(" ", "Space", 32);
+    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Start the run').focus()"); await key(" ", "Space", 32);
     await wait("location.hash==='#/runs/9'");
     expect(posted).toMatchObject({ engineId: 1, importMode: "copy", revision: "revision-1-copy" });
   } finally { socket?.close(); await browser?.stop(); server.stop(true); await rm(directory, { recursive: true, force: true }); }

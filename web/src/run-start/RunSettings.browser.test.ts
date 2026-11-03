@@ -44,7 +44,7 @@ test("edited settings survive review and are reconciled before changing engines"
       const reconciled = reconcileOptions(reported);
       const plan = planPreset(preset, reconciled, options);
       const detail = (value: any) => ({ ...value, help: "", unexplained: false });
-      return Response.json({ project: { id: 1, name: "Field" }, engine: { id: engine, name: engine === 1 ? "Local" : "Remote", kind: engine === 1 ? "local" : "remote", gpu: engine === 1 ? false : null, info: { version: "2.7.0" }, imageLimit: null, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: planPreset(id, reconciled).departures.map(detail) })), wayIn: "upload", photos: { included: 3, excluded: 0, total: 3, bytes: 123 }, facts: null, options: plan.departures.map(detail), outputs: plan.outputs, alwaysProduced: [], revision: `revision-${engine}-${JSON.stringify(options)}`, blocked: null,
+      return Response.json({ project: { id: 1, name: "Field" }, engine: { id: engine, name: engine === 1 ? "Local" : "Remote", kind: engine === 1 ? "local" : "remote", gpu: engine === 1 ? false : null, info: { version: "2.7.0" }, imageLimit: null, imageLimitReported: true }, preset, presets: PRESET_IDS.map(id => ({ id, departures: planPreset(id, reconciled).departures.map(detail) })), wayIn: "upload", photos: { included: 3, excluded: 0, total: 3, bytes: 123 }, facts: null, options: plan.departures.map(detail), outputs: plan.outputs, serverSet: [], alwaysProduced: [], revision: `revision-${engine}-${JSON.stringify(options)}`, blocked: null,
         settings: { options: reconciled, facts: { bands: false, videos: false }, matcherWarning: engine === 1 && plan.effectiveOptions.some(option => option.name === "matcher-type" && option.value === "hamming") ? warning : null } });
     }
     if (url.pathname.endsWith("/runs")) { posted = await request.json(); return Response.json({ id: 99 }, { status: 202 }); }
@@ -86,7 +86,7 @@ test("edited settings survive review and are reconciled before changing engines"
     await wait("document.body.textContent.includes('orthophoto-resolution')");
     expect(await evaluate(`document.body.textContent.includes(${JSON.stringify(warning)})`)).toBe(false);
     expect(requests.filter(request => request.engine === 2).every(request => !request.options.some(option => option.name === "orthophoto-resolution" && option.value === 8))).toBe(true);
-    await click(texts["run_start.start"]);
+    await click(texts["review.start"]);
     await wait("location.hash === '#/runs/99'");
     expect(posted.engineId).toBe(2);
     expect(posted.options).toContainEqual({ name: "dsm", value: true });

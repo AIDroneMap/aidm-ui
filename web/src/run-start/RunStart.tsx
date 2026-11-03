@@ -6,29 +6,19 @@ import type { ReconciledOption } from "../../../shared/engine-options.ts";
 import { PresetLibrary } from "../run-settings/PresetLibrary.tsx";
 import { reconcileSettingsFile, type SettingsFile, type SettingValue, type DroppedSetting } from "../../../shared/settings-file.ts";
 import { SettingsWorkspace } from "../sections/settings/SettingsWorkspace.tsx";
+import { ReviewPlaceholder, ReviewScreen } from "../sections/review/ReviewSection.tsx";
+import { optionWarnings } from "../../../shared/option-warnings.ts";
 import type { PresetId } from "../../../shared/option-catalogue.ts";
 import type { ImportMode, ReviewOption, RunReviewView } from "../../../shared/run-review.ts";
 import { api, asApiFailure, ApiFailure } from "../api.ts";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
 import { Button } from "../controls/Button.tsx";
 import { Select } from "../controls/Select.tsx";
-import { TextField } from "../controls/TextField.tsx";
 import { formatBytes } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 
 function optionValue(value: ReviewOption["value"]): string {
   return typeof value === "boolean" ? t(value ? "run_start.yes" : "run_start.no") : String(value);
-}
-
-export function OptionList({ options }: { options: ReviewOption[] }) {
-  if (!options.length) return <p>{t("run_start.no_changes")}</p>;
-  return <ul>{options.map(option => {
-    const key = `option.${option.name}.name`;
-    const name = t(key);
-    const missing = name === key;
-    return <li key={option.name}>{t("run_start.option", { name: missing ? option.name : name, engine: option.name, value: optionValue(option.value) })}
-      {(missing || option.unexplained) && <p>{t("run_start.unexplained", { help: option.help })}</p>}</li>;
-  })}</ul>;
 }
 
 export function ImportChoice({ value, onChange, disabled = false }: { value: NonNullable<RunReviewView["importMode"]>; onChange(mode: ImportMode): void; disabled?: boolean }) {
@@ -50,12 +40,16 @@ export function ImportChoice({ value, onChange, disabled = false }: { value: Non
   </fieldset>;
 }
 
+export type RunStartStep = "settings" | "review";
+
 /**
  * Starts a run: the settings workspace first, then the review and the start.
- * In the Settings section `filterInAddress` keeps "Changed only" in the
- * project's address.
+ * In the project's workspace the address chooses the step (`step` and
+ * `onStep`), so Settings and Review are two sections over one draft, and
+ * `filterInAddress` keeps "Changed only" in the address. Elsewhere, as for
+ * "Run again", the steps follow each other in place.
  */
-export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAuthRequired }: { projectId: number; sourceRunId?: number; filterInAddress?: boolean; onAuthRequired(): void }) {
+export function RunStart({ projectId, sourceRunId, filterInAddress = false, step: shownStep, onStep, onAuthRequired }: { projectId: number; sourceRunId?: number; filterInAddress?: boolean; step?: RunStartStep; onStep?(step: RunStartStep): void; onAuthRequired(): void }) {
   const [importMode, setImportMode] = useState<ImportMode | undefined>();
   const [draft, setDraft] = useState<SettingsDraft>({});
   const [applied, setApplied] = useState<Array<{ name: string; value: ReviewOption["value"] }>>([]);
@@ -70,7 +64,14 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
   const [engineId, setEngineId] = useState<number | null>(null);
   const [preset, setPreset] = useState<PresetId>("quick-map");
   const [review, setReview] = useState<RunReviewView | null>(null);
-  const [step, setStep] = useState<"settings" | "review">("settings");
+  // The last review, kept on screen while the next one loads, as after a change of engine or import mode.
+  const lastReview = useRef<RunReviewView | null>(null);
+  if (review) lastReview.current = review;
+  const [ownStep, setOwnStep] = useState<RunStartStep>("settings");
+  const step = shownStep ?? ownStep;
+  const goTo = (next: RunStartStep) => { if (onStep) onStep(next); else setOwnStep(next); };
+  // True once "Review and start" took the draft; any later change to it needs that press again.
+  const [reviewed, setReviewed] = useState(false);
   const [name, setName] = useState("");
   const [offset, setOffset] = useState(0);
   const [offsets, setOffsets] = useState<number[]>([]);
@@ -87,7 +88,7 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
     if (problem.code === "auth.passphrase_required") auth.current(); else setFailure(problem);
   }
   useEffect(() => {
-    setImportMode(undefined); setDraft({}); setApplied([]); setMoved([]); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
+    setImportMode(undefined); setDraft({}); setApplied([]); setMoved([]); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null; setReviewed(false);
   }, [projectId]);
   useEffect(() => {
     let current = true;
@@ -139,8 +140,9 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
     }, error => { if (current === generation.current) { setReview(null); setLoading(false); fail(error); } });
     return () => { generation.current++; clearTimeout(timer); };
   }, [projectId, engineId, preset, offset, refresh, settingsKey, presetName, sourceRunId, importMode]);
+  function changeDraft(value: SettingsDraft) { setReviewed(false); setDraft(value); }
   function changePreset(value: PresetId) {
-    setDraft({}); setApplied([]); setMoved([]); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
+    setReviewed(false); setDraft({}); setApplied([]); setMoved([]); switching.current = null; setLoaded(null); setDropped([]); pendingFile.current = null;
     setLoading(true); setReview(null); setPreset(value); setOffset(0); setOffsets([]);
   }
   function changeEngine(value: number) {
@@ -163,7 +165,7 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
   }
   function next() {
     if (!name.trim()) setName(t("run_start.default_name", { preset: presetName ?? t(`run_start.preset.${preset}`), date: new Intl.DateTimeFormat().format(new Date()) }));
-    setStep("review");
+    setReviewed(true); goTo("review");
   }
   async function start() {
     if (!review || loading || working || review.blocked || engineId === null) return;
@@ -174,7 +176,7 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
     } catch (error) { fail(error); } finally { setWorking(false); }
   }
   function chooseFile(file: SettingsFile, id: number | null) {
-    pendingFile.current = { file, id }; switching.current = null;
+    setReviewed(false); pendingFile.current = { file, id }; switching.current = null;
     setLoaded({ file, id, baseline: [] }); setDropped([]); setDraft({}); setApplied([]); setMoved([]);
     setPreset("custom"); setLoading(true); setReview(null); setOffset(0); setOffsets([]); setRefresh(value => value + 1);
   }
@@ -184,8 +186,8 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
     options: Object.entries(resolved.values).map(([name, value]) => ({ name, value })),
     preset: presetName ?? t(`run_start.preset.${preset}`), engineVersion: typeof info?.engineVersion === "string" ? info.engineVersion : null,
   } : null;
-  const number = (value: number | null | undefined) => value == null ? t("run_start.not_reported") : String(value);
-  const memory = (value: number | null | undefined) => value == null ? t("run_start.not_reported") : formatBytes(value);
+  const shownReview = review ?? (loading ? lastReview.current : null);
+  const warningContext = review ? { engine: { kind: review.engine.kind, gpu: review.engine.gpu, cpuCores: review.engine.info.cpuCores ?? null }, photoCount: review.photos.included } : undefined;
   const engineSelect = <Select id="run-engine" label={t("run_start.engine")} value={engineId ?? ""} onChange={event => changeEngine(Number(event.target.value))} disabled={working}>
     {!engines.length && <option value="">{t("run_start.no_engines")}</option>}
     {engines.map(engine => <option key={engine.id} value={engine.id}>{engine.name}</option>)}
@@ -194,14 +196,14 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
     <code>{option.name}</code>{" "}{t("run_settings.moved_value", { before: option.before === undefined ? t("run_settings.unavailable") : optionValue(option.before), after: option.after === undefined ? t("run_settings.unavailable") : optionValue(option.after) })}
     <p>{option.changes.map(change => t(change === "value" ? "run_settings.moved_value_reason" : `run_settings.moved_${change}`)).join(" ")}</p>
   </li>)}</ul></section>;
-  return <section aria-labelledby="run-start-title" className={step === "settings" ? "settings-workspace-host" : undefined}>
-    <h2 id="run-start-title" className={step === "settings" ? "visually-hidden" : undefined}>{t("run_start.title")}</h2>
+  return <section aria-labelledby="run-start-title" className={step === "settings" ? "settings-workspace-host" : "review-host"}>
+    <h2 id="run-start-title" className={step === "settings" || onStep ? "visually-hidden" : undefined}>{t("run_start.title")}</h2>
     {failure && <ErrorMessage failure={failure} />}
     {changed && <><p role="alert">{t("run_start.changed")}</p><Button onClick={() => { setOffsets([]); setOffset(0); }}>{t("run_start.reload")}</Button></>}
     {step === "settings" && <SettingsWorkspace
       options={review?.settings?.options ?? null} facts={review?.settings?.facts ?? { bands: null, videos: null }}
       preset={preset} loadedName={loaded?.file.preset ?? null} baseline={loaded?.baseline}
-      draft={draft} onDraft={setDraft} onPreset={changePreset}
+      draft={draft} onDraft={changeDraft} onPreset={changePreset}
       engine={engineSelect}
       presets={engineId !== null && <PresetLibrary key={`${projectId}-${engineId}`} file={file} selectedId={loaded?.id ?? null} disabled={working || loading} onChoose={chooseFile} onRename={(id, name) => { if (loaded?.id === id) setLoaded({ ...loaded, file: { ...loaded.file, preset: name } }); }} onDelete={id => { if (loaded?.id === id) setLoaded({ ...loaded, id: null }); }} onAuthRequired={onAuthRequired} />}
       notices={<>
@@ -213,44 +215,23 @@ export function RunStart({ projectId, sourceRunId, filterInAddress = false, onAu
         {movedList}
       </>}
       projectId={filterInAddress ? projectId : undefined}
-      warningContext={review ? { engine: { kind: review.engine.kind, gpu: review.engine.gpu, cpuCores: review.engine.info.cpuCores ?? null }, photoCount: review.photos.included } : undefined}
+      warningContext={warningContext}
       busy={loading || !review} disabled={working} onReview={applySettings}
     />}
-    {step === "review" && <>
-      {engineSelect}
-      {loading && <p role="status">{t("run_start.loading")}</p>}
-      {review?.importMode && <ImportChoice value={{ ...review.importMode, selected: importMode ?? review.importMode.selected }} disabled={working || loading} onChange={mode => { setLoading(true); setOffset(0); setOffsets([]); setImportMode(mode); }} />}
-    </>}
-      {step === "review" && review && !loading && <>
-        <h3>{t("run_start.review")}</h3>
-        <p>{t("run_start.project", { name: review.project.name })}</p>
-        <TextField id="run-name" label={t("run_start.name")} value={name} onChange={event => setName(event.target.value)} required maxLength={200} />
-        <p>{t("run_start.selected_preset", { preset: review.presetName ?? t(`run_start.preset.${review.preset}`) })}</p>
-        <h4>{t("run_start.photos")}</h4>
-        {review.wayIn === "link" ? <p>{t("run_start.link_unknown")}</p> : review.photos.included !== null && review.photos.excluded !== null && review.photos.total !== null && review.photos.bytes !== null && <p>{t("run_start.photo_counts", { included: review.photos.included, excluded: review.photos.excluded, total: review.photos.total, size: formatBytes(review.photos.bytes) })}</p>}
-        <p>{t(`run_start.way.${review.wayIn}`)}</p>
-
-        {review.facts && <><ul>{review.facts.flights.map(flight => <li key={flight.id}>{t("run_start.flight", { camera: [flight.make, flight.model].filter(Boolean).join(" ") || t("photos.unknown_camera"), first: flight.first, last: flight.last, count: flight.photoCount, excluded: flight.excludedPhotoCount })}</li>)}</ul>
+    {step === "review" && !reviewed && <ReviewPlaceholder projectId={projectId} />}
+    {step === "review" && reviewed && loading && <p role="status">{t("run_start.loading")}</p>}
+    {/* While the review reloads it stays on screen with its buttons off, so the focus stays where it was. */}
+    {step === "review" && reviewed && shownReview && <ReviewScreen
+      review={shownReview} engineState={engines.find(engine => engine.id === shownReview.engine.id)?.state ?? null}
+      name={name} onName={setName} engine={engineSelect}
+      importChoice={shownReview.importMode && <ImportChoice value={{ ...shownReview.importMode, selected: importMode ?? shownReview.importMode.selected }} disabled={working || loading} onChange={mode => { setLoading(true); setOffset(0); setOffsets([]); setImportMode(mode); }} />}
+      flightPages={shownReview.facts && <>
         {offsets.length > 0 && <Button className="secondary" onClick={() => { setLoading(true); setOffset(offsets[offsets.length - 1]!); setOffsets(offsets.slice(0, -1)); }}>{t("upload.previous")}</Button>}
-        {review.facts.nextOffset !== null && <Button className="secondary" onClick={() => { setLoading(true); setOffsets([...offsets, offset]); setOffset(review.facts!.nextOffset!); }}>{t("upload.next")}</Button>}</>}
-        <h4>{t("run_start.engine_facts", { name: review.engine.name })}</h4>
-        <ul><li>{t("run_start.version", { value: info?.version ?? t("run_start.not_reported") })}</li>
-          <li>{t("run_start.engine_version", { value: info?.engineVersion ?? t("run_start.not_reported") })}</li>
-          <li>{t("run_start.cores", { value: number(info?.cpuCores) })}</li>
-          <li>{t("run_start.memory", { total: memory(info?.totalMemory), available: memory(info?.availableMemory) })}</li>
-          <li>{t("run_start.queue", { value: number(info?.queueCount) })}</li>
-          <li>{t("run_start.parallel", { value: number(info?.maxParallelTasks) })}</li>
-          <li>{t("run_start.limit", { value: !review.engine.imageLimitReported ? t("run_start.not_reported") : review.engine.imageLimit === null ? t("run_start.no_limit") : number(review.engine.imageLimit) })}</li>
-          <li>{t("run_start.gpu", { value: review.engine.gpu === null ? t("run_start.not_reported") : t(review.engine.gpu ? "run_start.yes" : "run_start.no") })}</li></ul>
-        {movedList}
-        {review.engine.kind === "local" && review.engine.gpu === false && review.settings?.matcherWarning && <aside role="alert"><p>{t("run_settings.gpu_warning")}</p><blockquote>{review.settings.matcherWarning}</blockquote></aside>}
-        <h4>{t("run_start.changed_options")}</h4><OptionList options={review.options} />
-        <h4>{t("run_start.outputs")}</h4><ul>{review.outputs.map(output => <li key={output}>{t(`run_start.output.${output}`)}</li>)}</ul>
-        <h4>{t("run_start.always_requested")}</h4><p>{t("run_start.always_explain")}</p><ul>{review.alwaysProduced.map(output => <li key={output}>{t(`run_start.output.${output}`)}</li>)}</ul>
-        {review.blocked && <ErrorMessage failure={new ApiFailure(0, review.blocked.code, review.blocked.data)} />}
-        <Button className="secondary" disabled={working} onClick={reloadReview}>{t("run_start.reload")}</Button>{" "}
-        <Button className="secondary" disabled={working} onClick={() => setStep("settings")}>{t("settings.back")}</Button>{" "}
-        <Button disabled={working || !!review.blocked || !name.trim()} onClick={() => void start()}>{t("run_start.start")}</Button>
+        {shownReview.facts.nextOffset !== null && <Button className="secondary" onClick={() => { setLoading(true); setOffsets([...offsets, offset]); setOffset(shownReview.facts!.nextOffset!); }}>{t("upload.next")}</Button>}
       </>}
+      moved={movedList}
+      warnings={review?.settings && resolved && warningContext ? optionWarnings(review.settings.options, resolved.values, warningContext) : []}
+      working={working || loading} onReload={reloadReview} onBack={() => goTo("settings")} onStart={() => void start()}
+    />}
   </section>;
 }

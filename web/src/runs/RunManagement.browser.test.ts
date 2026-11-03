@@ -77,7 +77,7 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await field("#settings-search", "orthophoto-resolution");
     await wait("document.querySelector('.settings-row input').value==='6'");
     await field(".settings-row input", "8");
-    await activate("Review and start"); await activate("Start run");
+    await activate("Review and start"); await activate("Start the run");
     await wait(`location.hash!=='#/runs/${original.id}'&&document.body.textContent.includes('The engine reports 8 running or waiting runs')`);
     const changed = h.runs.latestForProject(project)!;
     expect(changed.taskUuid).toBe(uuid); expect(engine.uploads).toHaveLength(1);
@@ -98,7 +98,7 @@ test("run history, keyboard retry, changed settings and deletion use production 
     await activate("Review and start");
     await evaluate(`document.querySelector('#run-engine').value='${nextEngine}';document.querySelector('#run-engine').dispatchEvent(new Event('change',{bubbles:true}));true`);
     await wait("document.body.textContent.includes('Engine: Other engine')");
-    await activate("Start run");
+    await activate("Start the run");
     await eventually(async () => other.tasks.size===1&&[...other.tasks.values()][0]!.committed);
     expect(other.uploads).toHaveLength(1);
     expect(other.requests.some(request => request.path==='/task/restart')).toBe(false);
