@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import type { ReconciledOption } from "../../../shared/engine-options.ts";
 import { OPTION_GROUPS, type OptionDependency, type OptionValue, type PresetId } from "../../../shared/option-catalogue.ts";
+import { optionWarnings, type WarningContext } from "../../../shared/option-warnings.ts";
 import { resolveSettings, type SettingsDraft, type SettingsFacts } from "../../../shared/run-settings.ts";
 import { Button } from "../controls/Button.tsx";
 import { Disclosure } from "../controls/Disclosure.tsx";
@@ -8,6 +9,7 @@ import { Select } from "../controls/Select.tsx";
 import { TextField } from "../controls/TextField.tsx";
 import { Toggle } from "../controls/Toggle.tsx";
 import { t } from "../i18n/translate.ts";
+import { OptionWarnings } from "../sections/settings/OptionWarnings.tsx";
 import "./SettingsEditor.css";
 
 export type SettingsEditorProps = {
@@ -20,7 +22,11 @@ export type SettingsEditorProps = {
   onCancel: () => void;
   disabled?: boolean;
   baselineOptions?: readonly { name: string; value: OptionValue }[];
+  /** The engine and photos of the run. A warning that needs a fact missing here stays silent. */
+  warningContext?: WarningContext;
 };
+
+const UNKNOWN_CONTEXT: WarningContext = { engine: { kind: null, gpu: null, cpuCores: null }, photoCount: null };
 
 const fields = ["name", "description", "when", "cost", "example"] as const;
 const nameOf = (option: ReconciledOption) => option.unexplained ? option.name : t(`option.${option.name}.name`);
@@ -45,10 +51,11 @@ function Group({ label, initialOpen, searching, children }: { label: string; ini
   return <Disclosure label={label} open={searching || open} onToggle={(event) => { if (!searching) setOpen(event.currentTarget.open); }}>{children}</Disclosure>;
 }
 
-export function SettingsEditor({ options, preset, draft, facts, onChange, onApply, onCancel, disabled = false, baselineOptions }: SettingsEditorProps) {
+export function SettingsEditor({ options, preset, draft, facts, onChange, onApply, onCancel, disabled = false, baselineOptions, warningContext = UNKNOWN_CONTEXT }: SettingsEditorProps) {
   const [search, setSearch] = useState("");
   const id = useId();
   const resolved = resolveSettings(options, preset, draft, facts, baselineOptions);
+  const warnings = optionWarnings(options, resolved.values, warningContext);
   const query = search.trim().toLocaleLowerCase();
   const matches = (option: ReconciledOption) => !query || [option.name, ...(option.unexplained ? [option.help ?? ""] : fields.map((field) => t(`option.${option.name}.${field}`)))].some((text) => text.toLocaleLowerCase().includes(query));
   const changed = options.filter((option) => Object.hasOwn(draft, option.name) && (Boolean(resolved.errors[option.name]) || resolved.values[option.name] !== resolved.baseline[option.name]));
@@ -59,7 +66,8 @@ export function SettingsEditor({ options, preset, draft, facts, onChange, onAppl
     const controlId = `${id}-${option.name}`;
     const error = resolved.errors[option.name];
     const blocked = resolved.disabled[option.name] ?? [];
-    const describedBy = [error && `${controlId}-error`, blocked.length > 0 && `${controlId}-reason`].filter(Boolean).join(" ") || undefined;
+    const warned = warnings.some((warning) => warning.options.includes(option.name));
+    const describedBy = [error && `${controlId}-error`, blocked.length > 0 && `${controlId}-reason`, warned && `${controlId}-warnings`].filter(Boolean).join(" ") || undefined;
     const value = Object.hasOwn(draft, option.name) ? draft[option.name] : resolved.values[option.name] ?? resolved.baseline[option.name];
     const common = { id: controlId, label: nameOf(option), disabled: disabled || blocked.length > 0, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy };
     const parents = option.dependencies.flatMap(optionParents).map((parent) => options.find((candidate) => candidate.name === parent)).filter((parent): parent is ReconciledOption => Boolean(parent && parent.group !== option.group));
@@ -75,6 +83,7 @@ export function SettingsEditor({ options, preset, draft, facts, onChange, onAppl
       {option.changes.length > 0 && <p>{t("run_settings.engine_changes", { changes: option.changes.map((change) => t(`run_settings.change.${change}`)).join(", ") })}</p>}
       {blocked.length > 0 && <p id={`${controlId}-reason`}>{blocked.map((dependency) => reason(dependency, options, facts)).join(" ")}</p>}
       {error && <p className="settings-editor-error" id={`${controlId}-error`}>{t(`run_settings.error.${error}`)}</p>}
+      <OptionWarnings id={`${controlId}-warnings`} option={option.name} warnings={warnings} />
       {!option.unexplained && <Disclosure label={t("run_settings.more")} open={query ? true : undefined}><dl>{(["when", "cost", "example"] as const).map((field) => <div key={field}><dt>{t(`run_settings.${field}`)}</dt><dd>{t(`option.${option.name}.${field}`)}</dd></div>)}</dl></Disclosure>}
     </div>;
   }
