@@ -141,7 +141,7 @@ test("the sidebar, the route map, the redirects, Projects and Preferences on the
       await noSidewaysScroll();
     }
     // Preferences is the application's page; Settings is only ever a section of a project.
-    expect(await evaluate("[...document.querySelectorAll('nav.sidebar a')].map(a => a.textContent).join('|')")).toBe("Projects|Engines|Preferences");
+    expect(await evaluate("[...document.querySelectorAll('nav.sidebar a .nav-label')].map(label => label.textContent).join('|')")).toBe("Projects|Engines|Preferences");
     expect(await evaluate("document.querySelector('nav.sidebar').textContent.includes('Settings')")).toBe(false);
 
     // Every address of the route map opens a screen; the wizard opens without the sidebar.
