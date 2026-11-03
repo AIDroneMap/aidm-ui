@@ -41,6 +41,13 @@ export function sectionHash(projectId: number, section: Section): string {
   return `#/projects/${projectId}/${section}`;
 }
 
+const CHANGED_ONLY = "?changed";
+
+/** The Settings section, with "Changed only" kept in the address so that a reload keeps the filter. */
+export function settingsHash(projectId: number, changedOnly: boolean): string {
+  return sectionHash(projectId, "settings") + (changedOnly ? CHANGED_ONLY : "");
+}
+
 export function resultsHash(projectId: number, runId: number, viewer?: Viewer): string {
   return `#/projects/${projectId}/results/${runId}${viewer ? `/${viewer}` : ""}`;
 }
@@ -71,12 +78,20 @@ const ID = "([1-9]\\d{0,14})";
 const PROJECT = new RegExp(`^#/projects/${ID}/(${SECTIONS.join("|")})$`);
 const RESULTS = new RegExp(`^#/projects/${ID}/results/${ID}(?:/(map|model))?$`);
 const RUN = new RegExp(`^#/runs/${ID}$`);
+const SETTINGS_FILTERED = new RegExp(`^#/projects/${ID}/settings\\${CHANGED_ONLY}$`);
+
+/** True when the address is Settings with "Changed only" on. */
+export function changedOnlyFromHash(hash: string): boolean {
+  return SETTINGS_FILTERED.test(hash);
+}
 
 export function routeFromHash(hash: string): Route {
   const step = wizardStepFromHash(hash);
   if (step !== null) return { screen: "wizard", step };
   const project = PROJECT.exec(hash);
   if (project) return { screen: "project", projectId: Number(project[1]), section: project[2] as Section };
+  const filtered = SETTINGS_FILTERED.exec(hash);
+  if (filtered) return { screen: "project", projectId: Number(filtered[1]), section: "settings" };
   const results = RESULTS.exec(hash);
   if (results) {
     const route: Route = { screen: "project", projectId: Number(results[1]), section: "results", runId: Number(results[2]) };

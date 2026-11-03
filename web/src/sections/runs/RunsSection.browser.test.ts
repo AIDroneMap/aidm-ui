@@ -307,7 +307,7 @@ test("runs table actions: popover keyboard, delete confirmation, retry redirect 
     };
     const wait = (condition: string) =>
       evaluate(`new Promise((resolve,reject)=>{const end=Date.now()+8000;const tick=()=>(${condition})?resolve(true):Date.now()>end?reject(Error(${JSON.stringify("timeout: " + condition)})):setTimeout(tick,20);tick()})`);
-    const btn = (label: string) => `[...document.querySelectorAll('dialog[open] button, [popover]:popover-open button, main .settings-editor button')].find(el=>el.textContent===${JSON.stringify(label)})`;
+    const btn = (label: string) => `[...document.querySelectorAll('dialog[open] button, [popover]:popover-open button, main .settings-workspace button')].find(el=>el.textContent===${JSON.stringify(label)})`;
     const click = (label: string) => clickExpr(btn(label));
     // clickExpr polls until the expression resolves to a non-null element and clicks it atomically.
     const clickExpr = (expr: string) =>
@@ -415,21 +415,22 @@ test("runs table actions: popover keyboard, delete confirmation, retry redirect 
     await wait(`location.hash === '#/runs/${runFailed2.id + 1}'`);
     expect(await evaluate(`location.hash`)).toBe(`#/runs/${runFailed2.id + 1}`);
 
-    // Run again opens settings editor in-section
+    // Run again opens the settings workspace in-section
     const doneMoreBtn = `[...document.querySelectorAll('button')].find(el=>el.textContent?.includes('More actions for Done run'))`;
     await send("Page.navigate", { url: h.base + `/#/projects/${projectId}/runs` });
     await clickExpr(doneMoreBtn);
     await wait(`${btn("Run again with other settings")} !== null`);
     await click("Run again with other settings");
-    await wait("document.querySelector('.settings-editor')");
-    expect(await evaluate("document.querySelector('.settings-editor') !== null")).toBe(true);
-    await click("Cancel");
+    await wait("document.querySelector('.settings-workspace .settings-row')");
+    expect(await evaluate("document.querySelector('.settings-workspace') !== null")).toBe(true);
+    await wait(`${btn("Review and start")} && !${btn("Review and start")}.disabled`);
+    await click("Review and start");
     await evaluate("new Promise(resolve => requestAnimationFrame(() => resolve(true)))");
-    await wait("!document.querySelector('.settings-editor')");
+    await wait("!document.querySelector('.settings-workspace')");
     await clickExpr(doneMoreBtn);
     await click("Run again with other settings");
-    await wait("document.querySelector('.settings-editor')");
-    expect(await evaluate("document.querySelector('.settings-editor') !== null")).toBe(true);
+    await wait("document.querySelector('.settings-workspace .settings-row')");
+    expect(await evaluate("document.querySelector('.settings-workspace') !== null")).toBe(true);
 
   } finally {
     for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error("test ended")); }

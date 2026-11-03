@@ -59,26 +59,24 @@ test("on the Settings route, a warning appears under its row as the value is set
     };
     const button = (text: string) => `[...document.querySelectorAll('main button')].find((button) => button.textContent === ${JSON.stringify(text)})`;
     const click = async (text: string) => { await wait(`${button(text)} && !${button(text)}.disabled`); await evaluate(`${button(text)}.click(); true`); };
-    const row = (flag: string) => `[...document.querySelectorAll('.settings-editor-row')].find((row) => row.querySelector('code')?.textContent === ${JSON.stringify(flag)})`;
+    const row = (flag: string) => `document.querySelector('.settings-row[data-option=${JSON.stringify(flag)}]')`;
     const warning = texts["warn.disk_space"];
 
     await send("Page.enable");
     await send("Page.navigate", { url: `${h.base}/#/projects/${projectId}/settings` });
     await wait("document.querySelector('main h1')?.textContent === 'Settings'");
-    await click(texts["run_start.choose"]);
-    await click(texts["run_settings.change"]);
     await wait(`${row("optimize-disk-space")}`);
     expect(await evaluate<boolean>(`document.body.textContent.includes(${JSON.stringify(warning)})`)).toBe(false);
 
     // The operator reaches the toggle with the keyboard and turns it on: the notice appears under that row only.
-    await evaluate(`(() => { const details = ${row("optimize-disk-space")}.closest('details'); details.open = true; ${row("optimize-disk-space")}.querySelector('input').focus(); return true; })()`);
+    await evaluate(`(() => { ${row("optimize-disk-space")}.querySelector('input').focus(); return true; })()`);
     await press(" ");
     await wait(`${row("optimize-disk-space")}.querySelector('.notice-warn')?.textContent.includes(${JSON.stringify(warning)})`);
     expect(await evaluate<number>(`[...document.querySelectorAll('.notice-warn')].filter((notice) => notice.textContent.includes(${JSON.stringify(warning)})).length`)).toBe(1);
     expect(await evaluate<string>(`${row("optimize-disk-space")}.querySelector('input').getAttribute('aria-describedby')`)).toContain("-warnings");
     expect(await evaluate<boolean>(`getComputedStyle(${row("optimize-disk-space")}.querySelector('.notice-warn')).display !== 'none'`)).toBe(true);
-    // It never blocks: Apply stays enabled while the warning shows.
-    expect(await evaluate<boolean>(`${button(texts["run_settings.apply"])}.disabled`)).toBe(false);
+    // It never blocks: Review and start stays enabled while the warning shows.
+    expect(await evaluate<boolean>(`${button(texts["settings.review"])}.disabled`)).toBe(false);
 
     // Turning it off again takes the notice away.
     await press(" ");

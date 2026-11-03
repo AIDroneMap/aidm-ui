@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { redirectFromHash, resultsHash, routeFromHash, ROUTE_MAP, SECTIONS, sectionHash, wizardHash, wizardStepFromHash, WIZARD_STEPS } from "./router.ts";
+import { changedOnlyFromHash, redirectFromHash, resultsHash, routeFromHash, ROUTE_MAP, SECTIONS, sectionHash, settingsHash, wizardHash, wizardStepFromHash, WIZARD_STEPS } from "./router.ts";
 
 test("the route map lists every address of the proposal, each opening its own screen", () => {
   expect(ROUTE_MAP.map(({ hash }) => hash)).toEqual([
@@ -58,4 +58,15 @@ test("anything else is the Projects screen", () => {
     "#/runs/0", "#/runs/new", "#/runs/42/extra", "#/runs/01"]) {
     expect(routeFromHash(hash), hash).toEqual({ screen: "projects" });
   }
+});
+
+test("Settings keeps Changed only in its address, and no other address takes the flag", () => {
+  expect(settingsHash(7, true)).toBe("#/projects/7/settings?changed");
+  expect(settingsHash(7, false)).toBe(sectionHash(7, "settings"));
+  expect(routeFromHash("#/projects/7/settings?changed")).toEqual({ screen: "project", projectId: 7, section: "settings" });
+  expect(changedOnlyFromHash("#/projects/7/settings?changed")).toBe(true);
+  expect(changedOnlyFromHash("#/projects/7/settings")).toBe(false);
+  expect(routeFromHash("#/projects/7/photos?changed")).toEqual({ screen: "projects" });
+  expect(changedOnlyFromHash("#/projects/7/photos?changed")).toBe(false);
+  expect(redirectFromHash("#/projects/7/settings?changed")).toBeNull();
 });

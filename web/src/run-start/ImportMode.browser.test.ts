@@ -40,10 +40,8 @@ test("keyboard import choices survive review and reset on an engine change", asy
     const wait = (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 4000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(Error('timeout')) : setTimeout(check, 20); check(); })`);
     const key = async (key: string, code: string, windowsVirtualKeyCode: number) => { await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code, windowsVirtualKeyCode }); await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode }); };
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
-    await wait("document.querySelector('button')");
-    await evaluate("document.querySelector('button').focus()"); await key(" ", "Space", 32);
-    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Review run' && !b.disabled)");
-    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Review run').focus()"); await key(" ", "Space", 32);
+    await wait("[...document.querySelectorAll('button')].some(b => b.textContent === 'Review and start' && !b.disabled)");
+    await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent === 'Review and start').focus()"); await key(" ", "Space", 32);
     await wait("document.querySelector('input[value=\"in-place\"]:checked')");
     expect(await evaluate("document.body.textContent.includes('Starting this run will restart it')")).toBe(true);
     await evaluate("document.querySelector('input[value=\"in-place\"]').focus()"); await key("ArrowDown", "ArrowDown", 40);
