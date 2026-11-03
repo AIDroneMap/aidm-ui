@@ -23,7 +23,7 @@ The project has two goals, and every change should serve at least one of them:
 
 ## Current stage
 
-Pre-alpha, not for use. Specification #58 adds projects, uploads and folder or ZIP inputs, reviewed settings and presets, retained runs, downloads and offline viewers. `docs/milestones/0002-own-flight.md` records the merged flows, released-package checks and known limits with their owners. The first milestone and its limits remain in `docs/milestones/0001-first-mac-run.md`.
+Pre-alpha, not for use. Specification #125 rebuilds the interface on a sidebar, project sections and one design system, shows every task API option, and adds the Review and run screens. `docs/milestones/0003-desktop-class-interface.md` records what merged, how each part was tested and the known limits with their owners. Specification #58 and its projects, inputs, retained runs and viewers are in `docs/milestones/0002-own-flight.md`. The first milestone and its limits remain in `docs/milestones/0001-first-mac-run.md`.
 
 Specifications are GitHub issues. A specification is approved when a maintainer labels its issue `ready-for-agent`. Build only what an approved specification covers. For anything else, limit work to specifications, mock-ups described in text, and documentation.
 

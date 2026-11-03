@@ -55,7 +55,7 @@ The current built-in offer is the published API 2.7.0 package with engine 0.2.0 
 4. Open **Engines** and check the reported API and engine versions. They should match the package you selected.
 5. If this is an existing test installation with an older engine, open **Engines** and use its **Update** action while it is idle. The corrected UI offers the built-in current package without a manual release check. Rebuilding the UI preserves existing data and does not silently interrupt work by replacing its installed engine. **Preferences**, **Engine updates**, **Look for a newer engine now** remains available for later releases.
 
-Signature, compatibility or installation errors are failures to investigate, not checks to bypass. The [milestone record](../milestones/0002-own-flight.md) names what has actually been exercised on each platform.
+Signature, compatibility or installation errors are failures to investigate, not checks to bypass. The [milestone record](../milestones/0003-desktop-class-interface.md) names what has actually been exercised on each platform.
 
 ### Use an engine on another computer
 
