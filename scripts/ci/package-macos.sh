@@ -23,6 +23,9 @@ app="$1"
 version="$2"
 out="$3"
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/ci/notary-wait.sh
+. "$here/notary-wait.sh"
+notary_deadline=$((SECONDS + NOTARY_DEADLINE_SECONDS))
 
 fail() {
   echo "::error::$1"
@@ -92,17 +95,10 @@ hdiutil create -volname "AIDM UI $version" -srcfolder "$work/stage" -fs HFS+ -fo
 if [ "$signing" = signed ]; then
   codesign --force --timestamp --keychain "$keychain" --sign "$identity" "$dmg"
   printf '%s' "$MACOS_NOTARY_KEY" | base64 --decode > "$work/notary.p8"
-  xcrun notarytool submit "$dmg" --key "$work/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" \
-    --wait --timeout 30m --output-format json > "$work/notary.json" || true
-  cat "$work/notary.json"
-  status="$(plutil -extract status raw "$work/notary.json" 2> /dev/null || echo unknown)"
-  if [ "$status" != Accepted ]; then
-    submission="$(plutil -extract id raw "$work/notary.json" 2> /dev/null || true)"
-    if [ -n "$submission" ]; then
-      xcrun notarytool log "$submission" --key "$work/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" || true
-    fi
-    fail "Notarization ended with status '$status'."
-  fi
+  notary() {
+    xcrun notarytool "$@" --key "$work/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID"
+  }
+  notarize_dmg "$dmg" "$work/notary.json" "$notary_deadline" "$NOTARY_INTERVAL_SECONDS" notary || exit 1
   xcrun stapler staple "$dmg"
   xcrun stapler validate "$dmg"
 fi
