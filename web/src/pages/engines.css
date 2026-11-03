@@ -109,6 +109,10 @@
   border: 0;
 }
 
+#local-advanced legend {
+  padding: 0;
+}
+
 /* The update and the way back: a part of the options, under a hairline. */
 .local-update {
   margin-top: var(--space-6);
