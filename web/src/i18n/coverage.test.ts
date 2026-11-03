@@ -198,3 +198,74 @@ test("Preferences is the application's page and never calls itself settings", ()
   const wrong = Object.entries(messages).filter(([key, text]) => key.startsWith("preferences.") && /\bsettings?\b/i.test(text)).map(([key]) => key);
   expect(wrong).toEqual([]);
 });
+
+// These exact texts name input limits, rather than processing estimates. Keeping
+// both key and text here prevents an added claim from inheriting an exception.
+const FIGURE_EXCEPTIONS: Record<string, string> = {
+  "run_presets.too_large": "Choose a settings file smaller than 1 MiB.",
+  "local.advanced.memory_hint": "At least 1 GiB. The most you can give it is {max}.",
+};
+
+const FIGURE_NUMBER = String.raw`\b(?:\d+(?:[.,]\d+)*|(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)(?=\b|fold\b))`;
+const FIGURE_RE = new RegExp([
+  `${FIGURE_NUMBER}[\\s-]*(?:(?:times?|fold|milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|h|percent|[kmgt]?i?b|(?:kilo|mega|giga|tera)?bytes?|per\\s+thread)\\b|[x×](?!\\w)|%)`,
+  `\\bfactor\\s+(?:of\\s+)?${FIGURE_NUMBER}\\b`,
+  String.raw`\b(?:twice|thrice)\s+(?:as\s+(?:fast|slow)|the\s+(?:memory|time)|(?:more|less)\s+(?:memory|time))\b`,
+].join("|"), "i");
+
+// Spatial units are outside this check. Time and size limits need an exact
+// exception above, so setting words such as "Set" cannot conceal a new claim.
+function figureOffenders(texts: Record<string, string>): string[] {
+  return Object.entries(texts)
+    .filter(([key, text]) => FIGURE_EXCEPTIONS[key] !== text && FIGURE_RE.test(text))
+    .map(([key]) => key);
+}
+
+test("no translation string contains a numeric speed or memory figure", () => {
+  expect(figureOffenders(messages)).toEqual([]);
+});
+
+test("the figure check catches factors, durations, percentages and memory amounts", () => {
+  for (const text of [
+    "takes roughly four times as long", "two times slower", "runs 2x faster",
+    "a 3× speedup", "fourfold increase", "a factor of 10 improvement",
+    "twice the memory", "thrice as slow", "about 1 GB per thread",
+    "uses 4 GiB of memory", "output is about 500 MB", "needs two gigabytes",
+    "needs four MB", "takes 30 seconds", "takes one second", "a run of 5 minutes",
+    "finishes in 2 hours", "takes 20 ms", "takes 4 min", "takes 2 h",
+    "reduces processing by 50%", "uses twenty percent less memory", "2 per thread",
+  ]) {
+    expect(figureOffenders({ "any.text": text }), text).toEqual(["any.text"]);
+  }
+});
+
+test("the figure check permits comparisons without figures and setting values", () => {
+  for (const text of [
+    "processing is faster", "a bit slower", "uses more memory", "takes much longer",
+    "open the 3D model", "uses a 2.5D mesh", "x86-64 processor",
+    "crops the edge by 0.01 metres", "Set 5 for a resolution of 5 cm per pixel",
+    "Set 2 to finish a large flight that ran out of memory with the default.",
+    "Keep 0 to retain it without this sampling.", "Click twice to select.", "Also ones that are not selected.",
+  ]) {
+    expect(figureOffenders({ "any.text": text }), text).toEqual([]);
+  }
+  expect(figureOffenders(FIGURE_EXCEPTIONS)).toEqual([]);
+});
+
+test("a setting limit exception requires both the exact key and the full text", () => {
+  for (const [key, text] of Object.entries(FIGURE_EXCEPTIONS)) {
+    expect(figureOffenders({ [key]: `${text} Processing is 2x faster.` })).toEqual([key]);
+    expect(figureOffenders({ "other.key": text })).toEqual(["other.key"]);
+  }
+});
+
+test("the figure check scans every prefix, including outside options and warnings", () => {
+  expect(figureOffenders({
+    "option.foo.cost": "takes four times as long",
+    "warn.bar": "uses 2 GB of memory",
+    "settings.baz": "runs 3x faster",
+    "run.something": "finishes in 30 seconds",
+    "preset.quick.description": "50% faster",
+    "clean.key": "uses more memory",
+  })).toEqual(["option.foo.cost", "warn.bar", "settings.baz", "run.something", "preset.quick.description"]);
+});

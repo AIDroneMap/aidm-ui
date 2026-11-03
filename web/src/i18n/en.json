@@ -873,7 +873,7 @@
   "option.pc-quality.name": "Point cloud quality",
   "option.pc-quality.description": "Chooses point cloud quality. Higher settings make a denser point cloud.",
   "option.pc-quality.when": "Choose a setting to balance point-cloud detail against processing demands.",
-  "option.pc-quality.cost": "The engine states that each step up in quality takes roughly four times as long to process. Higher quality also uses more memory.",
+  "option.pc-quality.cost": "The engine states that each step up in quality takes much longer to process. Higher quality also uses more memory.",
   "option.pc-quality.example": "Use a lower setting when a less dense point cloud is enough for this flight.",
   "option.orthophoto-resolution.name": "Orthophoto resolution",
   "option.orthophoto-resolution.description": "Sets the orthophoto resolution in centimetres per pixel; the engine may cap it using a ground-sampling-distance estimate.",
