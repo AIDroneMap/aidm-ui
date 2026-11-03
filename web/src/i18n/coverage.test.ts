@@ -204,6 +204,8 @@ test("Preferences is the application's page and never calls itself settings", ()
 const FIGURE_EXCEPTIONS: Record<string, string> = {
   "run_presets.too_large": "Choose a settings file smaller than 1 MiB.",
   "local.advanced.memory_hint": "At least 1 GiB. The most you can give it is {max}.",
+  // The percentage range is an input limit, not a processing claim.
+  "settings.range.percent": "From 0 to 100 percent.",
 };
 
 const FIGURE_NUMBER = String.raw`\b(?:\d+(?:[.,]\d+)*|(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)(?=\b|fold\b))`;

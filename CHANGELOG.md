@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow the percentage setting range as an exact input-limit exception in the translation figure check. Evidence: `web/src/i18n/coverage.test.ts` fails on `settings.range.percent` before the exception and still rejects the speed and memory claim fixtures. Closes #163.
+
 - Remove the processing-time factor from the point cloud quality explanation. Check every translation for numeric speed or memory figures while preserving exact input-limit texts and spatial settings. Evidence: the old wording fails the new check in `web/src/i18n/coverage.test.ts`, whose fixtures cover factors, durations, memory amounts, percentages and setting limits. Closes #158.
 
 - List the sample project before its first run, with its photo count and the same activity order as other projects. Its Runs empty state offers Run the sample job, using the wizard's request and settings, and saved sample links open that section. Keep the sample's name and notes read-only in Details and refuse changes on the server. Evidence: `server/projects/project-store.test.ts`, `server/projects/routes.test.ts`, `web/src/sections/details/DetailsSection.test.tsx`, and the production-route journey in `web/src/sections/runs/RunsSection.browser.test.ts`, which compares the start requests and engine options in both themes. Closes #154.
