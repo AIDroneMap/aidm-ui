@@ -15,8 +15,9 @@ import { RunOutputs } from "../sections/results/RunOutputs.tsx";
  * while AIDM UI fetches the archive, then the Results section's viewer
  * tiles and downloads, and the deletion of the results apart from them.
  */
-export function RunResults({ run, onChange }: { run: RunView; onChange: (run: RunView) => void }) {
+export function RunScreenResults({ run, onChange }: { run: RunView; onChange: (run: RunView) => void }) {
   const [failure, setFailure] = useState<ApiFailure | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const state = run.results?.state;
   // A fetch started again from here comes after the run's own stream closed, so it is followed on a stream of its own.
   useEffect(() => {
@@ -29,19 +30,23 @@ export function RunResults({ run, onChange }: { run: RunView; onChange: (run: Ru
     return () => source.close();
   }, [run.id, state, onChange]);
   async function retry() {
+    if (retrying) return;
+    setRetrying(true);
     setFailure(null);
     try {
       await api<unknown>("POST", `/api/runs/${run.id}/results`);
       onChange(await api<RunView>("GET", `/api/runs/${run.id}`));
     } catch (error) {
       setFailure(asApiFailure(error));
+    } finally {
+      setRetrying(false);
     }
   }
   return (
     <section className="run-band run-results" aria-label={t("results.title")}>
       {(run.step === "results" || state === "fetching") && <Progress id="run-results-fetching" label={t("run.results_fetching")} hideLabel />}
       {state === "ready" && <><RunOutputs run={run} /><DeleteResults run={run} onDeleted={onChange} /></>}
-      {state === "failed" && <Notice tone="warn"><p>{t("results.failed")}</p><Button variant="secondary" onClick={() => void retry()}>{t("results.retry")}</Button></Notice>}
+      {state === "failed" && <Notice tone="warn"><p>{t("results.failed")}</p><Button variant="secondary" disabled={retrying} onClick={() => void retry()}>{t("results.retry")}</Button></Notice>}
       {state === "deleted" && <Notice>{t("results.deleted")}</Notice>}
       {state === undefined && run.step !== "results" && <Notice>{t("results.none_for_run")}</Notice>}
       {failure && <ErrorMessage failure={failure} />}

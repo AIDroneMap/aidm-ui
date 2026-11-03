@@ -10,7 +10,7 @@ import { isFinished, linesWithRestart } from "../runs.ts";
 import { RunFailure } from "../run/RunFailure.tsx";
 import { RunHeader } from "../run/RunHeader.tsx";
 import { RunLog } from "../run/RunLog.tsx";
-import { RunResults } from "../run/RunResults.tsx";
+import { RunScreenResults } from "../run/RunScreenResults.tsx";
 import { RunStages } from "../run/RunStages.tsx";
 import type { RunView } from "../../../shared/api-types.ts";
 import "../run/run.css";
@@ -84,7 +84,7 @@ export function RunProgress({
         </>
       )}
 
-      {run.state === "completed" && <RunResults run={run} onChange={setRun} />}
+      {run.state === "completed" && <RunScreenResults run={run} onChange={setRun} />}
 
       {run.step === "download" && run.download && (
         <DownloadBlock

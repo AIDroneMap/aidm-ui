@@ -6,7 +6,7 @@ import { browserPath } from "../controls/browser-path.ts";
 import { startBrowser } from "../controls/browser-start.ts";
 import { findBrowserPage } from "../controls/browser-target.ts";
 
-test("retry follows results to readiness and deletion requires confirmation", async () => {
+test("on the run screen a retry waits for its request, follows the results to readiness, and deletion asks first", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aidm-results-page-"));
   const requests: string[] = [];
   const run = { id: 7, projectId: 1, engineId: 1, createdAt: "2026-10-26T10:00:00Z", name: null, preset: null, wayIn: null, sample: false, engineName: null, engineLocal: false, state: "completed", step: null as string | null, download: null, upload: null, progress: null, engineMessage: null, problem: null, restarted: false, restartedAtLine: null, resultsAvailable: false, results: { state: "failed", archiveSize: null as number | null, outputs: [] as { name: string; size: number }[] } };
@@ -17,7 +17,7 @@ test("retry follows results to readiness and deletion requires confirmation", as
     requests.push(`${request.method} ${path}`);
     if (path === "/") return new Response('<div id="root"></div><script src="/fixture.js"></script>', { headers: { "content-type": "text/html" } });
     if (path === "/fixture.js") return new Response(await build.outputs[0]!.text(), { headers: { "content-type": "text/javascript" } });
-    if (path === "/api/runs/7/results" && request.method === "POST") { run.step = "results"; run.results.state = "fetching"; return Response.json({}); }
+    if (path === "/api/runs/7/results" && request.method === "POST") { await Bun.sleep(300); run.step = "results"; run.results.state = "fetching"; return Response.json({}); }
     if (path === "/api/runs/7/results" && request.method === "DELETE") { run.results = { state: "deleted", archiveSize: null, outputs: [] }; run.resultsAvailable = false; return Response.json({}); }
     if (path === "/api/runs/7/events") {
       run.step = null; run.results = { state: "ready", archiveSize: 2048, outputs: [{ name: "glb", size: 512 }] }; run.resultsAvailable = true;
@@ -41,6 +41,8 @@ test("retry follows results to readiness and deletion requires confirmation", as
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
     await wait("document.body.textContent.includes('Try fetching results again')");
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Try fetching results again').click()");
+    // While the request is on its way the button waits, so a second press sends nothing.
+    expect(await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Try fetching results again').disabled")).toBe(true);
     await wait("document.body.textContent.includes('3D model (GLB)')");
     expect(requests).toContain("POST /api/runs/7/results");
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Delete the results of this run').click()");
