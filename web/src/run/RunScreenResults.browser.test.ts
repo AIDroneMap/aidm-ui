@@ -37,7 +37,8 @@ test("on the run screen a retry waits for its request, follows the results to re
     socket.onmessage = event => { const message = JSON.parse(String(event.data)); if (message.id) { pending.get(message.id)?.(message); pending.delete(message.id); } };
     const send = (method: string, params: object = {}) => new Promise<any>(resolve => { const next = ++id; pending.set(next, resolve); socket!.send(JSON.stringify({ id: next, method, params })); });
     const evaluate = async (expression: string) => { const answer = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (answer.result.exceptionDetails) throw new Error(JSON.stringify(answer.result.exceptionDetails)); return answer.result.result.value; };
-    const wait = async (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 10000; const check = () => ${expression} ? resolve(true) : Date.now() > end ? reject(new Error('condition timed out')) : setTimeout(check, 20); check(); })`);
+    // A condition that throws, as one reading the page before it has a body does, is not met yet.
+    const wait = async (expression: string) => evaluate(`new Promise((resolve, reject) => { const end = Date.now() + 10000; const met = () => { try { return Boolean(${expression}); } catch { return false; } }; const check = () => met() ? resolve(true) : Date.now() > end ? reject(new Error('condition timed out')) : setTimeout(check, 20); check(); })`);
     await send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
     await wait("document.body.textContent.includes('Try fetching results again')");
     await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Try fetching results again').click()");
