@@ -157,10 +157,12 @@ function renderChoice(check: MachineCheckData | null, overrides: Partial<Paramet
   );
 }
 
-test("when the local engine is not offered, the install option is absent and the reason shows", () => {
+test("when the local engine is not offered, the install option is absent and the requirement shows, nothing else", () => {
   const html = renderChoice(refused);
   expect(html).not.toContain("Install on this computer");
-  expect(html).toContain("It lacks avx2, fma.");
+  expect(html).toContain('<p class="wizard-refused">The engine needs an x86-64-v3 or ARMv8.2-A processor.</p>');
+  expect(html).not.toContain("too old");
+  expect(html).not.toContain("It lacks");
   expect(html).toContain(">Add a remote engine</button>");
   expect(html).toContain(">Use AIDM UI without an engine</button>");
 });
@@ -768,10 +770,11 @@ const macCheck = (code: "machine.mac_intel" | "machine.macos_too_old", data = {}
   checkedAt: "2026-10-26T10:00:00Z",
 });
 
-test("on an Intel Mac the choice screen does not offer the local engine, says why, and offers a remote engine", () => {
+test("on an Intel Mac the choice screen does not offer the local engine, names the requirement, and offers a remote engine", () => {
   const html = renderChoice(macCheck("machine.mac_intel"));
   expect(html).not.toContain("Install on this computer</button>");
-  expect(html).toContain("this Mac has an Intel processor");
+  expect(html).toContain('<p class="wizard-refused">The engine needs a Mac with Apple silicon.</p>');
+  expect(html).not.toContain("this Mac has an Intel processor");
   expect(html).toContain(">Add a remote engine</button>");
   expect(untranslatedText(html)).toEqual([]);
 });
@@ -782,6 +785,30 @@ test("on macOS 15 the choice screen says which macOS is needed and offers a remo
   expect(html).toContain("The engine needs macOS 26 or newer.");
   expect(html).toContain(">Add a remote engine</button>");
   expect(untranslatedText(html)).toEqual([]);
+});
+
+test("every refusal of this computer names the requirement in one sentence and nothing else", () => {
+  const cases: Array<[MachineCheckData["lines"][number]["message"], string]> = [
+    [{ code: "machine.windows_not_yet", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
+    [{ code: "machine.platform_unsupported", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
+    [{ code: "machine.cpu_missing", data: { missing: "avx2" } }, "The engine needs an x86-64-v3 or ARMv8.2-A processor."],
+    [{ code: "machine.mac_intel", data: {} }, "The engine needs a Mac with Apple silicon."],
+    [{ code: "machine.macos_too_old", data: { version: "15.6.1", minimumVersion: 26 } }, "The engine needs macOS 26 or newer."],
+    [{ code: "machine.ram_too_low", data: { total: 4 * 1024 ** 3, minimum: 8 * 1024 ** 3 } }, "The engine needs at least 8.0 GiB of memory."],
+  ];
+  for (const [reason, sentence] of cases) {
+    const check: MachineCheckData = { lines: [], localEngine: { offered: false, reason }, checkedAt: "2026-10-26T10:00:00Z" };
+    const card = /<h2>An engine on this computer<\/h2>(.*?)<\/div>/.exec(renderChoice(check))?.[1];
+    expect(card, reason.code).toBe(`<p class="wizard-refused">${sentence}</p>`);
+    const install = renderInstall(builtIn, { local: fresh, installFailure: new ApiFailure(409, reason.code, reason.data) });
+    expect(install, reason.code).toContain(`<p class="wizard-refused">${sentence}</p>`);
+    expect(install, reason.code).not.toContain(`role="alert"`);
+  }
+  // A package refused for this computer: the same sentence in place of an offer.
+  const none = renderInstall({ ...builtIn, offer: null, reason: { code: "machine.windows_not_yet", data: {} } });
+  expect(none).toContain('<p class="wizard-refused">The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon.</p>');
+  // Any other failure of the install stays an alert with its own words.
+  expect(renderInstall(builtIn, { local: fresh, installFailure: new ApiFailure(500, "server.internal_error") })).toContain('role="alert"');
 });
 
 test("the install screen on a Mac lists the steps with their sizes before the operator clicks", () => {
@@ -873,7 +900,8 @@ test("a refusal of the install, such as an Intel Mac, also offers the remote eng
     local: fresh,
     installFailure: new ApiFailure(409, "machine.mac_intel"),
   });
-  expect(html).toContain("this Mac has an Intel processor");
+  expect(html).toContain('<p class="wizard-refused">The engine needs a Mac with Apple silicon.</p>');
+  expect(html).not.toContain("this Mac has an Intel processor");
   expect(html).toContain(">Add a remote engine</button>");
   expect(renderInstall(builtIn, { local: fresh })).not.toContain("Add a remote engine");
 });

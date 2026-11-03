@@ -1,5 +1,5 @@
 import { Button } from "../controls/Button.tsx";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, asApiFailure, type ApiFailure } from "../api.ts";
 import { BusyButton } from "../components/BusyButton.tsx";
 import { ErrorMessage } from "../components/ErrorMessage.tsx";
@@ -12,7 +12,9 @@ import { formatBytes, formatClock } from "../format.ts";
 import { t } from "../i18n/translate.ts";
 import { installStatus, needsRuntimeSetup, setupUnderWay, useLocalEngine } from "../localEngine.ts";
 import { messageParams } from "../machine.ts";
+import { IconCircleCheck, IconCircleX, IconTriangleAlert } from "../icons/icons.tsx";
 import { SampleJobPage } from "./SampleJobPage.tsx";
+import "./wizard.css";
 import { WIZARD_STEPS, useWizardStep, wizardHash, type WizardStep } from "../router.ts";
 import type {
   EnginePackageOffer,
@@ -47,14 +49,35 @@ function Sentence({ error }: { error: ApiError }) {
   return <>{t(error.code, messageParams(error))}</>;
 }
 
+/** The requirement each refusal of this computer names, and nothing else (AGENTS.md: supported hardware is a list). */
+const REFUSALS: Readonly<Record<string, string>> = {
+  "machine.windows_not_yet": "wizard.refused.platform",
+  "machine.platform_unsupported": "wizard.refused.platform",
+  "machine.cpu_missing": "wizard.refused.cpu",
+  "machine.mac_intel": "wizard.refused.mac",
+  "machine.macos_too_old": "wizard.refused.macos",
+  "machine.ram_too_low": "wizard.refused.memory",
+};
+
+/** The one sentence of the refused state, when the error says this computer cannot run the engine; null for any other error. */
+export function refusalText(error: { code: string; data: ApiError["data"] } | null): string | null {
+  const key = error === null ? undefined : REFUSALS[error.code];
+  return key === undefined || error === null ? null : t(key, messageParams(error));
+}
+
+/** The refused state: the requirement in one sentence. */
+function Refused({ text }: { text: string }) {
+  return <p className="wizard-refused">{text}</p>;
+}
+
 export function StepIndicator({ step }: { step: WizardStep }) {
   const current = WIZARD_STEPS.indexOf(step) + 1;
   return (
     <div className="wizard-steps">
       <p>{t("wizard.step", { current, total: WIZARD_STEPS.length })}</p>
       <ol aria-label={t("wizard.steps_label")}>
-        {WIZARD_STEPS.map((name) => (
-          <li key={name} aria-current={name === step ? "step" : undefined}>
+        {WIZARD_STEPS.map((name, index) => (
+          <li key={name} aria-current={name === step ? "step" : undefined} className={index < current - 1 ? "wizard-step-done" : undefined}>
             {t(`wizard.step.${name}`)}
           </li>
         ))}
@@ -69,7 +92,7 @@ export function WelcomeScreen({ onNext }: { onNext: () => void }) {
       <Heading>{t("wizard.welcome.title")}</Heading>
       <p>{t("wizard.welcome.body")}</p>
       <p>{t("wizard.welcome.next_steps")}</p>
-      <div className="actions">
+      <div className="actions wizard-nav">
         <Button type="button" onClick={onNext}>
           {t("wizard.next")}
         </Button>
@@ -90,6 +113,12 @@ export interface MachineCheckScreenProps {
   onNext: () => void;
 }
 
+const RESULT_ICONS: Record<MachineCheckData["lines"][number]["result"], ReactNode> = {
+  pass: <IconCircleCheck />,
+  warn: <IconTriangleAlert />,
+  fail: <IconCircleX />,
+};
+
 export function MachineCheckScreen(props: MachineCheckScreenProps) {
   const { check } = props;
   return (
@@ -102,7 +131,7 @@ export function MachineCheckScreen(props: MachineCheckScreenProps) {
             <li key={line.id}>
               <span className="check-name">{t(`wizard.check.line.${line.id}`)}</span>
               <span className={`result result-${line.result}`}>
-                <span className={`marker marker-${line.result}`} aria-hidden="true"></span>
+                <span className={`marker marker-${line.result}`} aria-hidden="true">{RESULT_ICONS[line.result]}</span>
                 {t(`wizard.result.${line.result}`)}
               </span>
               <span className="check-message">
@@ -119,7 +148,7 @@ export function MachineCheckScreen(props: MachineCheckScreenProps) {
       <p role="status" className="visually-hidden">
         {props.checking ? t("wizard.check.checking") : props.announcement}
       </p>
-      <div className="actions">
+      <div className="actions wizard-nav">
         <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </Button>
@@ -158,7 +187,7 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
       <Heading>{t("wizard.engine.title")}</Heading>
       <p>{t("wizard.engine.intro")}</p>
 
-      <div className="choice">
+      <div className={local !== null && !local.offered ? "choice choice-refused" : "choice"}>
         <h2>{t("wizard.engine.install.title")}</h2>
         {local?.offered ? (
           <>
@@ -168,7 +197,11 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
             </BusyButton>
           </>
         ) : local ? (
-          <p>{local.reason ? <Sentence error={local.reason} /> : t("wizard.engine.install.unavailable")}</p>
+          refusalText(local.reason) !== null ? (
+            <Refused text={refusalText(local.reason)!} />
+          ) : (
+            <p>{local.reason ? <Sentence error={local.reason} /> : t("wizard.engine.install.unavailable")}</p>
+          )
         ) : props.checkFailure ? (
           <>
             <ErrorMessage failure={props.checkFailure} />
@@ -201,7 +234,7 @@ export function EngineChoiceScreen(props: EngineChoiceScreenProps) {
       <p role="status" className="visually-hidden">
         {props.checking ? t("wizard.check.checking") : ""}
       </p>
-      <div className="actions">
+      <div className="actions wizard-nav">
         <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </Button>
@@ -275,6 +308,8 @@ function GpuNote({ gpu, offer }: { gpu: PackagesView["gpu"]; offer: EnginePackag
 function Offer({ packages, platform }: { packages: PackagesView; platform: string | null }) {
   const { offer } = packages;
   if (!offer) {
+    const refused = refusalText(packages.reason);
+    if (refused !== null) return <Refused text={refused} />;
     return (
       <p>{packages.reason ? <Sentence error={packages.reason} /> : t("wizard.install.no_offer")}</p>
     );
@@ -362,7 +397,12 @@ export function InstallScreen(props: InstallScreenProps) {
         ) : (
           button
         ))}
-      {props.installFailure && <ErrorMessage failure={props.installFailure} />}
+      {props.installFailure &&
+        (refusalText(props.installFailure) !== null ? (
+          <Refused text={refusalText(props.installFailure)!} />
+        ) : (
+          <ErrorMessage failure={props.installFailure} />
+        ))}
       <LocalInstallStatus view={props.local} withSteps={false} />
       {props.local && <ConnectionHelp view={props.local} onView={props.onLocalView} onAuthRequired={props.onAuthRequired} />}
       {(failed || waiting) && (
@@ -393,7 +433,7 @@ export function InstallScreen(props: InstallScreenProps) {
       <p role="status" className="visually-hidden">
         {props.announcement}
       </p>
-      <div className="actions">
+      <div className="actions wizard-nav">
         <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </Button>
@@ -420,7 +460,7 @@ export function SampleScreen(props: SampleScreenProps) {
       <Heading>{t("wizard.sample.title")}</Heading>
       <SampleJobPage onAuthRequired={props.onAuthRequired} embedded />
       {props.failure && <ErrorMessage failure={props.failure} />}
-      <div className="actions">
+      <div className="actions wizard-nav">
         <Button type="button" className="secondary" onClick={props.onBack}>
           {t("wizard.back")}
         </Button>
@@ -601,8 +641,10 @@ export function WizardPage({
   const next = () => go(neighbour(step, 1));
 
   return (
-    <>
+    <div className="wizard">
+      <p className="wizard-brand">{t("app.name")}</p>
       <StepIndicator step={step} />
+      <div className="wizard-panel">
       {step === "welcome" ? (
         <WelcomeScreen onNext={next} />
       ) : step === "check" ? (
@@ -659,6 +701,7 @@ export function WizardPage({
           onFinish={() => void finish("#/")}
         />
       )}
-    </>
+      </div>
+    </div>
   );
 }
