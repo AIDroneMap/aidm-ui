@@ -109,6 +109,8 @@ The `v0.1.0` tag and its draft release from 1 November 2026 are still there. The
 | No real native processing run or local Windows engine was checked | Engine package maintainer, AIDroneMap/aidm#15 |
 | GPU processing was not exercised | Engine release maintainer, the engine release GPU test |
 
+The ad-hoc signature limit is resolved in 0.2.1: the release environment holds the Developer ID and notarization secrets, and [run 41714683961](https://github.com/AIDroneMap/aidm-ui/actions/runs/41714683961) from the tag `v0.2.0` signed, notarized and stapled the Mac app, which Gatekeeper accepted.
+
 Milestone 2's limit "Hosted task API coverage pins API 2.6.1" is closed: CI's test-mode task API runs 2.7.0 since #146.
 
 ## Acceptance boundary
