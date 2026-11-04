@@ -4,13 +4,13 @@
 
 AIDM UI lets a single operator create projects, bring in photos, review settings, run an engine, and view or download the results. It installs the engine on the operator's computer and can attach to a chosen task API endpoint.
 
-> **Status: pre-alpha, not for use.** Specification #125 rebuilt the interface as a desktop-class application: a sidebar, project sections, every task API option in Settings, a Review screen, a run screen by stage, results and viewers first, and one design system with light and dark themes. [Milestone 3](docs/milestones/0003-desktop-class-interface.md) records what merged, how it was tested and its known limits. [Milestone 2](docs/milestones/0002-own-flight.md) records projects, photo intake, retained runs, downloads and offline viewers under specification #58. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
+> **Status: 0.2.1, an early release for testing.** It ships with engine 0.2.0 and [AIDM API](https://github.com/AIDroneMap/aidm-api) 2.7.0, and the Mac app is signed with a Developer ID and notarized by Apple. Specification #125 rebuilt the interface as a desktop-class application: a sidebar, project sections, every task API option in Settings, a Review screen, a run screen by stage, results and viewers first, and one design system with light and dark themes. [Milestone 3](docs/milestones/0003-desktop-class-interface.md) records what merged, how it was tested and its known limits. [Milestone 2](docs/milestones/0002-own-flight.md) records projects, photo intake, retained runs, downloads and offline viewers under specification #58. [Milestone 1](docs/milestones/0001-first-mac-run.md) records installation and the sample flow on Linux and Mac. Specifications are GitHub issues approved by a maintainer before development starts. The vocabulary is in [GLOSSARY.md](GLOSSARY.md) and decisions are in [docs/adr](docs/adr).
 
 ## Install and test
 
 A pilot should download the app, open it and follow the setup screens. Running a downloaded executable needs no Git, Bun or other developer tools.
 
-Download AIDM UI from the [releases page](https://github.com/AIDroneMap/aidm-ui/releases). Each release lists its install steps. On a Mac with Apple silicon, the download is a disk image with the AIDM UI app: drag it to Applications and open it. Linux and Windows get a standalone executable; Windows can attach to an engine elsewhere but has no local engine yet.
+Download AIDM UI from the [latest release](https://github.com/AIDroneMap/aidm-ui/releases/latest). Each release lists its install steps. On a Mac with Apple silicon, the download is a disk image with the AIDM UI app: drag it to Applications and open it. The app is signed and notarized, so macOS asks once whether to open an app downloaded from the internet, and nothing more. Your browser then opens AIDM UI, and its setup screens check the Mac, install the engine and offer a sample job. Nothing is downloaded until you approve it. The engine on the Mac needs macOS 26 or newer. Linux and Windows get a standalone executable; Windows can attach to an engine elsewhere but has no local engine yet.
 
 For controlled testing between releases, a successful [CI run on main](https://github.com/AIDroneMap/aidm-ui/actions/workflows/ci.yml?query=branch%3Amain) has one executable per platform under **Artifacts**. Sign in to GitHub to download them. They expire after seven days, and the Mac one is a command-line executable, not the app.
 
@@ -36,6 +36,7 @@ What it will not do: user accounts, teams or billing. AIDM UI is for one operato
 | Task API | [aidm-api](https://github.com/AIDroneMap/aidm-api) | Runs the engine and exposes it over HTTP |
 | Web interface and local server | this repository | The operator's tool in the browser, and the engine manager that installs the engine on their computer |
 | Desktop app | coming later | A desktop shell around the same server |
+| Cloud layer | coming later | Spreads jobs across many machines and cloud providers |
 
 AIDM UI talks to every engine only through the task API, so it works the same with the engine on your computer, a server on your network, or a cloud endpoint.
 
@@ -75,7 +76,7 @@ For a bug report from a Mac, send `logs/aidm-ui.log` and `logs/engine.log`, whic
 
 ## Contributing
 
-The project is pre-alpha. Development follows maintainer-approved specifications. Ideas and use cases help define what comes next. Open a discussion or an issue describing how you process drone data and what you need from the interface.
+The project is at an early stage. Development follows maintainer-approved specifications. Ideas and use cases help define what comes next. Open a discussion or an issue describing how you process drone data and what you need from the interface.
 
 Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) before opening a pull request. Every commit needs a DCO sign-off (`git commit -s`).
 
