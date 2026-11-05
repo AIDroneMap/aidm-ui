@@ -13,9 +13,11 @@ Open the [releases page](https://github.com/AIDroneMap/aidm-ui/releases) and fol
 | Apple silicon Mac | `aidm-ui-<version>-mac-apple-silicon.dmg` | Open the disk image, drag AIDM UI onto Applications, and open it from there |
 | Linux x86-64 | `aidm-ui-<version>-linux-x64` | Allow the file to run as a program in the file manager, then run it |
 | Linux arm64 | `aidm-ui-<version>-linux-arm64` | Allow the file to run as a program in the file manager, then run it |
-| Windows x64 | `aidm-ui-<version>-windows-x64.exe` | Open it; use an engine on another computer |
+| Windows x64 | `aidm-ui-<version>-windows-x64.exe` | Open it, then follow the setup screens to check the computer, install the engine and try the sample job on Windows 11 |
 
 The release notes say whether the Mac app is signed by its developer. When it is not, macOS refuses to open it the first time. Choose **Done**, then open System Settings, **Privacy & Security**, and choose **Open Anyway** next to the line about AIDM UI. macOS asks for this once.
+
+On Windows, if Windows says it protected your PC, choose **More info**, then **Run anyway**. The Windows executable is unsigned.
 
 Opening the Mac app starts AIDM UI in the background and opens its interface in the browser. Opening the app again while AIDM UI runs opens the interface again. AIDM UI keeps running until you log out or restart the Mac.
 
@@ -33,7 +35,7 @@ Opening the Mac app starts AIDM UI in the background and opens its interface in 
 | Linux x86-64 | `aidm-ui-linux-x64` | `aidm-ui-linux-x64` | Allow the file to run as a program in the file manager, then run it |
 | Linux arm64 | `aidm-ui-linux-arm64` | `aidm-ui-linux-arm64` | Allow the file to run as a program in the file manager, then run it |
 | Apple silicon Mac | `aidm-ui-macos-arm64` | `aidm-ui-macos-arm64` | A command-line test executable; the Mac app is on the releases page |
-| Windows x64 | `aidm-ui-windows-x64` | `aidm-ui-windows-x64.exe` | Open the extracted executable; use an engine on another computer |
+| Windows x64 | `aidm-ui-windows-x64` | `aidm-ui-windows-x64.exe` | Open the extracted executable, then follow the setup screens to check the computer, install the engine and try the sample job on Windows 11 |
 
 Linux file managers differ in how they launch executables. If yours cannot open this file, a desktop launcher is still missing for that setup. The Mac artifact is not a `.app` or `.dmg`, and the Windows artifact is not an installer. A pilot uses a release instead; these test downloads are for testers.
 
@@ -43,7 +45,7 @@ Once started, the executable opens the interface in your default browser. It lis
 
 ## Choose and install an engine
 
-The local engine needs Linux on x86-64-v3 or ARMv8.2-A, or a supported Apple silicon Mac. The setup screens check the computer and explain what is missing. Windows currently uses an engine on another computer. Building the UI for a platform does not establish that its local engine is supported.
+The local engine needs Windows 11 on x86-64 with AVX2, Linux on x86-64-v3 or ARMv8.2-A, or a supported Apple silicon Mac. The setup screens check the computer and explain what is missing. Building the UI for a platform does not establish that its local engine is supported.
 
 ### Use the released engine on this computer
 

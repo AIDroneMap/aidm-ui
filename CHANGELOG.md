@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Explain the Windows firewall choice beside the local network switch in Preferences. The release notes and install guide describe local setup on Windows 11 and keep the SmartScreen approval step. Add the Windows scratch machine instruction. Evidence: the Windows, Linux and Mac markup cases in `web/src/pages/PreferencesPage.test.tsx`, the Windows paragraph checks in `scripts/release-notes.test.ts`, and `web/src/i18n/coverage.test.ts`. Closes #181.
+
 ## 0.2.1 (3 November 2026)
 
 - Keep asking Apple after a notarization status request fails. The Mac packaging script uploads without waiting, retains the submission id and polls every 30 seconds until 45 minutes after the script starts. Accepted continues to stapling and validation. Invalid prints the notary log and fails. The deadline prints the submission id and same-tag recovery instructions. Evidence: `scripts/notary-wait.test.ts`, including the timeout recovery and packaging regressions, and the public runs [41694679093](https://github.com/AIDroneMap/aidm-ui/actions/runs/41694679093) and [41714683961](https://github.com/AIDroneMap/aidm-ui/actions/runs/41714683961), which show the original failure and a later accepted submission. Closes #168.

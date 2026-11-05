@@ -18,6 +18,7 @@ const packages: PackagesView = {
 function render(overrides: Partial<PreferencesFormProps> = {}, settings: SettingsData | null = lanOff): string {
   const props: PreferencesFormProps = {
     settings,
+    platform: null,
     failure: null,
     saving: null,
     saved: null,
@@ -75,6 +76,28 @@ test("turning the local network on shows a labelled passphrase field", () => {
   expect(untranslatedText(html, ["8823"])).toEqual([]);
 });
 
+test("Windows shows the firewall choice beside the local network switch, before and after opening it", () => {
+  const hint = "Windows may ask whether to allow AIDM UI on the network; choose Allow.";
+  const on: SettingsData = { ...lanOff, lan: { enabled: true, addresses: [] } };
+  for (const [overrides, settings] of [
+    [{ platform: "win32" }, lanOff],
+    [{ platform: "win32", lanWantsOn: true }, lanOff],
+    [{ platform: "win32" }, on],
+  ] as const) {
+    const html = render(overrides, settings);
+    expect(html).toContain(`<p id="settings-lan-hint" class="field-hint">${hint}</p>`);
+    expect(html).toMatch(/<input[^>]*id="settings-lan"[^>]*aria-describedby="settings-lan-hint"/);
+    expect(untranslatedText(html, ["8823"])).toEqual([]);
+    expect(unlabelledInputs(html)).toEqual([]);
+  }
+});
+
+test.each(["linux", "darwin", null])("the firewall sentence is absent on %s", (platform) => {
+  const html = render({ platform });
+  expect(html).not.toContain("Windows may ask");
+  expect(html).not.toContain("settings-lan-hint");
+});
+
 test("with the local network on, the addresses to open are listed", () => {
   const on: SettingsData = { port: null, listeningPort: 8823, lan: { enabled: true, addresses: ["192.168.1.20"] } };
   const html = render({}, on);
@@ -97,6 +120,15 @@ test("a passphrase error shows next to the passphrase field", () => {
   const failure = new ApiFailure(400, "preferences.passphrase_too_short", { min: 8 });
   const html = render({ failure: { section: "lan", error: failure }, lanWantsOn: true });
   expect(html).toContain("The passphrase needs at least 8 characters.");
+});
+
+test("a failure to read the server's platform is visible while the local network is off", () => {
+  const failure = new ApiFailure(0, "network.unreachable");
+  const html = render({ failure: { section: "lan", error: failure } });
+  expect(html).toContain('role="alert"');
+  expect(html.indexOf('id="settings-lan"')).toBeLessThan(html.indexOf('role="alert"'));
+  expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf('id="settings-updates-title"'));
+  expect(untranslatedText(html, ["8823"])).toEqual([]);
 });
 
 test("while loading, the page says so", () => {
