@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replace private host addresses and subnet values in ADR 0006 with neutral placeholders, keeping loopback literals and standard private ranges. Evidence: review of the text and the documentation substitution check, which fails on the original ADR and passes after the substitutions. Closes #188.
+
 - Explain the Windows firewall choice beside the local network switch in Preferences. The release notes and install guide describe local setup on Windows 11 and keep the SmartScreen approval step. Add the Windows scratch machine instruction. Evidence: the Windows, Linux and Mac markup cases in `web/src/pages/PreferencesPage.test.tsx`, the Windows paragraph checks in `scripts/release-notes.test.ts`, and `web/src/i18n/coverage.test.ts`. Closes #181.
 
 ## 0.2.1 (3 November 2026)
