@@ -9,12 +9,19 @@ import {
   EXIT_TIMED_OUT,
   MAX_LINE_LENGTH,
   OUTPUT_CAP_BYTES,
+  ownProcessGroup,
   systemRunner,
 } from "./command-runner.ts";
 
 test("a program that runs gives its output and exit code", async () => {
   const result = await systemRunner().run(["sh", "-c", "echo out; echo err >&2; exit 3"]);
   expect(result).toEqual({ exitCode: 3, stdout: "out\n", stderr: "err\n" });
+});
+
+test("a program leads a process group of its own except on Windows, where PowerShell would print nothing without a console", () => {
+  expect(ownProcessGroup("linux")).toBe(true);
+  expect(ownProcessGroup("darwin")).toBe(true);
+  expect(ownProcessGroup("win32")).toBe(false);
 });
 
 test("a program that is not installed gives 127 and not found", async () => {

@@ -175,6 +175,17 @@ async function drain(readers: Array<{ done: Promise<void>; stop(): void }>): Pro
   for (const reader of readers) reader.stop();
 }
 
+/**
+ * Whether a program the runner starts leads a process group of its own, so
+ * that a timeout ends it with everything it started. Not on Windows: there the
+ * option starts the program without a console, and PowerShell then prints
+ * nothing at all, so the ownership check of a native package would never read
+ * a command line. Windows ends a program by its handle instead.
+ */
+export function ownProcessGroup(platform: NodeJS.Platform): boolean {
+  return platform !== "win32";
+}
+
 /** The program and everything it started: the child leads its own process group. */
 function killGroup(proc: Bun.Subprocess): void {
   try {
@@ -246,7 +257,7 @@ export function systemRunner(): CommandRunner {
           stdout: "pipe",
           stderr: "pipe",
           env: plan.env,
-          detached: true,
+          detached: ownProcessGroup(process.platform),
         });
       } catch (error) {
         if (errorCode(error) === "ENOENT") {
@@ -290,7 +301,7 @@ export function systemRunner(): CommandRunner {
           stdout: "pipe",
           stderr: "pipe",
           env: { ...process.env },
-          detached: true,
+          detached: ownProcessGroup(process.platform),
         });
       } catch (error) {
         if (errorCode(error) === "ENOENT") return { exitCode: EXIT_NOT_FOUND, stdout: "", stderr: "", spawnFailure: "not_found" };
