@@ -3,25 +3,61 @@
 // Each answer is null when the call cannot be made, and the check then says it
 // could not tell. Nothing here runs on another system.
 
-import { dlopen, FFIType, ptr, type FFIFunction } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 
 /** PF_AVX2_INSTRUCTIONS_AVAILABLE in winnt.h, for IsProcessorFeaturePresent. */
-const PF_AVX2_INSTRUCTIONS_AVAILABLE = 40;
+export const PF_AVX2_INSTRUCTIONS_AVAILABLE = 40;
 
 /** IMAGE_FILE_MACHINE_* in winnt.h, named as process.arch names them. */
-const MACHINES: Record<number, string> = { 0x8664: "x64", 0xaa64: "arm64" };
+export const IMAGE_FILE_MACHINE_AMD64 = 0x8664;
+export const IMAGE_FILE_MACHINE_ARM64 = 0xaa64;
+const MACHINES: Record<number, string> = { [IMAGE_FILE_MACHINE_AMD64]: "x64", [IMAGE_FILE_MACHINE_ARM64]: "arm64" };
 
-/** Opens kernel32 with only the functions one answer needs, so that a function an older Windows lacks spoils no other answer. */
-function withKernel32<const S extends Record<string, FFIFunction>, T>(
-  symbols: S,
-  use: (library: ReturnType<typeof dlopen<S>>["symbols"]) => T,
-): T | null {
+/** IsProcessorFeaturePresent, opened on its own. Returns the BOOL. */
+export interface FeatureCall {
+  isProcessorFeaturePresent(feature: number): number;
+  close(): void;
+}
+
+/** IsWow64Process2 for this process. Fills machines[0] with the process's machine and machines[1] with the computer's; returns the BOOL. */
+export interface MachineCall {
+  isWow64Process2(machines: Uint16Array): number;
+  close(): void;
+}
+
+// Each answer opens kernel32 with only the functions it needs, so that a
+// function an older Windows lacks spoils no other answer.
+
+function openFeatureCall(): FeatureCall {
+  const library = dlopen("kernel32.dll", {
+    IsProcessorFeaturePresent: { args: [FFIType.u32], returns: FFIType.i32 },
+  });
+  return {
+    isProcessorFeaturePresent: (feature) => library.symbols.IsProcessorFeaturePresent(feature),
+    close: () => library.close(),
+  };
+}
+
+function openMachineCall(): MachineCall {
+  const library = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: FFIType.i64_fast },
+    IsWow64Process2: { args: [FFIType.i64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  });
+  return {
+    // The two USHORTs side by side: the second one starts 2 bytes in.
+    isWow64Process2: (machines) =>
+      library.symbols.IsWow64Process2(library.symbols.GetCurrentProcess(), ptr(machines), ptr(machines, 2)),
+    close: () => library.close(),
+  };
+}
+
+function ask<C extends { close(): void }, T>(open: () => C, use: (call: C) => T): T | null {
   try {
-    const library = dlopen("kernel32.dll", symbols);
+    const call = open();
     try {
-      return use(library.symbols);
+      return use(call);
     } finally {
-      library.close();
+      call.close();
     }
   } catch {
     return null;
@@ -33,11 +69,8 @@ function withKernel32<const S extends Record<string, FFIFunction>, T>(
  * flag for FMA, the other half of x86-64-v3, so FMA is not asked; the engine's
  * own start is the last word.
  */
-export function windowsHasAvx2(): boolean | null {
-  return withKernel32(
-    { IsProcessorFeaturePresent: { args: [FFIType.u32], returns: FFIType.i32 } },
-    (kernel32) => kernel32.IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) !== 0,
-  );
+export function windowsHasAvx2(open: () => FeatureCall = openFeatureCall): boolean | null {
+  return ask(open, (call) => call.isProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE) !== 0);
 }
 
 /**
@@ -45,17 +78,10 @@ export function windowsHasAvx2(): boolean | null {
  * for x86-64, which Windows on ARM runs under emulation, and there
  * process.arch says "x64". The native machine says what the computer is.
  */
-export function windowsNativeArch(): string | null {
-  const arch = withKernel32(
-    {
-      GetCurrentProcess: { args: [], returns: FFIType.i64_fast },
-      IsWow64Process2: { args: [FFIType.i64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    },
-    (kernel32) => {
-      const machines = new Uint16Array(2);
-      const ok = kernel32.IsWow64Process2(kernel32.GetCurrentProcess(), ptr(machines), ptr(machines, 2));
-      return ok === 0 ? null : (MACHINES[machines[1]!] ?? null);
-    },
-  );
-  return arch ?? null;
+export function windowsNativeArch(open: () => MachineCall = openMachineCall): string | null {
+  return ask(open, (call) => {
+    const machines = new Uint16Array(2);
+    if (call.isWow64Process2(machines) === 0) return null;
+    return MACHINES[machines[1]!] ?? null;
+  });
 }
