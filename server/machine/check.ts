@@ -4,12 +4,18 @@ import type { MessageCode } from "../../shared/message-codes.ts";
 import { preferredRuntime } from "../runtimes/registry.ts";
 import type { RuntimeId } from "../runtimes/runtime.ts";
 import { missingCpuFeatures } from "./cpu.ts";
-import type { MachineFacts } from "./facts.ts";
+import { windowsX64, type MachineFacts } from "./facts.ts";
 import { gpuApplies } from "./gpu.ts";
 import { RAM_REFUSE_BELOW, RAM_WARN_BELOW, RUN_FREE_DISK } from "./thresholds.ts";
 
 /** The first macOS that Apple's container tool runs on. */
 const MACOS_MINIMUM = 26;
+
+/**
+ * The first Windows 11 build (version 21H2). Windows 11 still calls itself
+ * 10.0 and is told from Windows 10, whose last build is 19045, by this number.
+ */
+export const WINDOWS_11_FIRST_BUILD = 22000;
 
 function line(
   id: CheckLine["id"],
@@ -22,7 +28,16 @@ function line(
 
 function platformLine(facts: MachineFacts): CheckLine {
   const { platform, arch } = facts;
-  if (platform === "win32") return line("platform", "fail", "machine.windows_not_yet");
+  if (platform === "win32") {
+    if (arch !== "x64") return line("platform", "fail", "machine.windows_not_x64");
+    const build = facts.windowsBuild;
+    if (build !== null && build < WINDOWS_11_FIRST_BUILD) {
+      return line("platform", "fail", "machine.windows_too_old", { build, minimumBuild: WINDOWS_11_FIRST_BUILD });
+    }
+    // An unreadable build is not held against the operator, as on a Mac.
+    if (build !== null) return line("platform", "pass", "machine.platform_ok_windows", { build });
+    return line("platform", "pass", "machine.platform_ok");
+  }
   if (platform === "darwin") {
     if (arch !== "arm64") return line("platform", "fail", "machine.mac_intel");
     const major = facts.macosVersion === null ? Number.NaN : Number.parseInt(facts.macosVersion, 10);
@@ -41,11 +56,17 @@ function platformLine(facts: MachineFacts): CheckLine {
   return line("platform", "fail", "machine.platform_unsupported");
 }
 
-/** Null when the line does not apply: Intel Macs and Windows do not get that far. */
+/** Null when the line does not apply: Intel Macs and Windows on ARM do not get that far. */
 function cpuLine(facts: MachineFacts): CheckLine | null {
   if (facts.platform === "darwin") {
     // Apple silicon passes by definition.
     return facts.arch === "arm64" ? line("cpu", "pass", "machine.cpu_ok") : null;
+  }
+  if (windowsX64(facts)) {
+    // AVX2 only: Windows has no flag for FMA (see windows.ts).
+    if (facts.avx2 === null) return line("cpu", "warn", "machine.cpu_unknown");
+    if (!facts.avx2) return line("cpu", "fail", "machine.cpu_missing", { missing: "avx2" });
+    return line("cpu", "pass", "machine.cpu_ok");
   }
   if (facts.platform !== "linux") return null;
   const missing = facts.cpuInfo === null ? null : missingCpuFeatures(facts.arch, facts.cpuInfo);
@@ -70,6 +91,12 @@ function diskLine(facts: MachineFacts): CheckLine {
 
 /** Only the driver is looked at here. Whether a container can use the card is decided when the engine is installed. */
 function gpuLine(facts: MachineFacts): CheckLine | null {
+  if (windowsX64(facts)) {
+    const { driverAnswers, gpus, driverVersion } = facts.nvidia;
+    if (!driverAnswers) return line("gpu", "pass", "machine.gpu_none");
+    // The version goes with the line, so the operator sees what the offer compares.
+    return line("gpu", "pass", "machine.gpu_nvidia_windows", { count: gpus.length, names: gpus, driverVersion });
+  }
   if (!gpuApplies(facts)) return null;
   if (facts.nvidia.driverAnswers) return line("gpu", "pass", "machine.gpu_nvidia", { count: facts.nvidia.gpus.length });
   return line("gpu", "pass", "machine.gpu_none");

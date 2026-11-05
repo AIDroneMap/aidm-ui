@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ScriptedRunner, recorded, type ScriptedRule } from "../../test-support/scripted-runner.ts";
-import { describeGpu, NVIDIA_TOOLKIT_GUIDE_URL, precheckGpu } from "./gpu.ts";
+import { recordedText } from "../../test-support/scripted-runner.ts";
+import { describeGpu, NVIDIA_TOOLKIT_GUIDE_URL, parseGpuQuery, precheckGpu } from "./gpu.ts";
 
 const x64 = { platform: "linux", arch: "x64" };
 const smi: ScriptedRule = { argv: ["nvidia-smi", "-L"], result: recorded("nvidia", "smi-l") };
@@ -140,4 +141,14 @@ test("a test run that already failed for this package is the reason, with the gu
   expect(
     describeGpu({ state: "no_passthrough", runtime: "docker" }, { forceCpu: false, manifestHasGpuPackage: true, inImageFailed: true }).reason?.code,
   ).toBe("gpu.no_passthrough");
+});
+
+test("the Windows query gives each card's name and the driver version after the last comma", () => {
+  expect(parseGpuQuery(recordedText("nvidia", "smi-query"))).toEqual({ gpus: ["NVIDIA GeForce RTX 4070"], driverVersion: "581.57" });
+  expect(parseGpuQuery("NVIDIA GeForce RTX 4070, 581.57\r\nNVIDIA RTX A2000, Laptop, 581.57\r\n")).toEqual({
+    gpus: ["NVIDIA GeForce RTX 4070", "NVIDIA RTX A2000, Laptop"],
+    driverVersion: "581.57",
+  });
+  expect(parseGpuQuery("")).toEqual({ gpus: [], driverVersion: null });
+  expect(parseGpuQuery("No devices were found\n")).toEqual({ gpus: [], driverVersion: null });
 });

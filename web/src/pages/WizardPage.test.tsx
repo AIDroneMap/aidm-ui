@@ -139,6 +139,42 @@ test("the machine check shows only translated text and data", () => {
   expect(untranslatedText(renderCheck(allowed), ["200.0 GiB"])).toEqual([]);
 });
 
+const windowsCheck: MachineCheckData = {
+  lines: [
+    passLine("platform", "machine.platform_ok_windows", { build: 26100 }),
+    passLine("cpu", "machine.cpu_ok"),
+    passLine("ram", "machine.ram_ok", { total: 32 * GIB }),
+    passLine("disk", "machine.disk_ok", { free: 200 * GIB }),
+    passLine("gpu", "machine.gpu_nvidia_windows", { count: 2, names: ["NVIDIA GeForce RTX 4070", "NVIDIA RTX A2000 12GB"], driverVersion: "566.36" }),
+  ],
+  localEngine: { offered: true, reason: null },
+  checkedAt: "2026-10-26T10:00:00Z",
+};
+
+test("on Windows 11 the check shows the build, the cards with the driver version, and no container tool line", () => {
+  const html = renderCheck(windowsCheck);
+  expect(html).toContain('<span class="check-message">This computer runs Windows 11 (build 26100), which can run the engine.</span>');
+  expect(html).toContain(
+    '<span class="check-message">NVIDIA graphics cards found: 2 (NVIDIA GeForce RTX 4070, NVIDIA RTX A2000 12GB). Driver version 566.36.</span>',
+  );
+  expect(html).not.toContain("container tool");
+  expect(html.match(/class="check-message"/g)).toHaveLength(5);
+  expect(untranslatedText(html, ["200.0 GiB", "32.0 GiB", "NVIDIA GeForce RTX 4070", "NVIDIA RTX A2000 12GB", "566.36"])).toEqual([]);
+  expect(renderChoice(windowsCheck)).toContain("Install on this computer");
+});
+
+test("on Windows without a card, or with a processor that cannot be read, the check says so", () => {
+  const html = renderCheck({
+    ...windowsCheck,
+    lines: [
+      { id: "cpu", result: "warn", message: { code: "machine.cpu_unknown", data: {} } },
+      passLine("gpu", "machine.gpu_none"),
+    ],
+  });
+  expect(html).toContain("could not read the features of this computer&#x27;s processor");
+  expect(html).toContain("No NVIDIA graphics card was found. The engine will use the processor only");
+});
+
 function renderChoice(check: MachineCheckData | null, overrides: Partial<Parameters<typeof EngineChoiceScreen>[0]> = {}): string {
   return renderToStaticMarkup(
     <EngineChoiceScreen
@@ -794,6 +830,8 @@ test("every refusal of this computer, on the check line and in the refused state
     [{ code: "machine.cpu_missing", data: { missing: "avx2" } }, "The engine needs an x86-64-v3 or ARMv8.2-A processor."],
     [{ code: "machine.mac_intel", data: {} }, "The engine needs a Mac with Apple silicon."],
     [{ code: "machine.macos_too_old", data: { version: "15.6.1", minimumVersion: 26 } }, "The engine needs macOS 26 or newer."],
+    [{ code: "machine.windows_too_old", data: { build: 19045, minimumBuild: 22000 } }, "The engine needs Windows 11."],
+    [{ code: "machine.windows_not_x64", data: {} }, "On Windows, the engine needs an x86-64 processor."],
     [{ code: "machine.ram_too_low", data: { total: 4 * 1024 ** 3, minimum: 8 * 1024 ** 3 } }, "The engine needs at least 8.0 GiB of memory."],
   ];
   for (const [reason, sentence] of cases) {

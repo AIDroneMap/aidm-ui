@@ -5,13 +5,18 @@ import {
   appleRules,
   dockerRules,
   linuxInputs,
+  nvidiaQueryRule,
   podmanRules,
   recordedMachine,
+  windowsInputs,
+  WINDOWS_10_RELEASE,
   type MachineInputs,
   type RecordedMachine,
 } from "../../test-support/recorded-machine.ts";
 import { recorded, recordedText } from "../../test-support/scripted-runner.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
+import { WINDOWS_11_FIRST_BUILD } from "./check.ts";
+import { NVIDIA_QUERY_ARGV } from "./gpu.ts";
 import { RAM_REFUSE_BELOW, RAM_WARN_BELOW, RUN_FREE_DISK } from "./thresholds.ts";
 
 const GiB = 1024 ** 3;
@@ -326,20 +331,118 @@ test("the check reports when it ran", async () => {
   expect(view.checkedAt).toBe("2026-10-26T12:00:00.000Z");
 });
 
-test("on recorded Windows inputs the local engine is not available yet and no program is run", async () => {
-  const { h, machine } = open(
-    linuxInputs({ platform: "win32", cpuInfo: null, rules: [...withRuntime, ...dockerRules("version"), NVIDIA_RULE] }),
-  );
+// Every container tool answers, to show that Windows asks none of them.
+const everyTool = [...withRuntime, ...dockerRules("version"), NVIDIA_RULE];
+
+test("on recorded Windows 11 inputs the check shows five lines, names the build and the driver, and offers the local engine", async () => {
+  const { h, machine } = open(windowsInputs({ rules: [...everyTool, nvidiaQueryRule("smi-query")] }));
   const view = await check(h);
+  expect(view.lines.map((line) => line.id)).toEqual(["platform", "cpu", "ram", "disk", "gpu"]);
   expect(lineOf(view, "platform")).toEqual({
     id: "platform",
-    result: "fail",
-    message: { code: "machine.windows_not_yet", data: {} },
+    result: "pass",
+    message: { code: "machine.platform_ok_windows", data: { build: 26100 } },
   });
-  expect(view.localEngine.offered).toBe(false);
-  expect(view.localEngine.reason?.code).toBe("machine.windows_not_yet");
+  expect(lineOf(view, "cpu")).toEqual({ id: "cpu", result: "pass", message: { code: "machine.cpu_ok", data: {} } });
+  expect(lineOf(view, "gpu")).toEqual({
+    id: "gpu",
+    result: "pass",
+    message: {
+      code: "machine.gpu_nvidia_windows",
+      data: { count: 1, names: ["NVIDIA GeForce RTX 4070"], driverVersion: "581.57" },
+    },
+  });
+  expect(view.localEngine).toEqual({ offered: true, reason: null });
+  // The driver query is the only program run: no container tool, no Linux or Mac command.
+  expect(machine.calls).toEqual([NVIDIA_QUERY_ARGV]);
+});
+
+test("on recorded Windows inputs with two cards the gpu line counts them and names both", async () => {
+  const { h } = open(windowsInputs({ rules: [nvidiaQueryRule("smi-query-two")] }));
+  expect(lineOf(await check(h), "gpu").message).toEqual({
+    code: "machine.gpu_nvidia_windows",
+    data: { count: 2, names: ["NVIDIA GeForce RTX 4070", "NVIDIA RTX A2000 12GB"], driverVersion: "566.36" },
+  });
+});
+
+test("on Windows without the NVIDIA command, or with a driver that fails, no card was found and the engine uses the processor", async () => {
+  for (const rules of [[], [nvidiaQueryRule("smi-query-no-driver")]]) {
+    const { h } = open(windowsInputs({ rules }));
+    const view = await check(h);
+    expect(lineOf(view, "gpu")).toEqual({ id: "gpu", result: "pass", message: { code: "machine.gpu_none", data: {} } });
+    expect(view.localEngine.offered).toBe(true);
+    await harness?.stop();
+    harness = undefined;
+  }
+});
+
+test("a Windows 10 build fails the platform line with the Windows 11 requirement and the local engine is not offered", async () => {
+  const { h } = open(windowsInputs({ release: WINDOWS_10_RELEASE }));
+  const view = await check(h);
+  const refusal = { code: "machine.windows_too_old" as const, data: { build: 19045, minimumBuild: 22000 } };
+  expect(lineOf(view, "platform")).toEqual({ id: "platform", result: "fail", message: refusal });
+  expect(view.localEngine).toEqual({ offered: false, reason: refusal });
+});
+
+test("the first Windows 11 build passes and the build before it fails", async () => {
+  expect(WINDOWS_11_FIRST_BUILD).toBe(22000);
+  const { h } = open(windowsInputs({ release: "10.0.22000" }));
+  expect(lineOf(await check(h), "platform").result).toBe("pass");
+  await harness?.stop();
+  const before = open(windowsInputs({ release: "10.0.21999" }));
+  expect(lineOf(await check(before.h), "platform").message.code).toBe("machine.windows_too_old");
+});
+
+test("an unreadable Windows build is not held against the operator", async () => {
+  const { h } = open(windowsInputs({ release: "" }));
+  expect(lineOf(await check(h), "platform")).toEqual({
+    id: "platform",
+    result: "pass",
+    message: { code: "machine.platform_ok", data: {} },
+  });
+});
+
+test("Windows on an ARM processor fails with the requirement, and neither the processor nor the driver is asked", async () => {
+  const { h, machine } = open(windowsInputs({ arch: "arm64", rules: [nvidiaQueryRule("smi-query")] }));
+  const view = await check(h);
+  const refusal = { code: "machine.windows_not_x64" as const, data: {} };
+  expect(lineOf(view, "platform")).toEqual({ id: "platform", result: "fail", message: refusal });
   expect(view.lines.map((line) => line.id)).toEqual(["platform", "ram", "disk"]);
+  expect(view.localEngine).toEqual({ offered: false, reason: refusal });
   expect(machine.calls).toEqual([]);
+});
+
+test("on Windows a processor without AVX2 fails the cpu line, and one that cannot be read warns", async () => {
+  const without = open(windowsInputs({ avx2: false }));
+  const failed = await check(without.h);
+  const refusal = { code: "machine.cpu_missing" as const, data: { missing: "avx2" } };
+  expect(lineOf(failed, "cpu")).toEqual({ id: "cpu", result: "fail", message: refusal });
+  expect(failed.localEngine).toEqual({ offered: false, reason: refusal });
+  await harness?.stop();
+
+  const unread = open(windowsInputs({ avx2: null }));
+  const view = await check(unread.h);
+  expect(lineOf(view, "cpu")).toEqual({ id: "cpu", result: "warn", message: { code: "machine.cpu_unknown", data: {} } });
+  expect(view.localEngine.offered).toBe(true);
+});
+
+test("on Windows the memory and disk lines use the same thresholds as elsewhere", async () => {
+  const low = open(windowsInputs({ totalMemory: RAM_REFUSE_BELOW - 1, freeDisk: RUN_FREE_DISK - 1 }));
+  const view = await check(low.h);
+  expect(lineOf(view, "ram")).toEqual({
+    id: "ram",
+    result: "fail",
+    message: { code: "machine.ram_too_low", data: { total: RAM_REFUSE_BELOW - 1, minimum: RAM_REFUSE_BELOW } },
+  });
+  expect(lineOf(view, "disk")).toEqual({
+    id: "disk",
+    result: "warn",
+    message: { code: "machine.disk_low", data: { free: RUN_FREE_DISK - 1, needed: RUN_FREE_DISK } },
+  });
+  await harness?.stop();
+
+  const short = open(windowsInputs({ totalMemory: RAM_WARN_BELOW - 1 }));
+  expect(lineOf(await check(short.h), "ram").result).toBe("warn");
 });
 
 test("a platform the engine is not built for fails with its own code", async () => {

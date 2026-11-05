@@ -56,6 +56,8 @@ const REFUSALS: Readonly<Record<string, string>> = {
   "machine.cpu_missing": "wizard.refused.cpu",
   "machine.mac_intel": "wizard.refused.mac",
   "machine.macos_too_old": "wizard.refused.macos",
+  "machine.windows_too_old": "wizard.refused.windows",
+  "machine.windows_not_x64": "wizard.refused.windows_arch",
   "machine.ram_too_low": "wizard.refused.memory",
 };
 
