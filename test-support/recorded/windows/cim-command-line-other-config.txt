@@ -1,1 +1,1 @@
-"C:\Users\Field Operator\AppData\Local\aidm-ui\engine-packages\2.6.1\aidm-api.exe" --config "C:\Users\Field Operator\AppData\Local\aidm-ui\engine-config\native-2.6.1.json"
+C:\Windows\system32\config\systemprofile\AppData\Local\aidm-ui\engine-packages\2.6.1\aidm-api.exe --config C:\Windows\system32\config\systemprofile\AppData\Local\aidm-ui\engine-config\native-2.6.1.json --test

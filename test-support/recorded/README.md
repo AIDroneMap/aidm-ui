@@ -73,6 +73,18 @@ with the public image `docker.io/library/busybox@sha256:bdf57e52...` (busybox
 1.37). The container name was `aidm-ui-rec-9a`, shown here as `aidm-engine`, and
 the port was changed to `41823`.
 
+## Recorded on a Windows machine
+
+A real run on one Windows machine (Windows Server 2022, build 20348, Windows
+PowerShell 5.1) on 5 November 2026. aidm-ui's own `spawnEngine` started the
+task API 2.7.0 from its release zip, with the data folder in the place aidm-ui
+uses on Windows (`aidm-ui` under the local application data folder). The
+session ran as the system account, so that folder is the system profile's.
+
+| File | Source | What changed |
+|---|---|---|
+| `windows/cim-command-line-engine.txt` | the `CommandLine` of the task API's `Win32_Process`, read with `Get-CimInstance` from PowerShell, as the ownership check asks for it | Nothing. No argument has a space, so Windows shows none in quotes. |
+
 ## Edited
 
 Marked edited because no machine produced them as they stand.
@@ -89,6 +101,8 @@ Marked edited because no machine produced them as they stand.
 | `docker/info-no-cpu-quota.txt` | `docker/info.txt` | `CpuCfsQuota` set to `false`. |
 | `cpuinfo/x86-64-no-avx2.txt` | `cpuinfo/x86-64-avx2.txt` | `avx2` and `fma` removed from the `flags` line. |
 | `cpuinfo/arm64-v8-0.txt` | `cpuinfo/arm64-v8-2.txt` | `atomics` and `asimdrdm` removed from the `Features` line. |
+| `windows/cim-command-line-space.txt` | `windows/cim-command-line-engine.txt` | The system profile replaced by a user folder whose name has a space, `C:\Users\Field Operator`, and the two paths put in quotes, as a program that starts another one on Windows quotes an argument with a space. |
+| `windows/cim-command-line-other-config.txt` | `windows/cim-command-line-engine.txt` | Version 2.7.0 changed to 2.6.1 in both paths, so the line names the config file of another version. |
 
 ## Written by hand
 
@@ -154,7 +168,6 @@ runtime research notes. They have not been checked against a real run.
   - `system-start-failed.*`: one line, `Launching container-apiserver...`, from the source, and the error text is a
     guess. The real tool prints its start lines on stderr (see `system-start.*` above); here the line is on stdout.
     The streaming runner treats both streams alike.
-- `windows/cim-command-line-engine.txt`, `cim-command-line-other-config.txt` (the `CommandLine` of a `Win32_Process`, read with `Get-CimInstance` from PowerShell, for a task API that aidm-ui started with its config file, and for one started with the config file of another version). The user name is `Field Operator`, with a space, as the case the ownership check must handle.
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
 - `nvidia/smi-query.txt` and `nvidia/smi-query-two.txt` (`nvidia-smi --query-gpu=name,driver_version --format=csv,noheader`, the query the Windows check runs: one line per card, the name and the driver version separated by a comma and a space). Built from the query fields that `nvidia-smi --help-query-gpu` lists and the CSV format of the `nvidia-smi` manual, not recorded on a machine. The card names and driver versions are public NVIDIA product names and driver releases.

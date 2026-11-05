@@ -318,9 +318,10 @@ test("on Windows a program that taskkill does not end stays on record, and no se
   expect(runner.calls.filter((call) => call.argv[0] === "taskkill")).toHaveLength(2);
 });
 
-// Command lines Windows printed for a task API that aidm-ui started (test-support/recorded/windows).
+// Command lines Windows printed for a task API that aidm-ui started, and edits of them (test-support/recorded/windows).
 
-const recordedFolder = "C:\\Users\\Field Operator\\AppData\\Local\\aidm-ui";
+const recordedFolder = "C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\aidm-ui";
+const userFolder = "C:\\Users\\Field Operator\\AppData\\Local\\aidm-ui";
 
 test("a recorded Windows command line names our config file, compared without case and with either slash", () => {
   const line = recordedText("windows", "cim-command-line-engine").trim();
@@ -331,7 +332,14 @@ test("a recorded Windows command line names our config file, compared without ca
   expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.6.0.json"), "win32")).toBe(false);
 });
 
-test("a recorded Windows command line that names another config file is not ours", () => {
+test("a Windows command line with the paths quoted for a space in the user name names our config file", () => {
+  const line = recordedText("windows", "cim-command-line-space").trim();
+  expect(usesConfig(line, win32.join(userFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(true);
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(false);
+});
+
+test("a Windows command line that names the config file of another version is not ours", () => {
   const line = recordedText("windows", "cim-command-line-other-config").trim();
   expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(false);
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.6.1.json"), "win32")).toBe(true);
 });
