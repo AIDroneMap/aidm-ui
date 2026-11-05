@@ -286,9 +286,44 @@ real(
     const h = openHarness(harnessOptions);
     harness = h;
 
+    /**
+     * The engine manager starts again, as when the operator opens aidm-ui again, and finds the program it left running by its
+     * command line. Switched off, the engine goes with every process it started.
+     */
+    const restartAndSwitchOff = async () => {
+      const running = h.settings.get("local.native");
+      expect(running).not.toBeNull();
+      const pid = running!.pid;
+      const startsBefore = starts.length;
+      await h.stop({ leaveEngines: true });
+      harness = undefined;
+      expect((await processes()).some((process) => process.pid === pid)).toBe(true);
+      const again = openHarness(harnessOptions);
+      harness = again;
+      await eventually(async () => again.localEngine.view().state === "ready", 120_000);
+      expect(starts).toHaveLength(startsBefore);
+      expect(again.settings.get("local.native")?.pid).toBe(pid);
+      console.log("The engine manager started again and found the running engine", JSON.stringify({ pid, starts: starts.length }));
+
+      // Switched off, the engine goes with every process it started.
+      const tree = await processTree(pid);
+      const off = await fetch(`${again.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+      expect(off.status).toBe(200);
+      expect(again.settings.get("local.native")).toBeNull();
+      let left: number[] = tree;
+      await eventually(async () => {
+        const now = new Set((await processes()).map((process) => process.pid));
+        left = tree.filter((member) => now.has(member));
+        return left.length === 0;
+      }, 30_000);
+      expect(left).toEqual([]);
+      console.log("The engine was switched off and no process of its tree is left", JSON.stringify({ tree }));
+    };
+
     const refreshed = (await (await fetch(`${h.base}/api/packages/refresh`, { method: "POST" })).json()) as { result: { ok: boolean } };
     expect(refreshed.result.ok).toBe(true);
-    expect((await fetch(`${h.base}/api/local-engine/install`, { method: "POST" })).status).toBe(202);
+    const install = await fetch(`${h.base}/api/local-engine/install`, { method: "POST" });
+    expect(install.status, await install.clone().text()).toBe(202);
     await eventually(async () => h.localEngine.view().state === "ready", 180_000);
     expect(h.localEngine.view().installed).toMatchObject({ packageVersion: version, kind: "native", runtime: null });
 
@@ -373,6 +408,9 @@ real(
     const projectAfter = await (await fetch(`${h.base}/api/projects/${run.projectId}`)).json() as ProjectView;
     expect(projectAfter.resultsBytes).toBe(0);
     expect(projectAfter.resultArchives).toEqual([]);
+    // On Windows the test proves the start path of a native package: the install, the sample job, the restart and the stop.
+    // The other ways in, the presets and the imports are proven on Linux.
+    if (windows) return restartAndSwitchOff();
 
     const linkedProjectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Linked field", notes: "" }) });
     expect(linkedProjectResponse.status).toBe(201);
@@ -587,34 +625,7 @@ real(
       }
     } finally { await chmod(source, 0o700); }
 
-    // The engine manager starts again, as when the operator opens aidm-ui again, and finds the program it left running by its command line.
-    const running = h.settings.get("local.native");
-    expect(running).not.toBeNull();
-    const pid = running!.pid;
-    const startsBefore = starts.length;
-    await h.stop({ leaveEngines: true });
-    harness = undefined;
-    expect((await processes()).some((process) => process.pid === pid)).toBe(true);
-    const again = openHarness(harnessOptions);
-    harness = again;
-    await eventually(async () => again.localEngine.view().state === "ready", 120_000);
-    expect(starts).toHaveLength(startsBefore);
-    expect(again.settings.get("local.native")?.pid).toBe(pid);
-    console.log("The engine manager started again and found the running engine", JSON.stringify({ pid, starts: starts.length }));
-
-    // Switched off, the engine goes with every process it started.
-    const tree = await processTree(pid);
-    const off = await fetch(`${again.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
-    expect(off.status).toBe(200);
-    expect(again.settings.get("local.native")).toBeNull();
-    let left: number[] = tree;
-    await eventually(async () => {
-      const now = new Set((await processes()).map((process) => process.pid));
-      left = tree.filter((member) => now.has(member));
-      return left.length === 0;
-    }, 30_000);
-    expect(left).toEqual([]);
-    console.log("The engine was switched off and no process of its tree is left", JSON.stringify({ tree }));
+    await restartAndSwitchOff();
   },
   SLOW,
 );
