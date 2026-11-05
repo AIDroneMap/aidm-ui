@@ -156,6 +156,8 @@ runtime research notes. They have not been checked against a real run.
     The streaming runner treats both streams alike.
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
+- `nvidia/smi-query.txt` and `nvidia/smi-query-two.txt` (`nvidia-smi --query-gpu=name,driver_version --format=csv,noheader`, the query the Windows check runs: one line per card, the name and the driver version separated by a comma and a space). Built from the query fields that `nvidia-smi --help-query-gpu` lists and the CSV format of the `nvidia-smi` manual, not recorded on a machine. The card names and driver versions are public NVIDIA product names and driver releases.
+- `nvidia/smi-query-no-driver.*` (the same query when the driver does not answer: the message and exit code of `smi-l-no-driver.*`, with the same doubt about the exit code). A Windows computer without an NVIDIA driver usually has no `nvidia-smi` at all; the tests use the scripted runner's "not installed" answer for that case.
 - `nvidia/smi-l-no-driver.*` (exit 9, the driver message from the `nvidia-smi` manual and the text people quote from it; whether a real machine without a loaded driver exits 9 or 255 was not confirmed). The same file stands for the failing listing inside the engine image.
 - `nvidia-ctk/cdi-list.*` (`nvidia-ctk cdi list`: one device name per line on stdout, the `INFO` line on stderr, from `cmd/nvidia-ctk/cdi/list/list.go` of the NVIDIA Container Toolkit and the device names in its README) and `nvidia-ctk/cdi-list-none.*` (the same with no device: nothing on stdout, exit 0)
 

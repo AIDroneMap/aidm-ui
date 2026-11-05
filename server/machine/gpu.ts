@@ -23,6 +23,25 @@ export function parseGpuListing(stdout: string): string[] {
   return stdout.split("\n").filter((line) => /^GPU \d+:/.test(line));
 }
 
+/** The query the machine check runs on Windows: one line per card, its name and the driver version. */
+export const NVIDIA_QUERY_ARGV = ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"];
+
+/**
+ * The cards and the driver version in the answer to NVIDIA_QUERY_ARGV. Each
+ * line is "name, version"; the version comes after the last comma, so a
+ * comma in a card's name does no harm. Every card runs the same driver.
+ */
+export function parseGpuQuery(stdout: string): { gpus: string[]; driverVersion: string | null } {
+  const cards = stdout
+    .split(/\r?\n/)
+    .map((line) => {
+      const comma = line.lastIndexOf(",");
+      return comma < 0 ? null : { name: line.slice(0, comma).trim(), version: line.slice(comma + 1).trim() };
+    })
+    .filter((card): card is { name: string; version: string } => card !== null && card.name !== "" && card.version !== "");
+  return { gpus: cards.map((card) => card.name), driverVersion: cards[0]?.version ?? null };
+}
+
 /** What is known about the graphics card before anything is downloaded (checks a and b). */
 export type GpuPrecheck =
   /** Not Linux on an Intel or AMD processor, or no container tool to ask: no command was run. */

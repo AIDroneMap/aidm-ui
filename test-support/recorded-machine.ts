@@ -1,4 +1,5 @@
 import { gatherMachineFacts, type MachineFacts } from "../server/machine/facts.ts";
+import { NVIDIA_QUERY_ARGV } from "../server/machine/gpu.ts";
 import { ScriptedRunner, recorded, recordedText, type ScriptedRule } from "./scripted-runner.ts";
 
 const GiB = 1024 ** 3;
@@ -11,6 +12,10 @@ export interface MachineInputs {
   cpuInfo: string | null;
   /** The text of /etc/os-release, or null when it cannot be read. */
   osRelease?: string | null;
+  /** What os.release() says; on Windows "10.0." and the build number. */
+  release?: string;
+  /** The AVX2 answer of Windows, null when the call cannot be made. */
+  avx2?: boolean | null;
   totalMemory: number;
   freeDisk: number;
   /** The commands that answer; every other command is not installed. */
@@ -75,6 +80,22 @@ export function appleRules(started: boolean): ScriptedRule[] {
 
 export const NVIDIA_RULE: ScriptedRule = { argv: ["nvidia-smi", "-L"], result: recorded("nvidia", "smi-l") };
 
+/** os.release() on Windows 11 24H2 and on Windows 10 22H2, the last Windows 10. */
+export const WINDOWS_11_RELEASE = "10.0.26100";
+export const WINDOWS_10_RELEASE = "10.0.19045";
+
+/** Windows 11 on an x86-64 processor with AVX2 and no NVIDIA driver. */
+export function windowsInputs(overrides: Partial<MachineInputs> = {}): MachineInputs {
+  return linuxInputs({ platform: "win32", arch: "x64", cpuInfo: null, osRelease: null, release: WINDOWS_11_RELEASE, avx2: true, ...overrides });
+}
+
+type NvidiaQuery = "smi-query" | "smi-query-two" | "smi-query-no-driver";
+
+/** The Windows driver's answer to the card and driver version query. */
+export function nvidiaQueryRule(answer: NvidiaQuery): ScriptedRule {
+  return { argv: NVIDIA_QUERY_ARGV, result: recorded("nvidia", answer) };
+}
+
 /** A computer for the route tests: gathers its facts from the recorded inputs as they are at that moment. */
 export interface RecordedMachine {
   inputs: MachineInputs;
@@ -98,6 +119,8 @@ export function recordedMachine(initial: MachineInputs = linuxInputs()): Recorde
         totalMemory: () => inputs.totalMemory,
         freeBytes: () => inputs.freeDisk,
         dataFolder: "/data",
+        osRelease: () => inputs.release ?? "6.8.0-generic",
+        windowsHasAvx2: () => inputs.avx2 ?? null,
       }).finally(() => machine.calls.push(...runner.calls));
     },
   };
