@@ -20,6 +20,7 @@ import {
   PORT_MAX,
   PORT_MIN,
   type LanSettingRequest,
+  type LocalEngineView,
   type PackagesView,
   type PortSettingRequest,
   type RefreshResult,
@@ -37,6 +38,8 @@ export type Section = "load" | "port" | "lan" | "wizard" | "updates" | "dataset"
 export interface PreferencesFormProps {
   /** Null while the settings are loading. */
   settings: SettingsData | null;
+  /** The server's platform, null until the local engine view has loaded. */
+  platform: string | null;
   /** The last failure and the section it belongs to, so it shows next to the cause. */
   failure: { section: Section; error: ApiFailure } | null;
   /** The section being saved, or null. */
@@ -212,6 +215,7 @@ export function PreferencesForm(props: PreferencesFormProps) {
         <Toggle
             id="settings-lan"
             label={t("preferences.lan.switch")}
+            hint={props.platform === "win32" ? t("preferences.lan.windows_firewall") : undefined}
             checked={lanOn || props.lanWantsOn}
             disabled={props.saving === "lan"}
             onChange={(event) => {
@@ -220,6 +224,7 @@ export function PreferencesForm(props: PreferencesFormProps) {
             }}
           />
 
+        <Failure props={props} section="lan" />
         {!lanOn && props.lanWantsOn && (
           <form onSubmit={submitLan}>
             <TextField
@@ -233,7 +238,6 @@ export function PreferencesForm(props: PreferencesFormProps) {
               value={props.passphrase}
               onChange={(event) => props.onPassphraseChange(event.target.value)}
             />
-            <Failure props={props} section="lan" />
             <Button type="submit" disabled={props.saving === "lan"}>
               {props.saving === "lan" ? t("common.saving") : t("preferences.lan.save")}
             </Button>
@@ -256,7 +260,6 @@ export function PreferencesForm(props: PreferencesFormProps) {
             ) : (
               <p>{t("preferences.lan.no_addresses")}</p>
             )}
-            <Failure props={props} section="lan" />
             <Button type="button" disabled={props.saving === "lan"} onClick={props.onTurnLanOff}>
               {t("preferences.lan.turn_off")}
             </Button>
@@ -359,6 +362,7 @@ export function PreferencesPage({
   onWizardReopened: () => void;
 }) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [platform, setPlatform] = useState<string | null>(null);
   const [failure, setFailure] = useState<PreferencesFormProps["failure"]>(null);
   const [saving, setSaving] = useState<PreferencesFormProps["saving"]>(null);
   const [saved, setSaved] = useState<PreferencesFormProps["saved"]>(null);
@@ -402,6 +406,14 @@ export function PreferencesPage({
       },
       (error: unknown) => {
         if (current) fail("updates", error);
+      },
+    );
+    api<LocalEngineView>("GET", "/api/local-engine").then(
+      (loaded) => {
+        if (current) setPlatform(loaded.platform);
+      },
+      (error: unknown) => {
+        if (current) fail("lan", error);
       },
     );
     api<SampleDatasetFileView>("GET", "/api/sample/dataset").then(
@@ -514,6 +526,7 @@ export function PreferencesPage({
   return (<div className="preferences">
     <PreferencesForm
       settings={settings}
+      platform={platform}
       failure={failure}
       saving={saving}
       saved={saved}

@@ -253,6 +253,7 @@
   "preferences.lan.title": "Local network",
   "preferences.lan.explain": "When this is on, other devices on the network need the passphrase to use AIDM UI. This computer does not.",
   "preferences.lan.switch": "Open AIDM UI to my local network",
+  "preferences.lan.windows_firewall": "Windows may ask whether to allow AIDM UI on the network; choose Allow.",
   "preferences.lan.passphrase_label": "Passphrase for the network",
   "preferences.lan.passphrase_hint": "At least {min} characters. Write it down, because AIDM UI cannot show it again.",
   "preferences.lan.save": "Turn on",

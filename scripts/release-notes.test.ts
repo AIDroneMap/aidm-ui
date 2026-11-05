@@ -21,7 +21,7 @@ test("unsigned notes walk the pilot through the macOS approval, in order", () =>
       "",
       "On Linux, download `aidm-ui-0.1.0-linux-x64` or `aidm-ui-0.1.0-linux-arm64` for your processor. Allow the file to run as a program, then open it.",
       "",
-      "On Windows, download `aidm-ui-0.1.0-windows-x64.exe` and open it. If Windows says it protected your PC, choose More info, then Run anyway. On Windows, AIDM UI uses an engine on another computer.",
+      "On Windows, download `aidm-ui-0.1.0-windows-x64.exe` and open it. If Windows says it protected your PC, choose More info, then Run anyway. On Windows 11, the setup screens check the computer, install the engine and offer a sample job.",
       "",
     ].join("\n"),
   );
@@ -31,6 +31,13 @@ test("signed notes have no System Settings step", () => {
   const notes = releaseNotes("0.1.0", "signed", all);
   expect(notes).not.toContain("Privacy & Security");
   expect(notes).toContain("4. If the Mac asks whether to open an app downloaded from the internet, choose Open.\n5. Your browser opens AIDM UI.");
+});
+
+test.each(["signed", "unsigned"] as const)("%s Mac notes keep the Windows SmartScreen step and local setup", (signing) => {
+  const notes = releaseNotes("0.3.0", signing, Object.values(releaseFiles("0.3.0")));
+  expect(notes).toContain("If Windows says it protected your PC, choose More info, then Run anyway.");
+  expect(notes).toContain("On Windows 11, the setup screens check the computer, install the engine and offer a sample job.");
+  expect(notes).not.toContain("engine on another computer");
 });
 
 test("a platform that was not built is left out of the notes", () => {

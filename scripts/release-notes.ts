@@ -53,7 +53,7 @@ export function releaseNotes(version: string, signing: MacSigning, attached: rea
   if (attached.includes(files.windows)) {
     lines.push(
       "",
-      `On Windows, download \`${files.windows}\` and open it. If Windows says it protected your PC, choose More info, then Run anyway. On Windows, AIDM UI uses an engine on another computer.`,
+      `On Windows, download \`${files.windows}\` and open it. If Windows says it protected your PC, choose More info, then Run anyway. On Windows 11, the setup screens check the computer, install the engine and offer a sample job.`,
     );
   }
   return `${lines.join("\n")}\n`;
