@@ -12,16 +12,16 @@ An operator must never be left with a local engine that runs and cannot be reach
 
 The second install on a real Mac (Apple M5 Pro, 24 GiB, macOS 27.0, Apple's tool 1.6.1) ran a whole job, over a slow, unstable mobile link with a VPN client using an exit node. Twice the engine ran and aidm-ui could not reach it:
 
-1. macOS asked whether "container" may find devices on the local network, and the answer was no. Every connection to the published port 127.0.0.1:<port> was reset (ECONNRESET). `ping` and `curl` to the container's address, 192.168.64.2, failed at once with "No route to host", and `route -n get` showed the tool's bridge (bridge100). Inside the container the API answered. Turning the permission on fixed it with no restart.
+1. macOS asked whether "container" may find devices on the local network, and the answer was no. Every connection to the published port 127.0.0.1:<port> was reset (ECONNRESET). `ping` and `curl` to the container's address, `<virtual-machine-address>`, failed at once with "No route to host", and `route -n get` showed the tool's bridge (bridge100). Inside the container the API answered. Turning the permission on fixed it with no restart.
 2. After 18 minutes, at a VPN reconnect, polls timed out after 10 s. The VPN client had put a route for the tool's subnet somewhere else (below).
 
 The third Mac test, the same day, looked at the routing table at each step. With the exit node on and subnet routes off:
 
-- LAN access off: a static route for the whole subnet into the tunnel, `192.168.64  link#26  UCS  utun4`. Polls time out.
-- LAN access on: a static route for the subnet towards the home router on the physical interface, `192.168.64  192.168.178.1  UGSc  en0`. A direct connection to the container is refused at once by the router, and the published port times out.
+- LAN access off: a static route for the whole subnet into the tunnel, `<virtual-network>  link#26  UCS  utun4`. Polls time out.
+- LAN access on: a static route for the subnet towards the home router on the physical interface, `<virtual-network>  <home-router-address>  UGSc  en0`. A direct connection to the container is refused at once by the router, and the published port times out.
 - The client rewrote that route at each of its reconnects, about every 10 minutes on that link, so a repair by hand lasted until the next one.
 - A host route added by hand into the tunnel (`route add -host <container> -interface utun4`) broke nothing, so it does not reproduce the problem.
-- A gateway route through the bridge's own address (`route add -net 192.168.64.0/24 192.168.64.1`) makes a loop: ping answers "Time to live exceeded" from 192.168.64.1. It seemed to work only for a container that already had a link-layer entry on the bridge. A direct route on the bridge (`-interface 192.168.64.1`) is right.
+- A gateway route through the bridge's own address (`route add -net <virtual-network-range> <host-virtual-network-address>`) makes a loop: ping answers "Time to live exceeded" from the host's address on the virtual network. It seemed to work only for a container that already had a link-layer entry on the bridge. A direct route on the bridge (`-interface <host-virtual-network-address>`) is right.
 
 With the route right and the permission off, the published port reset every connection while the API answered inside; with the permission on, it answered. A direct connection from the Mac to the container's address follows the Mac's route to the tool's subnet, which was wrong again and again, so its failures said nothing about the permission. The first version of the checks below used it as evidence for the permission and named the wrong cause.
 
