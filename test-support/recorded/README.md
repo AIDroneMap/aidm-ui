@@ -154,6 +154,7 @@ runtime research notes. They have not been checked against a real run.
   - `system-start-failed.*`: one line, `Launching container-apiserver...`, from the source, and the error text is a
     guess. The real tool prints its start lines on stderr (see `system-start.*` above); here the line is on stdout.
     The streaming runner treats both streams alike.
+- `windows/cim-command-line-engine.txt`, `cim-command-line-other-config.txt` (the `CommandLine` of a `Win32_Process`, read with `Get-CimInstance` from PowerShell, for a task API that aidm-ui started with its config file, and for one started with the config file of another version). The user name is `Field Operator`, with a space, as the case the ownership check must handle.
 - `macos/sw-vers-26.txt`, `sw-vers-15.txt` (`sw_vers -productVersion`)
 - `nvidia/smi-l.txt` (`nvidia-smi -L`, with a placeholder UUID)
 - `nvidia/smi-query.txt` and `nvidia/smi-query-two.txt` (`nvidia-smi --query-gpu=name,driver_version --format=csv,noheader`, the query the Windows check runs: one line per card, the name and the driver version separated by a comma and a space). Built from the query fields that `nvidia-smi --help-query-gpu` lists and the CSV format of the `nvidia-smi` manual, not recorded on a machine. The card names and driver versions are public NVIDIA product names and driver releases.
