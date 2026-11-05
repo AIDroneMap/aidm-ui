@@ -103,6 +103,37 @@ describe("parseManifest", () => {
     expect(malformedField(withVariant({ ...native, sha256: "xyz" }, "windows-x64"))).toBe("variants.windows-x64.sha256");
   });
 
+  test("the Windows CUDA variant is kept without a driver floor", () => {
+    const manifest = withVariant({ ...native, gpu: true }, "windows-x64-cuda");
+    expect(parseManifest(manifestBytes(manifest))).toEqual({ ok: true, manifest, skippedVariants: [] });
+  });
+
+  test.each(["windows-x64", "windows-x64-cuda", "darwin-arm64"])("a native %s variant keeps its driver floor", (id) => {
+    const manifest = withVariant({ ...native, minimumDriverVersion: "576.57" }, id);
+    expect(parseManifest(manifestBytes(manifest))).toEqual({ ok: true, manifest, skippedVariants: [] });
+  });
+
+  test.each(["0.0", "580.9", "001.02"])("a driver floor accepts digits on both sides of one dot: %s", (minimumDriverVersion) => {
+    const manifest = withVariant({ ...native, minimumDriverVersion }, "windows-x64-cuda");
+    expect(parseManifest(manifestBytes(manifest))).toEqual({ ok: true, manifest, skippedVariants: [] });
+  });
+
+  test.each(
+    ["", "576", "576.57.1", "576.x", ".57", "576.", "-576.57", " 576.57", "576.57 ", "576.57\n", "576.57\r\n", 576.57, null, true, [], {}]
+      .map((minimumDriverVersion) => ({ minimumDriverVersion })),
+  )(
+    "a malformed driver floor names its field: %j",
+    ({ minimumDriverVersion }) => {
+      expect(malformedField(withVariant({ ...native, minimumDriverVersion }, "windows-x64-cuda"))).toBe(
+        "variants.windows-x64-cuda.minimumDriverVersion",
+      );
+    },
+  );
+
+  test.each(["576.57", null, false, 576.57])("a container refuses the driver floor key: %j", (minimumDriverVersion) => {
+    expect(malformedField(withVariant({ ...container, minimumDriverVersion }))).toBe("variants.linux-amd64-cpu.minimumDriverVersion");
+  });
+
   test("a variant with a wrong size, gpu flag or kind is malformed", () => {
     expect(malformedField(withVariant({ ...container, size: -1 }))).toBe("variants.linux-amd64-cpu.size");
     expect(malformedField(withVariant({ ...container, size: "5" }))).toBe("variants.linux-amd64-cpu.size");

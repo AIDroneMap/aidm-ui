@@ -27,6 +27,8 @@ export type ManifestVariant =
       size: number;
       sha256: string;
       gpu: boolean;
+      /** Minimum graphics driver version as major.minor. Absent: no floor. */
+      minimumDriverVersion?: string;
     };
 
 export interface Manifest {
@@ -53,6 +55,7 @@ export type ParsedManifest =
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const DRIVER_VERSION = /^[0-9]+\.[0-9]+$/;
 // Host (with an optional port), then one or more path parts, no tag and no digest.
 // It must start with a letter or digit so that it can never read as a command-line flag.
 const IMAGE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::\d{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/;
@@ -104,6 +107,7 @@ function parseVariant(value: unknown, id: VariantId): ManifestVariant {
   const size = asWholeNumber(entry.size, at("size"));
   const gpu = asBoolean(entry.gpu, at("gpu"));
   if (entry.kind === "container") {
+    if (entry.minimumDriverVersion !== undefined) throw new Malformed(at("minimumDriverVersion"));
     const image = asString(entry.image, at("image"));
     if (!IMAGE.test(image)) throw new Malformed(at("image"));
     const digest = asString(entry.digest, at("digest"));
@@ -116,7 +120,10 @@ function parseVariant(value: unknown, id: VariantId): ManifestVariant {
     if (!isHttps(url)) throw new Malformed(at("url"));
     const sha256 = asString(entry.sha256, at("sha256"));
     if (!SHA256.test(sha256)) throw new Malformed(at("sha256"));
-    return { kind: "native", url, size, sha256, gpu };
+    if (entry.minimumDriverVersion === undefined) return { kind: "native", url, size, sha256, gpu };
+    const minimumDriverVersion = asString(entry.minimumDriverVersion, at("minimumDriverVersion"));
+    if (!DRIVER_VERSION.test(minimumDriverVersion)) throw new Malformed(at("minimumDriverVersion"));
+    return { kind: "native", url, size, sha256, gpu, minimumDriverVersion };
   }
   throw new Malformed(at("kind"));
 }

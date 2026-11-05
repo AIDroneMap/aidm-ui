@@ -300,7 +300,7 @@ export interface WizardUpdateRequest {
 
 // Engine packages and the manifest (ticket #8).
 
-export const VARIANT_IDS = ["linux-amd64-cpu", "linux-arm64-cpu", "linux-amd64-gpu", "windows-x64", "darwin-arm64"] as const;
+export const VARIANT_IDS = ["linux-amd64-cpu", "linux-arm64-cpu", "linux-amd64-gpu", "windows-x64", "windows-x64-cuda", "darwin-arm64"] as const;
 export type VariantId = (typeof VARIANT_IDS)[number];
 
 /** The engine package that fits this computer, from the newest verified manifest. */
