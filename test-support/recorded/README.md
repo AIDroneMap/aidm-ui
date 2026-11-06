@@ -73,6 +73,18 @@ with the public image `docker.io/library/busybox@sha256:bdf57e52...` (busybox
 1.37). The container name was `aidm-ui-rec-9a`, shown here as `aidm-engine`, and
 the port was changed to `41823`.
 
+## Recorded on a Windows machine
+
+A real run on one Windows machine (Windows Server 2022, build 20348, Windows
+PowerShell 5.1) on 5 November 2026. aidm-ui's own `spawnEngine` started the
+task API 2.7.0 from its release zip, with the data folder in the place aidm-ui
+uses on Windows (`aidm-ui` under the local application data folder). The
+session ran as the system account, so that folder is the system profile's.
+
+| File | Source | What changed |
+|---|---|---|
+| `windows/cim-command-line-engine.txt` | the `CommandLine` of the task API's `Win32_Process`, read with `Get-CimInstance` from PowerShell, as the ownership check asks for it | Nothing. No argument has a space, so Windows shows none in quotes. |
+
 ## Edited
 
 Marked edited because no machine produced them as they stand.
@@ -89,6 +101,8 @@ Marked edited because no machine produced them as they stand.
 | `docker/info-no-cpu-quota.txt` | `docker/info.txt` | `CpuCfsQuota` set to `false`. |
 | `cpuinfo/x86-64-no-avx2.txt` | `cpuinfo/x86-64-avx2.txt` | `avx2` and `fma` removed from the `flags` line. |
 | `cpuinfo/arm64-v8-0.txt` | `cpuinfo/arm64-v8-2.txt` | `atomics` and `asimdrdm` removed from the `Features` line. |
+| `windows/cim-command-line-space.txt` | `windows/cim-command-line-engine.txt` | The system profile replaced by a user folder whose name has a space, `C:\Users\Field Operator`, and the two paths put in quotes, as a program that starts another one on Windows quotes an argument with a space. |
+| `windows/cim-command-line-other-config.txt` | `windows/cim-command-line-engine.txt` | Version 2.7.0 changed to 2.6.1 in both paths, so the line names the config file of another version. |
 
 ## Written by hand
 

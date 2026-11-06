@@ -4,9 +4,9 @@ import { assertCatalogueDrift, assertEditorRows } from "../../test-support/catal
 import { OPTION_CATALOGUE, OPTION_GROUPS } from "../../shared/option-catalogue.ts";
 import type { ReconciledOption } from "../../shared/engine-options.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
 import { folderSnapshot } from "../../test-support/import-folder.ts";
@@ -19,11 +19,17 @@ import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import { SAMPLE_DATASET } from "../sample/sample-dataset.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
+import { spawnEngine, type SpawnEngine } from "./native-package.ts";
 
 // This test drives the real task API in test mode (`--test`: it processes
 // nothing), through the native package. It runs only where
 // AIDM_REAL_TASK_API_VERSION names a release of AIDroneMap/aidm-api that
-// has a Linux x64 archive, such as "2.6.1". It skips everywhere else.
+// has an archive for this computer, such as "2.6.1", on Linux x64 or Windows
+// x64. It skips everywhere else. On Windows the release has a zip, which the
+// test unpacks and packs again as the tar.gz with one top folder that a
+// native package is. At the end the engine manager starts again, finds the
+// running program by its command line, and stops it with every process it
+// started.
 // Before release, ARCHIVE_PATH and ARCHIVE_SHA256 select a source-built native
 // package on a disposable test machine. MODEL_ACCEPTANCE=1 also renders the
 // archived model through the actual server route in Chromium.
@@ -40,7 +46,8 @@ const packagePath = process.env.AIDM_REAL_TASK_API_ARCHIVE_PATH;
 const packageSha256 = process.env.AIDM_REAL_TASK_API_ARCHIVE_SHA256;
 const modelAcceptance = process.env.AIDM_REAL_TASK_API_MODEL_ACCEPTANCE === "1";
 
-const archiveName = `aidm-api-${version}-linux-x64.tar.gz`;
+const windows = process.platform === "win32";
+const archiveName = windows ? `aidm-api-${version}-windows-x64.zip` : `aidm-api-${version}-linux-x64.tar.gz`;
 const releaseUrl = `https://github.com/AIDroneMap/aidm-api/releases/download/v${version}`;
 
 /** The checksum the release publishes for the archive, over HTTPS. */
@@ -65,6 +72,18 @@ async function archiveSize(): Promise<number> {
 }
 
 function archiveEntry(archive: Buffer, name: string): Buffer {
+  let found: Buffer | undefined;
+  forEachZipEntry(archive, (entryName, read) => {
+    if (entryName !== name) return true;
+    found = read();
+    return false;
+  });
+  if (found === undefined) throw new Error(`ZIP entry not found: ${name}`);
+  return found;
+}
+
+/** Hands each entry of a ZIP file to `visit`, with a way to read it, until `visit` says no more. */
+function forEachZipEntry(archive: Buffer, visit: (name: string, read: () => Buffer) => boolean): void {
   const end = archive.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (end < 0) throw new Error("ZIP directory not found");
   let offset = archive.readUInt32LE(end + 16);
@@ -80,20 +99,74 @@ function archiveEntry(archive: Buffer, name: string): Buffer {
     const commentLength = archive.readUInt16LE(offset + 32);
     const localOffset = archive.readUInt32LE(offset + 42);
     const entryName = archive.subarray(offset + 46, offset + 46 + nameLength).toString();
-    if (entryName === name) {
+    const read = () => {
       if (archive.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("Invalid ZIP entry");
       const start = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
       const compressed = archive.subarray(start, start + compressedSize);
       const data = method === 0 ? compressed : method === 8 ? inflateRawSync(compressed) : null;
-      if (data === null || data.length !== size || Bun.hash.crc32(data) !== crc) throw new Error(`Invalid ZIP entry: ${name}`);
+      if (data === null || data.length !== size || Bun.hash.crc32(data) !== crc) throw new Error(`Invalid ZIP entry: ${entryName}`);
       return data;
-    }
+    };
+    if (!visit(entryName, read)) return;
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  throw new Error(`ZIP entry not found: ${name}`);
 }
 
-const real = test.skipIf(version === undefined || process.platform !== "linux" || process.arch !== "x64");
+/**
+ * The release's Windows zip, checked against its SHA256SUMS line, unpacked and
+ * packed again as a tar.gz with one top folder, which is what a native
+ * package is. Returns the new archive and its SHA-256.
+ */
+async function rewrappedWindowsZip(work: string): Promise<{ path: string; sha256: string }> {
+  const response = await fetch(`${releaseUrl}/${archiveName}`, { redirect: "follow" });
+  if (!response.ok) throw new Error(`${archiveName} answered ${response.status}.`);
+  const zip = Buffer.from(await response.arrayBuffer());
+  expect(new Bun.CryptoHasher("sha256").update(zip).digest("hex")).toBe(await publishedChecksum());
+  const top = archiveName.replace(/\.zip$/, "");
+  const unpacked = join(work, "unpacked");
+  forEachZipEntry(zip, (name, read) => {
+    if (name.split("/").includes("..") || name.startsWith("/")) throw new Error(`Unsafe ZIP entry: ${name}`);
+    // The release zip holds one top folder; loose files would go into one.
+    const path = join(unpacked, name.startsWith(`${top}/`) ? "" : top, name);
+    if (name.endsWith("/")) mkdirSync(path, { recursive: true });
+    else {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, read());
+    }
+    return true;
+  });
+  const archive = join(work, `${top}.tar.gz`);
+  const packed = Bun.spawnSync(["tar", "-czf", archive, "-C", unpacked, top]);
+  if (packed.exitCode !== 0) throw new Error(`tar failed: ${packed.stderr.toString()}`);
+  const hasher = new Bun.CryptoHasher("sha256");
+  for await (const chunk of Bun.file(archive).stream()) hasher.update(chunk);
+  return { path: archive, sha256: hasher.digest("hex") };
+}
+
+/** Every process of this computer with its parent. */
+async function processes(): Promise<Array<{ pid: number; parent: number }>> {
+  const argv = windows
+    ? ["powershell", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance -ClassName Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"]
+    : ["ps", "-e", "-o", "pid=,ppid="];
+  const listed = Bun.spawnSync(argv);
+  if (listed.exitCode !== 0) throw new Error(`Listing the processes failed: ${listed.stderr.toString()}`);
+  return listed.stdout.toString().split(/\r?\n/).flatMap((line) => {
+    const [pid, parent] = line.trim().split(/\s+/).map(Number);
+    return pid === undefined || parent === undefined || Number.isNaN(pid) || Number.isNaN(parent) ? [] : [{ pid, parent }];
+  });
+}
+
+/** The process and every process below it. */
+async function processTree(root: number): Promise<number[]> {
+  const all = await processes();
+  const tree = [root];
+  for (let index = 0; index < tree.length; index++) {
+    for (const child of all) if (child.parent === tree[index] && child.pid !== root && !tree.includes(child.pid)) tree.push(child.pid);
+  }
+  return tree;
+}
+
+const real = test.skipIf(version === undefined || !(process.platform === "linux" || windows) || process.arch !== "x64");
 
 let scratch: string;
 let files: FakeFileServer;
@@ -132,18 +205,21 @@ real(
 
     let sourcePackageFetch: typeof fetch | undefined;
     let variant = { url: `${releaseUrl}/${archiveName}`, size: 0, sha256: "" };
-    if (packagePath !== undefined) {
-      if (!packageSha256 || !/^[0-9a-f]{64}$/.test(packageSha256)) throw new Error("A source-built package requires its expected SHA-256.");
-      const file = Bun.file(packagePath);
+    const rewrapped = packagePath === undefined && windows ? await rewrappedWindowsZip(scratch) : undefined;
+    const localPackage = packagePath ?? rewrapped?.path;
+    const localSha256 = packagePath === undefined ? rewrapped?.sha256 : packageSha256;
+    if (localPackage !== undefined) {
+      if (!localSha256 || !/^[0-9a-f]{64}$/.test(localSha256)) throw new Error("A source-built package requires its expected SHA-256.");
+      const file = Bun.file(localPackage);
       if (!(await file.exists())) throw new Error("Source-built native package not found.");
       const hasher = new Bun.CryptoHasher("sha256");
       for await (const chunk of file.stream()) hasher.update(chunk);
-      expect(hasher.digest("hex")).toBe(packageSha256);
+      expect(hasher.digest("hex")).toBe(localSha256);
       packageServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
         if (new URL(request.url).pathname !== "/native.tar.gz") return new Response(null, { status: 404 });
         return new Response(file);
       } });
-      variant = { url: "https://source-package.test/native.tar.gz", size: file.size, sha256: packageSha256 };
+      variant = { url: "https://source-package.test/native.tar.gz", size: file.size, sha256: localSha256 };
       // Keep the manifest schema unchanged. Only this test's fetch maps the
       // declared HTTPS address to the local source-built archive server.
       sourcePackageFetch = ((input, init) => {
@@ -159,7 +235,7 @@ real(
     const manifest = sampleManifest({
       packageVersion: version as string,
       variants: {
-        "linux-amd64-cpu": {
+        [windows ? "windows-x64" : "linux-amd64-cpu"]: {
           kind: "native",
           ...variant,
           gpu: false,
@@ -172,7 +248,19 @@ real(
     files.redirects.set("/releases/latest/download/manifest.json", `/releases/download/v${version}/manifest.json`);
 
     const taskCalls: string[] = [];
-    const h = openHarness({
+    // The engine's starts, so that the restart at the end can show that none was added.
+    const starts: number[] = [];
+    const spawn: SpawnEngine = (argv, options) => {
+      const child = spawnEngine(argv, options);
+      starts.push(child.pid);
+      return child;
+    };
+    // On disk, so that the engine manager can start again on it, with a space in its path, as in a Windows user name with a space.
+    const dataFolder = join(scratch, "aidm ui data");
+    mkdirSync(dataFolder);
+    const harnessOptions: Parameters<typeof openHarness>[0] = {
+      dataFolder,
+      localMachine: { platform: windows ? "win32" : "linux", arch: "x64", totalMemory: 32 * 1024 ** 3, cpuCount: 8 },
       assets,
       enginePollMs: 250,
       runPollMs: 250,
@@ -193,13 +281,49 @@ real(
       },
       manifest: { releasesUrl: files.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
       // The archive uses real HTTP and installation; the program runs in test mode.
-      native: { extraArgs: ["--test"], fetch: sourcePackageFetch },
-    });
+      native: { extraArgs: ["--test"], fetch: sourcePackageFetch, spawn },
+    };
+    const h = openHarness(harnessOptions);
     harness = h;
+
+    /**
+     * The engine manager starts again, as when the operator opens aidm-ui again, and finds the program it left running by its
+     * command line. Switched off, the engine goes with every process it started.
+     */
+    const restartAndSwitchOff = async () => {
+      const running = h.settings.get("local.native");
+      expect(running).not.toBeNull();
+      const pid = running!.pid;
+      const startsBefore = starts.length;
+      await h.stop({ leaveEngines: true });
+      harness = undefined;
+      expect((await processes()).some((process) => process.pid === pid)).toBe(true);
+      const again = openHarness(harnessOptions);
+      harness = again;
+      await eventually(async () => again.localEngine.view().state === "ready", 120_000);
+      expect(starts).toHaveLength(startsBefore);
+      expect(again.settings.get("local.native")?.pid).toBe(pid);
+      console.log("The engine manager started again and found the running engine", JSON.stringify({ pid, starts: starts.length }));
+
+      // Switched off, the engine goes with every process it started.
+      const tree = await processTree(pid);
+      const off = await fetch(`${again.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+      expect(off.status).toBe(200);
+      expect(again.settings.get("local.native")).toBeNull();
+      let left: number[] = tree;
+      await eventually(async () => {
+        const now = new Set((await processes()).map((process) => process.pid));
+        left = tree.filter((member) => now.has(member));
+        return left.length === 0;
+      }, 30_000);
+      expect(left).toEqual([]);
+      console.log("The engine was switched off and no process of its tree is left", JSON.stringify({ tree }));
+    };
 
     const refreshed = (await (await fetch(`${h.base}/api/packages/refresh`, { method: "POST" })).json()) as { result: { ok: boolean } };
     expect(refreshed.result.ok).toBe(true);
-    expect((await fetch(`${h.base}/api/local-engine/install`, { method: "POST" })).status).toBe(202);
+    const install = await fetch(`${h.base}/api/local-engine/install`, { method: "POST" });
+    expect(install.status, await install.clone().text()).toBe(202);
     await eventually(async () => h.localEngine.view().state === "ready", 180_000);
     expect(h.localEngine.view().installed).toMatchObject({ packageVersion: version, kind: "native", runtime: null });
 
@@ -284,6 +408,9 @@ real(
     const projectAfter = await (await fetch(`${h.base}/api/projects/${run.projectId}`)).json() as ProjectView;
     expect(projectAfter.resultsBytes).toBe(0);
     expect(projectAfter.resultArchives).toEqual([]);
+    // On Windows the test proves the start path of a native package: the install, the sample job, the restart and the stop.
+    // The other ways in, the presets and the imports are proven on Linux.
+    if (windows) return restartAndSwitchOff();
 
     const linkedProjectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Linked field", notes: "" }) });
     expect(linkedProjectResponse.status).toBe(201);
@@ -497,6 +624,8 @@ real(
         console.log("In-place import acceptance passed", { photos: 3, uploads: 0, originalsPreserved: true });
       }
     } finally { await chmod(source, 0o700); }
+
+    await restartAndSwitchOff();
   },
   SLOW,
 );

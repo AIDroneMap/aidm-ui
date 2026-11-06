@@ -1,0 +1,1 @@
+"C:\Users\Field Operator\AppData\Local\aidm-ui\engine-packages\2.7.0\aidm-api.exe" --config "C:\Users\Field Operator\AppData\Local\aidm-ui\engine-config\native-2.7.0.json" --test

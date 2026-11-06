@@ -16,6 +16,7 @@ import {
   type TestArchive,
 } from "../../test-support/native-archive.ts";
 import { generateSigner, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
+import { windowsRunner } from "../../test-support/windows-command-line.ts";
 import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import type { Manifest } from "../manifest/schema.ts";
 import { engineConfigFile, spawnEngine, type NativeOptions, type SpawnEngine } from "../packages/native-package.ts";
@@ -57,14 +58,14 @@ afterEach(async () => {
  * ends at once with an error, as systemd-run does when it is refused.
  */
 function recordingSpawn(options: { wrapperFails?: boolean } = {}) {
-  const starts: Array<{ argv: string[]; cwd: string; pid: number }> = [];
+  const starts: Array<{ argv: string[]; cwd: string; pid: number; windowsHide: boolean }> = [];
   const spawn: SpawnEngine = (argv, spawnOptions) => {
     const wrapped = argv[0] === "systemd-run";
     const direct = wrapped ? argv.slice(argv.indexOf("--") + 1) : argv;
     const refused = ["sh", "-c", "echo 'Failed to start transient scope unit: Access denied' >&2; exit 1"];
     const child = spawnEngine(wrapped && options.wrapperFails === true ? refused : direct, spawnOptions);
-    const { cwd } = spawnOptions;
-    starts.push({ argv, cwd, pid: child.pid });
+    const { cwd, windowsHide } = spawnOptions;
+    starts.push({ argv, cwd, pid: child.pid, windowsHide });
     return child;
   };
   return { starts, spawn };
@@ -253,6 +254,7 @@ test("the program is started in the engine data folder with only the path of its
   expect(statSync(config).mode & 0o777).toBe(0o600);
   expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
     token,
+    host: "127.0.0.1",
     port: Number(port),
     parallelQueueProcessing: 1,
     odx_path: join(folder, "engine"),
@@ -485,6 +487,87 @@ test("lowering the CPU cores shows that a program cannot be held to them", async
   const saved = await fetch(`${h.base}/api/local-engine/caps`, { method: "PUT", body: JSON.stringify({ memoryBytes: caps.memoryBytes, cpus: 2 }) });
   expect(saved.status).toBe(200);
   expect((await localView(h)).warnings).toEqual([{ code: "local.cpu_cap_not_enforced", data: {} }]);
+});
+
+// Criterion: the Windows ways (program name, hidden console, host, command line, taskkill) through the manager, on any host.
+
+test("with the Windows ways the package is unpacked to aidm-api.exe, started hidden, found again after a restart by its command line, and ended with taskkill", async () => {
+  // A space in the path, as in a Windows user name with a space.
+  const folder = mkdtempSync(join(os.tmpdir(), "aidm ui windows-"));
+  folders.push(folder);
+  const archive = await buildNativeArchive({ version: "2.6.0", program: "aidm-api.exe" });
+  const spawner = recordingSpawn();
+  const runner = windowsRunner({ commandLine: (pid) => spawner.starts.find((entry) => entry.pid === pid)?.argv });
+  const windows = { harness: { dataFolder: folder, runner }, native: { platform: "win32" as const } };
+  const first = start(spawner, windows);
+  await offer(first, archive, 2);
+  await installAndWaitReady(first);
+
+  const program = join(folder, "engine-packages", "2.6.0", "aidm-api.exe");
+  expect(spawner.starts.map((entry) => ({ argv: entry.argv, windowsHide: entry.windowsHide }))).toEqual([
+    { argv: [program, "--config", engineConfigFile(folder, "2.6.0")], windowsHide: true },
+  ]);
+  expect(JSON.parse(readFileSync(engineConfigFile(folder, "2.6.0"), "utf8")).host).toBe("127.0.0.1");
+  const pid = spawner.starts[0]?.pid as number;
+  strays.push(pid);
+  await first.stop({ leaveEngines: true });
+  expect(alive(pid)).toBe(true);
+
+  const second = start(spawner, windows);
+  await eventually(async () => (await localView(second)).state === "ready");
+  expect(spawner.starts).toHaveLength(1);
+  expect(runner.calls.filter((call) => call.argv[0] === "powershell").length).toBeGreaterThan(0);
+  expect(await runningVersion(second)).toBe("2.6.0");
+
+  const off = await fetch(`${second.base}/api/local-engine/enabled`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  expect(off.status).toBe(200);
+  expect(runner.calls.filter((call) => call.argv[0] === "taskkill").map((call) => call.argv)).toEqual([["taskkill", "/PID", String(pid), "/T", "/F"]]);
+  expect(alive(pid)).toBe(false);
+});
+
+test("on a Windows computer the memory and CPU cap warnings are those of a native package on Linux without systemd", async () => {
+  const warnings = async (h: Harness) => {
+    await eventually(async () => (await localView(h)).warnings.length > 0);
+    const before = (await localView(h)).warnings;
+    const caps = (await localView(h)).caps;
+    const saved = await fetch(`${h.base}/api/local-engine/caps`, { method: "PUT", body: JSON.stringify({ memoryBytes: caps.memoryBytes, cpus: 2 }) });
+    expect(saved.status).toBe(200);
+    const lowered = (await localView(h)).warnings;
+    await fetch(`${h.base}/api/local-engine/caps`, { method: "PUT", body: JSON.stringify(caps) });
+    return { before, lowered };
+  };
+
+  const folder = keptFolder();
+  const archive = await buildNativeArchive({ version: "2.6.0" });
+  const spawner = recordingSpawn();
+  const linux = start(spawner, { harness: { dataFolder: folder, runner: runnerWithSystemd(false) } });
+  await offer(linux, archive, 2);
+  await installAndWaitReady(linux);
+  const withoutSystemd = await warnings(linux);
+  await linux.stop({ leaveEngines: true });
+  strays.push(spawner.starts[0]?.pid as number);
+
+  // The same installed package, read by an interface on a Windows computer: systemd is never asked for.
+  const asked: string[][] = [];
+  const base = runnerWithSystemd(true);
+  const windows = start(spawner, {
+    harness: {
+      dataFolder: folder,
+      localMachine: { platform: "win32", arch: "x64", totalMemory: 32 * GiB, cpuCount: 8 },
+      runner: { run: (argv, options) => (asked.push(argv), base.run(argv, options)), stream: (argv, options) => base.stream(argv, options) },
+    },
+  });
+  const onWindows = await warnings(windows);
+  expect(asked.filter((argv) => argv[0] === "systemctl" || argv[0] === "systemd-run")).toEqual([]);
+
+  expect(onWindows).toEqual(withoutSystemd);
+  expect(onWindows).toEqual({
+    before: [{ code: "local.memory_cap_not_enforced", data: {} }],
+    lowered: [
+      { code: "local.memory_cap_not_enforced", data: {} },
+      { code: "local.cpu_cap_not_enforced", data: {} },
+    ],
+  });
 });
 
 // The switch and the crash path work as for a container.

@@ -31,6 +31,8 @@ test("the recorded outputs hold no host name, user name, home folder, identifier
   for (const file of files) {
     const text = readFileSync(file, "utf8");
     expect(text, file).not.toMatch(/\/(home|Users)\/(?!operator\b)/);
+    // A Windows user folder: the one name used there has a space, as the ownership check must handle.
+    expect(text, file).not.toMatch(/\\Users\\(?!(operator|Field Operator)\\)/i);
     expect(text, file).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-(?!000000000000)[0-9a-f]{12}/);
     for (const address of text.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g) ?? []) {
       expect(address, file).toMatch(/^(192\.0\.2\.|127\.)/);

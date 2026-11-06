@@ -1,11 +1,24 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { fakeProgramScript } from "../../test-support/native-archive.ts";
+import { recordedText } from "../../test-support/scripted-runner.ts";
+import { windowsRunner } from "../../test-support/windows-command-line.ts";
 import { systemRunner } from "../process/command-runner.ts";
 import type { NativeProcess, Settings } from "../settings/settings.ts";
-import { NativePackage, spawnEngine, type ChildState, type NativePackageDeps, type SpawnEngine } from "./native-package.ts";
+import {
+  engineConfigFile,
+  engineSpawner,
+  NativePackage,
+  spawnEngine,
+  usesConfig,
+  windowsCommandLineQuery,
+  type ChildState,
+  type NativePackageDeps,
+  type SpawnEngine,
+  type SpawnProcess,
+} from "./native-package.ts";
 
 const GiB = 1024 ** 3;
 
@@ -14,7 +27,8 @@ const pids: number[] = [];
 let record: NativeProcess | null;
 
 beforeEach(() => {
-  dataFolder = mkdtempSync(join(os.tmpdir(), "aidm-ui-native-package-"));
+  // A space in the path, as in a Windows user name with a space.
+  dataFolder = mkdtempSync(join(os.tmpdir(), "aidm-ui native-package-"));
   record = null;
   // A package that is already unpacked: its program starts the fake engine.
   const folder = join(dataFolder, "engine-packages", "2.6.0");
@@ -45,9 +59,11 @@ function memorySettings(): Pick<Settings, "get" | "set"> {
 
 function packageWith(overrides: Partial<NativePackageDeps> = {}) {
   const starts: number[] = [];
+  const spawned: Array<{ argv: string[]; windowsHide: boolean }> = [];
   const spawn: SpawnEngine = (argv, options) => {
     const child = spawnEngine(argv, options);
     starts.push(child.pid);
+    spawned.push({ argv, windowsHide: options.windowsHide });
     pids.push(child.pid);
     return child;
   };
@@ -67,7 +83,7 @@ function packageWith(overrides: Partial<NativePackageDeps> = {}) {
     stopGraceMs: 150,
     ...overrides,
   });
-  return { pkg, starts, children };
+  return { pkg, starts, spawned, children };
 }
 
 const startOptions = {
@@ -177,4 +193,153 @@ test("the native API can read imports without mounting or restarting for each fo
   expect((await pkg.start({ ...startOptions, importFolders: [] })).ok).toBe(true);
   const config = JSON.parse(readFileSync(join(dataFolder, "engine-config", "native-2.6.0.json"), "utf8"));
   expect(config.imagesRoot).toBe("/");
+});
+
+// The Windows ways, with the platform set to Windows on any host. The program is the fake engine under the Windows name.
+
+function windowsProgram(): string {
+  const program = join(dataFolder, "engine-packages", "2.6.0", "aidm-api.exe");
+  writeFileSync(program, fakeProgramScript({ reports: "2.6.0" }));
+  chmodSync(program, 0o755);
+  return program;
+}
+
+function windowsWays(commandLines: Map<number, string[]>, options: { taskkillEnds?: boolean } = {}) {
+  return windowsRunner({ commandLine: (pid) => commandLines.get(pid), ...options });
+}
+
+test("on Windows the program is aidm-api.exe, started with its console hidden, and elsewhere aidm-api, with no such option", async () => {
+  const program = windowsProgram();
+  const windows = packageWith({ platform: "win32", runner: windowsWays(new Map()) });
+  expect((await windows.pkg.start(startOptions)).ok).toBe(true);
+  expect(windows.spawned).toEqual([{ argv: [program, "--config", join(dataFolder, "engine-config", "native-2.6.0.json")], windowsHide: true }]);
+  expect((await windows.pkg.stop()).ok).toBe(true);
+
+  const linux = packageWith({ platform: "linux" });
+  expect((await linux.pkg.start(startOptions)).ok).toBe(true);
+  expect(linux.spawned.map((entry) => [entry.argv[0], entry.windowsHide])).toEqual([[join(dataFolder, "engine-packages", "2.6.0", "aidm-api"), false]]);
+});
+
+test("on Windows a folder with only a program without the .exe name is not an installed package", async () => {
+  const { pkg } = packageWith({ platform: "win32", runner: windowsWays(new Map()) });
+  expect(pkg.isInstalled()).toBe(false);
+  expect(await pkg.start(startOptions)).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { reason: "not_unpacked" } } });
+  windowsProgram();
+  expect(pkg.isInstalled()).toBe(true);
+});
+
+test("the program is started detached, with no input, its output in the file, and the hidden console option handed to the spawn", () => {
+  const given: Array<Parameters<SpawnProcess>> = [];
+  const spawn = engineSpawner((argv, options) => {
+    given.push([argv, options]);
+    return { pid: 4242, exited: new Promise<number>(() => {}), unref: () => {} };
+  });
+  mkdirSync(join(dataFolder, "logs"), { recursive: true });
+  const outputFile = join(dataFolder, "logs", "native-engine.out");
+  spawn(["aidm-api.exe", "--config", "c.json"], { cwd: dataFolder, outputFile, windowsHide: true });
+  spawn(["aidm-api", "--config", "c.json"], { cwd: dataFolder, outputFile, windowsHide: false });
+  expect(given.map(([argv, options]) => ({ argv, ...options, stdout: typeof options.stdout, stderr: typeof options.stderr }))).toEqual([
+    { argv: ["aidm-api.exe", "--config", "c.json"], cwd: dataFolder, stdin: "ignore", stdout: "number", stderr: "number", detached: true, windowsHide: true },
+    { argv: ["aidm-api", "--config", "c.json"], cwd: dataFolder, stdin: "ignore", stdout: "number", stderr: "number", detached: true, windowsHide: false },
+  ]);
+  expect(given[0]?.[1].stdout).toBe(given[0]?.[1].stderr as number);
+});
+
+for (const platform of ["linux", "darwin", "win32"] as const) {
+  test(`on ${platform} the config file tells the task API to listen on this computer only`, async () => {
+    if (platform === "win32") windowsProgram();
+    const { pkg } = packageWith({ platform, runner: platform === "win32" ? windowsWays(new Map()) : systemRunner() });
+    const started = await pkg.start(startOptions);
+    expect(started.ok && started.value.address).toStartWith("http://127.0.0.1:");
+    expect(JSON.parse(readFileSync(join(dataFolder, "engine-config", "native-2.6.0.json"), "utf8"))).toEqual({
+      token: startOptions.token,
+      host: "127.0.0.1",
+      port: 0,
+      parallelQueueProcessing: 1,
+      odx_path: join(dataFolder, "engine-packages", "2.6.0", "engine"),
+    });
+  });
+}
+
+/** A program that is running, but that this run did not start, as after a restart of aidm-ui. */
+function runningProgram(): number {
+  const child = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+  child.unref();
+  pids.push(child.pid);
+  return child.pid;
+}
+
+test("on Windows a program whose command line names our config file, quoted for its space, is ours: it is followed, then ended with taskkill and its tree", async () => {
+  windowsProgram();
+  const pid = runningProgram();
+  const config = engineConfigFile(dataFolder, "2.6.0");
+  expect(config).toContain(" ");
+  const runner = windowsWays(new Map([[pid, [join(dataFolder, "engine-packages", "2.6.0", "aidm-api.exe"), "--config", config, "--test"]]]));
+  const signals: number[] = [];
+  const { pkg } = packageWith({ platform: "win32", runner, sendSignal: (target) => signals.push(target) });
+  record = { pid, port: 3000, version: "2.6.0" };
+
+  expect(await pkg.status()).toEqual({ ok: true, value: { state: "running", exitCode: null } });
+  expect(runner.calls).toEqual([{ argv: windowsCommandLineQuery(pid), timeoutMs: 15_000 }]);
+
+  expect((await pkg.stop()).ok).toBe(true);
+  expect(runner.calls.filter((call) => call.argv[0] === "taskkill")).toEqual([{ argv: ["taskkill", "/PID", String(pid), "/T", "/F"], timeoutMs: 15_000 }]);
+  // No signal: Windows has none that ends a tree.
+  expect(signals).toEqual([]);
+  expect(alive(pid)).toBe(false);
+  expect(record).toBeNull();
+});
+
+test("on Windows a program that names another config file, or whose command line cannot be read, is not ours: it is left alone and forgotten", async () => {
+  windowsProgram();
+  const other = runningProgram();
+  const unreadable = runningProgram();
+  const runner = windowsWays(new Map([[other, ["C:\\aidm\\aidm-api.exe", "--config", engineConfigFile(dataFolder, "2.5.0")]]]));
+  const { pkg } = packageWith({ platform: "win32", runner });
+
+  for (const pid of [other, unreadable]) {
+    record = { pid, port: 3000, version: "2.6.0" };
+    expect(await pkg.status()).toEqual({ ok: true, value: { state: "stopped", exitCode: null } });
+    expect((await pkg.stop()).ok).toBe(true);
+    expect(alive(pid)).toBe(true);
+    expect(record).toBeNull();
+  }
+  expect(runner.calls.filter((call) => call.argv[0] === "taskkill")).toEqual([]);
+});
+
+test("on Windows a program that taskkill does not end stays on record, and no second program is started next to it", async () => {
+  windowsProgram();
+  const runner = windowsWays(new Map(), { taskkillEnds: false });
+  const { pkg, starts } = packageWith({ platform: "win32", runner });
+  expect((await pkg.start(startOptions)).ok).toBe(true);
+  expect(await pkg.stop()).toEqual({ ok: false, error: { code: "runtime.command_failed", data: { operation: "stop", reason: "still_running" } } });
+  expect(await pkg.start(startOptions)).toEqual({ ok: false, error: { code: "runtime.start_failed", data: { reason: "previous_engine_running" } } });
+  expect(starts).toHaveLength(1);
+  expect(runner.calls.filter((call) => call.argv[0] === "taskkill")).toHaveLength(2);
+});
+
+// Command lines Windows printed for a task API that aidm-ui started, and edits of them (test-support/recorded/windows).
+
+const recordedFolder = "C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\aidm-ui";
+const userFolder = "C:\\Users\\Field Operator\\AppData\\Local\\aidm-ui";
+
+test("a recorded Windows command line names our config file, compared without case and with either slash", () => {
+  const line = recordedText("windows", "cim-command-line-engine").trim();
+  const ours = win32.join(recordedFolder, "engine-config", "native-2.7.0.json");
+  expect(usesConfig(line, ours, "win32")).toBe(true);
+  expect(usesConfig(line, ours.toUpperCase(), "win32")).toBe(true);
+  expect(usesConfig(line, ours.replaceAll("\\", "/"), "win32")).toBe(true);
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.6.0.json"), "win32")).toBe(false);
+});
+
+test("a Windows command line with the paths quoted for a space in the user name names our config file", () => {
+  const line = recordedText("windows", "cim-command-line-space").trim();
+  expect(usesConfig(line, win32.join(userFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(true);
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(false);
+});
+
+test("a Windows command line that names the config file of another version is not ours", () => {
+  const line = recordedText("windows", "cim-command-line-other-config").trim();
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.7.0.json"), "win32")).toBe(false);
+  expect(usesConfig(line, win32.join(recordedFolder, "engine-config", "native-2.6.1.json"), "win32")).toBe(true);
 });

@@ -1,5 +1,6 @@
 // A native engine package for tests: a tar.gz with the layout of the real
-// archives (one folder holding the executable `aidm-api`), whose executable
+// archives (one folder holding the executable `aidm-api`, or `aidm-api.exe` for
+// Windows), whose executable
 // starts the fake native engine, and the manifest entry that names it.
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -59,14 +60,16 @@ export async function buildNativeArchive(options: {
   badInfo?: boolean;
   /** A package that holds no program. */
   omitExecutable?: boolean;
+  /** The program's name: `aidm-api.exe` for a Windows package. Default `aidm-api`. */
+  program?: string;
 }): Promise<TestArchive> {
-  const platform = "linux-x64";
+  const platform = options.program === "aidm-api.exe" ? "windows-x64" : "linux-x64";
   const folder = `aidm-api-${options.version}-${platform}`;
   const work = mkdtempSync(join(os.tmpdir(), "aidm-ui-archive-"));
   try {
     mkdirSync(join(work, folder, "engine"), { recursive: true });
     writeFileSync(join(work, folder, "engine", "README"), "A stand-in for the engine.\n");
-    const executable = join(work, folder, "aidm-api");
+    const executable = join(work, folder, options.program ?? "aidm-api");
     if (options.omitExecutable !== true) {
       writeFileSync(executable, fakeProgramScript({ ...options, reports: options.reports ?? options.version }));
       chmodSync(executable, 0o755);

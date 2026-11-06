@@ -20,7 +20,7 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs";
-import { parse, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
+import { parse, dirname, isAbsolute, join, relative, resolve as resolvePath, sep, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
 import type { InstallProgressView, VariantId } from "../../shared/api-types.ts";
@@ -28,14 +28,19 @@ import { downloadVerified } from "../downloads/downloader.ts";
 import type { FreeBytes } from "../machine/disk.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN } from "../machine/thresholds.ts";
 import type { ManifestVariant } from "../manifest/schema.ts";
-import { lineSplitter, type CommandRunner } from "../process/command-runner.ts";
+import { DEFAULT_COMMAND_TIMEOUT_MS, lineSplitter, type CommandRunner } from "../process/command-runner.ts";
+import { splitWindowsCommandLine } from "../process/windows-command-line.ts";
 import type { NativeProcess, Settings } from "../settings/settings.ts";
 import { fail, ok, type EnginePackage, type PackageResult, type PackageStartOptions, type PackageStatus } from "./engine-package.ts";
 
 export type NativeVariant = Extract<ManifestVariant, { kind: "native" }>;
 
-/** The task API's program inside a package folder. */
-export const EXECUTABLE_NAME = "aidm-api";
+/** The task API's program inside a package folder, on this system. */
+export function executableName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "aidm-api.exe" : "aidm-api";
+}
+/** The task API listens on this address only, so nothing else on the network reaches it. */
+export const ENGINE_HOST = "127.0.0.1";
 /**
  * Where the engine sits inside a package folder, written to the task API's
  * config file as odx_path. No native engine build exists yet
@@ -76,7 +81,13 @@ export interface SpawnedEngine {
   exited: Promise<number>;
 }
 
-export type SpawnEngine = (argv: string[], options: { cwd: string; outputFile: string }) => SpawnedEngine;
+export type SpawnEngine = (argv: string[], options: { cwd: string; outputFile: string; windowsHide: boolean }) => SpawnedEngine;
+
+/** The part of Bun.spawn that starts the engine; a test records what it is given. */
+export type SpawnProcess = (
+  argv: string[],
+  options: { cwd: string; stdin: "ignore"; stdout: number; stderr: number; detached: true; windowsHide: boolean },
+) => { pid: number; exited: Promise<number>; unref(): void };
 
 /**
  * Starts the program detached, in a session of its own, so that it goes on
@@ -85,22 +96,28 @@ export type SpawnEngine = (argv: string[], options: { cwd: string; outputFile: s
  * The file is opened for appending, so that aidm-ui can empty it while the
  * engine writes on, without leaving a hole behind the engine's position.
  */
-export const spawnEngine: SpawnEngine = (argv, options) => {
-  const output = openSync(options.outputFile, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_APPEND, 0o600);
-  try {
-    const child = Bun.spawn(argv, {
-      cwd: options.cwd,
-      stdin: "ignore",
-      stdout: output,
-      stderr: output,
-      detached: true,
-    });
-    child.unref();
-    return { pid: child.pid, exited: child.exited };
-  } finally {
-    closeSync(output);
-  }
-};
+export function engineSpawner(spawn: SpawnProcess = (argv, options) => Bun.spawn(argv, options)): SpawnEngine {
+  return (argv, options) => {
+    const output = openSync(options.outputFile, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_APPEND, 0o600);
+    try {
+      const child = spawn(argv, {
+        cwd: options.cwd,
+        stdin: "ignore",
+        stdout: output,
+        stderr: output,
+        detached: true,
+        // On Windows the task API would otherwise open a console window of its own.
+        windowsHide: options.windowsHide,
+      });
+      child.unref();
+      return { pid: child.pid, exited: child.exited };
+    } finally {
+      closeSync(output);
+    }
+  };
+}
+
+export const spawnEngine: SpawnEngine = engineSpawner();
 
 /** What a caller may change about how packages of this kind run; tests use these. */
 export interface NativeOptions {
@@ -118,6 +135,8 @@ export interface NativeOptions {
   wrapWatchMs?: number;
   /** The size at which the engine's output file is copied and emptied. */
   outputRotateBytes?: number;
+  /** The system whose ways the package follows (program name, ownership check, stop). Default: this one. Tests set another. */
+  platform?: NodeJS.Platform;
 }
 
 export interface NativePackageDeps extends NativeOptions {
@@ -151,10 +170,10 @@ function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
 }
 
-function isExecutableFile(path: string): boolean {
+function isExecutableFile(path: string, platform: NodeJS.Platform): boolean {
   try {
     const stats = statSync(path);
-    return stats.isFile() && (process.platform === "win32" || (stats.mode & 0o111) !== 0);
+    return stats.isFile() && (platform === "win32" || (stats.mode & 0o111) !== 0);
   } catch {
     return false;
   }
@@ -171,8 +190,24 @@ export function engineConfigFile(dataFolder: string, version: string): string {
 }
 
 /** True when the command line starts the task API with this config file. */
-function usesConfig(commandLine: string, configFile: string): boolean {
-  return ` ${commandLine.trim()} `.includes(` --config ${configFile} `);
+export function usesConfig(commandLine: string, configFile: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") return ` ${commandLine.trim()} `.includes(` --config ${configFile} `);
+  // Windows keeps the command line as one string, quoted by its own rules, and its paths ignore case and take either slash.
+  const same = (path: string) => win32.normalize(path).toLowerCase();
+  const args = splitWindowsCommandLine(commandLine);
+  return args.some((arg, index) => arg === "--config" && args[index + 1] !== undefined && same(args[index + 1] as string) === same(configFile));
+}
+
+/** Asks Windows for the command line of a process. It prints nothing for a process that is not there or that this user may not read. */
+export function windowsCommandLineQuery(pid: number): string[] {
+  return [
+    "powershell",
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`,
+  ];
 }
 
 function inside(folder: string, path: string): boolean {
@@ -244,11 +279,13 @@ export class NativePackage implements EnginePackage {
   private readonly packagesFolder: string;
   private readonly outputFile: string;
   private readonly configFile: string;
+  private readonly platform: NodeJS.Platform;
 
   constructor(private readonly deps: NativePackageDeps) {
+    this.platform = deps.platform ?? process.platform;
     this.packagesFolder = join(deps.dataFolder, "engine-packages");
     this.directory = join(this.packagesFolder, deps.version);
-    this.executable = join(this.directory, EXECUTABLE_NAME);
+    this.executable = join(this.directory, executableName(this.platform));
     this.enginePath = join(this.directory, ENGINE_PATH_IN_PACKAGE);
     this.outputFile = join(deps.dataFolder, "logs", "native-engine.out");
     this.configFile = engineConfigFile(deps.dataFolder, deps.version);
@@ -256,7 +293,7 @@ export class NativePackage implements EnginePackage {
 
   /** True when this version is unpacked and complete. A folder is only ever put in place whole. */
   isInstalled(): boolean {
-    return isExecutableFile(this.executable);
+    return isExecutableFile(this.executable, this.platform);
   }
 
   async preflight(): Promise<PackageResult<void>> {
@@ -372,7 +409,7 @@ export class NativePackage implements EnginePackage {
       const entries = readdirSync(temporary);
       const only = entries.length === 1 ? join(temporary, entries[0] as string) : null;
       const root = only !== null && lstatSync(only).isDirectory() ? only : temporary;
-      const program = join(root, EXECUTABLE_NAME);
+      const program = join(root, executableName(this.platform));
       let programStats: ReturnType<typeof lstatSync>;
       try {
         programStats = lstatSync(program);
@@ -445,7 +482,7 @@ export class NativePackage implements EnginePackage {
       }
     }
     deps.settings.set("local.native", { pid: started.pid, port: options.hostPort, version: deps.version });
-    return ok({ address: `http://127.0.0.1:${options.hostPort}`, memoryCapEnforced });
+    return ok({ address: `http://${ENGINE_HOST}:${options.hostPort}`, memoryCapEnforced });
   }
 
   /** The options the task API reads with --config. Written whole and moved into place, readable by this user only. */
@@ -453,7 +490,8 @@ export class NativePackage implements EnginePackage {
     mkdirSync(dirname(this.configFile), { recursive: true, mode: 0o700 });
     const temporary = `${this.configFile}.new`;
     rmSync(temporary, { force: true });
-    const options = { token, port, parallelQueueProcessing: 1, odx_path: this.enginePath, ...(imagesRoot === undefined ? {} : { imagesRoot }) };
+    // A task API older than 2.8.0 has no host option and ignores the key.
+    const options = { token, host: ENGINE_HOST, port, parallelQueueProcessing: 1, odx_path: this.enginePath, ...(imagesRoot === undefined ? {} : { imagesRoot }) };
     writeFileSync(temporary, `${JSON.stringify(options)}\n`, { mode: 0o600 });
     renameSync(temporary, this.configFile);
   }
@@ -462,7 +500,7 @@ export class NativePackage implements EnginePackage {
   private launch(argv: string[], cwd: string): SpawnedEngine {
     const { deps } = this;
     // The API keeps its data and temporary folders relative to where it runs.
-    const child = (deps.spawn ?? spawnEngine)(argv, { cwd, outputFile: this.outputFile });
+    const child = (deps.spawn ?? spawnEngine)(argv, { cwd, outputFile: this.outputFile, windowsHide: this.platform === "win32" });
     const state: ChildState = { exitCode: null };
     deps.children.set(child.pid, state);
     void child.exited.then(
@@ -505,14 +543,18 @@ export class NativePackage implements EnginePackage {
     // Just after the start the command line may still be that of aidm-ui itself, so what this run started is not asked.
     if (child !== undefined && child.exitCode === null) return true;
     const line = await this.commandLine(record.pid);
-    return line !== null && usesConfig(line, engineConfigFile(this.deps.dataFolder, record.version));
+    return line !== null && usesConfig(line, engineConfigFile(this.deps.dataFolder, record.version), this.platform);
   }
 
   /** The command line of a process, or null when it cannot be read. */
   private async commandLine(pid: number): Promise<string | null> {
     try {
-      if (process.platform === "linux") {
+      if (this.platform === "linux") {
         return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ");
+      }
+      if (this.platform === "win32") {
+        const shown = await this.deps.runner.run(windowsCommandLineQuery(pid), { timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+        return shown.exitCode === 0 && shown.stdout.trim() !== "" ? shown.stdout.trim() : null;
       }
       const shown = await this.deps.runner.run(["ps", "-o", "args=", "-p", String(pid)]);
       return shown.exitCode === 0 ? shown.stdout : null;
@@ -557,9 +599,18 @@ export class NativePackage implements EnginePackage {
    * there after the grace. The command line is looked at again before SIGKILL:
    * the program may be gone and its number given to another. True when the
    * program is gone.
+   *
+   * On Windows, taskkill ends the program and every process it started, by
+   * force. The task API has no clean stop there, and from 2.8.0 it writes its
+   * task list on every change, so nothing is lost.
    */
   private async end(record: NativeProcess): Promise<boolean> {
     const grace = this.deps.stopGraceMs ?? STOP_GRACE_MS;
+    if (this.platform === "win32") {
+      const killed = await this.deps.runner.run(["taskkill", "/PID", String(record.pid), "/T", "/F"], { timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+      if (killed.exitCode !== 0) this.deps.log(`taskkill ended with exit ${killed.exitCode}: ${`${killed.stdout} ${killed.stderr}`.trim().slice(0, 300)}`);
+      return this.waitForExit(record, grace);
+    }
     this.signal(record.pid, "SIGTERM");
     if (await this.waitForExit(record, grace)) return true;
     if (!(await this.isOurs(record))) return true;
@@ -572,8 +623,7 @@ export class NativePackage implements EnginePackage {
     const send = this.deps.sendSignal ?? ((target: number, name: NodeJS.Signals) => process.kill(target, name));
     try {
       // The program leads a session of its own, so the group is the program and what it started.
-      if (process.platform === "win32") send(pid, signal);
-      else send(-pid, signal);
+      send(-pid, signal);
     } catch {
       try {
         send(pid, signal);

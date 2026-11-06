@@ -379,7 +379,9 @@ function endNativeEngine(settings: Settings): void {
   const record = settings.get("local.native");
   if (record === null) return;
   try {
-    process.kill(-record.pid, "SIGKILL");
+    // Windows has no process groups to signal; taskkill ends the tree.
+    if (process.platform === "win32") Bun.spawnSync(["taskkill", "/PID", String(record.pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" });
+    else process.kill(-record.pid, "SIGKILL");
   } catch {
     // Already gone.
   }
