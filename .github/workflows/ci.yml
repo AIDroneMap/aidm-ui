@@ -103,3 +103,37 @@ jobs:
       - run: bun test ./server/packages/real-task-api.test.ts
         env:
           AIDM_REAL_TASK_API_VERSION: "2.7.0"
+
+  real-task-api-windows:
+    name: Real task API on Windows through the native package
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Match scripts/ci/install-bun.sh, with the Windows archive's published SHA-256.
+      - name: Install Bun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bunVersion = "1.4.4"
+          $asset = "bun-windows-x64"
+          $sha256 = "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5"
+          $installDir = Join-Path $env:RUNNER_TEMP "bun-$bunVersion"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          $archive = Join-Path $installDir "bun.zip"
+          Invoke-WebRequest -Uri "https://github.com/oven-sh/bun/releases/download/bun-v$bunVersion/$asset.zip" -OutFile $archive
+          if ((Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant() -ne $sha256) {
+            throw "Bun archive SHA-256 does not match the published checksum."
+          }
+          Expand-Archive -Path $archive -DestinationPath $installDir -Force
+          $bunDir = Join-Path $installDir $asset
+          $bunDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $bunDir "bun.exe") --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: bun install --frozen-lockfile
+      - name: Install, run, reattach and stop the real task API
+        run: bun test ./server/packages/real-task-api.test.ts
+        env:
+          AIDM_REAL_TASK_API_VERSION: "2.7.0"
