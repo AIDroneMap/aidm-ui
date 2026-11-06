@@ -10,8 +10,9 @@ import { dirname, join } from "node:path";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
 import { folderSnapshot } from "../../test-support/import-folder.ts";
+import { recordedMachine, windowsInputs } from "../../test-support/recorded-machine.ts";
 import { TaskClient } from "../task-api/task-client.ts";
-import type { ProjectView, RunView } from "../../shared/api-types.ts";
+import type { ProjectView, RefreshView, RunView } from "../../shared/api-types.ts";
 import type { RunReviewView } from "../../shared/run-review.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { generateSigner, sampleManifest, signedRelease, type TestSigner } from "../../test-support/signed-manifest.ts";
@@ -49,6 +50,13 @@ const modelAcceptance = process.env.AIDM_REAL_TASK_API_MODEL_ACCEPTANCE === "1";
 const windows = process.platform === "win32";
 const archiveName = windows ? `aidm-api-${version}-windows-x64.zip` : `aidm-api-${version}-linux-x64.tar.gz`;
 const releaseUrl = `https://github.com/AIDroneMap/aidm-api/releases/download/v${version}`;
+
+function realTaskApiMachine(onWindows: boolean) {
+  return {
+    localMachine: { platform: onWindows ? "win32" : "linux", arch: "x64", totalMemory: 32 * 1024 ** 3, cpuCount: 8 },
+    machine: onWindows ? recordedMachine(windowsInputs()) : undefined,
+  };
+}
 
 /** The checksum the release publishes for the archive, over HTTPS. */
 async function publishedChecksum(): Promise<string> {
@@ -188,6 +196,30 @@ afterAll(async () => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
+test("the real task API's Windows machine offers the Windows CPU package", async () => {
+  const manifest = sampleManifest();
+  manifest.variants = { "windows-x64": manifest.variants["windows-x64"]! };
+  const { bytes, signature } = await signedRelease(signer, manifest);
+  files.files.set("/machine/releases/download/v2.6.0/manifest.json", bytes);
+  files.files.set("/machine/releases/download/v2.6.0/manifest.json.sig", signature);
+  files.redirects.set("/machine/releases/latest/download/manifest.json", "/machine/releases/download/v2.6.0/manifest.json");
+  const h = openHarness({
+    ...realTaskApiMachine(true),
+    runtimes: {},
+    manifest: { releasesUrl: files.url("/machine/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
+  });
+  try {
+    const response = await fetch(`${h.base}/api/packages/refresh`, { method: "POST" });
+    expect(response.status).toBe(200);
+    const refreshed = await response.json() as RefreshView;
+    expect(refreshed.result.ok).toBe(true);
+    expect(refreshed.view.reason).toBeNull();
+    expect(refreshed.view.offer).toMatchObject({ variant: "windows-x64", kind: "native" });
+  } finally {
+    await h.stop();
+  }
+});
+
 real(
   "the real task API in test mode is installed as a native package and runs the sample job",
   async () => {
@@ -260,7 +292,7 @@ real(
     mkdirSync(dataFolder);
     const harnessOptions: Parameters<typeof openHarness>[0] = {
       dataFolder,
-      localMachine: { platform: windows ? "win32" : "linux", arch: "x64", totalMemory: 32 * 1024 ** 3, cpuCount: 8 },
+      ...realTaskApiMachine(windows),
       assets,
       enginePollMs: 250,
       runPollMs: 250,
