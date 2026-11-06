@@ -36,6 +36,10 @@ export function sampleManifest(overrides: Partial<Manifest> = {}): Manifest {
       "linux-amd64-cpu": { kind: "container", image: "ghcr.io/aidronemap/aidm-api", digest: DIGEST, size: 111, gpu: false },
       "linux-arm64-cpu": { kind: "container", image: "ghcr.io/aidronemap/aidm-api", digest: DIGEST, size: 222, gpu: false },
       "windows-x64": { kind: "native", url: "https://example.org/aidm-api.zip", size: 333, sha256: "cd".repeat(32), gpu: false },
+      "windows-x64-cuda": {
+        kind: "native", url: "https://example.org/aidm-api-cuda.tar.gz", size: 444, sha256: "ef".repeat(32), gpu: true,
+        minimumDriverVersion: "576.57",
+      },
     },
     ...overrides,
   };
