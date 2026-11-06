@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, type Stats } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync, type Stats } from "node:fs";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { applyMigrations, migrations } from "../db/migrations.ts";
@@ -141,7 +141,7 @@ async function shortNamed(temporary: string): Promise<string> {
 /** The system's answers, with the photo's `lstat` and `fstat` replaced by the recorded Windows ones, in the order given. */
 function recordedIdentity(lstats: RecordedStats[], fstat: RecordedStats): RunFiles {
   let calls = 0;
-  return { realpath, lstat: async () => stats(lstats[Math.min(calls++, lstats.length - 1)]!), fstat: async () => stats(fstat) };
+  return { realpath: path => realpathSync.native(path), lstat: async () => stats(lstats[Math.min(calls++, lstats.length - 1)]!), fstat: async () => stats(fstat) };
 }
 
 const sent = () => {
@@ -158,7 +158,7 @@ test("the recording is a short 8.3 name that realpath answers with the long name
 
 test("photos in a data folder under a short 8.3 name reach the engine, with lstat and fstat as Windows reports them", async () => {
   await fixture(async ({ db, root, id, inputs }) => {
-    expect(await realpath(root)).not.toBe(root);
+    expect(realpathSync.native(root)).not.toBe(root);
     await upload(db, root, id, "a.jpg", "photo", "photo");
     const { texts, client } = sent();
     expect(await inputs.copyToTask(id, await inputs.snapshot(id), client as never, "task")).toEqual({ ok: true, value: undefined });
@@ -212,4 +212,24 @@ test("a files folder replaced by a link to another folder is refused, as realpat
     expect((await lstat(files)).isSymbolicLink()).toBe(true);
     await expect(inputs.copyToTask(id, snapshot, sent().client as never, "task")).rejects.toBeInstanceOf(RunInputsChanged);
   }, { root: shortNamed });
+});
+
+test("a data folder replaced by a link after Review is refused, under its own name and under a short 8.3 name", async () => {
+  for (const place of [undefined, shortNamed]) {
+    await fixture(async ({ db, root, id, inputs }) => {
+      await upload(db, root, id, "a.jpg", "photo", "photo");
+      const snapshot = await inputs.snapshot(id);
+      const moved = join(root, "..", "moved");
+      await rename(root, moved); await symlink(moved, root, "junction");
+      await expect(inputs.copyToTask(id, snapshot, sent().client as never, "task")).rejects.toBeInstanceOf(RunInputsChanged);
+    }, { root: place });
+  }
+});
+
+test("nothing is sent when the data folder could not be read when the server started", async () => {
+  await fixture(async ({ db, root, id, imports }) => {
+    await upload(db, root, id, "a.jpg", "photo", "photo");
+    const inputs = new RunInputs(db, root, imports, { realpath: () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); }, lstat, fstat: file => file.stat() });
+    await expect(inputs.copyToTask(id, await inputs.snapshot(id), sent().client as never, "task")).rejects.toBeInstanceOf(RunInputsChanged);
+  });
 });
