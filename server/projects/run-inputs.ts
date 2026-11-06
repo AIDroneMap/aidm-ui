@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { ImportStore, ImportUnavailable, type SavedImport } from "./import-store.ts";
@@ -23,6 +23,14 @@ type UploadEntry = { name: string; kind: string; sha256: string; size: number; s
 export type SavedRunInputs = { snapshot: RunInputSnapshot; importMode?: "copy" | "in-place" } & ({ wayIn: "upload"; entries: UploadEntry[] } | { wayIn: "import"; imported: SavedImport });
 const success: TaskApiResult<void> = { ok: true, value: undefined };
 
+/** The answers the uploaded-photo checks rest on. Tests replay what Windows reported. */
+export type RunFiles = {
+  realpath(path: string): Promise<string>;
+  lstat(path: string): Promise<Stats>;
+  fstat(file: FileHandle): Promise<Stats>;
+};
+const systemFiles: RunFiles = { realpath, lstat, fstat: file => file.stat() };
+
 function abort(signal?: AbortSignal): void { signal?.throwIfAborted(); }
 function stem(name: string): string { return name.slice(0, -extname(name).length); }
 function preferred(left: UploadEntry, right: UploadEntry): number {
@@ -30,7 +38,20 @@ function preferred(left: UploadEntry, right: UploadEntry): number {
 }
 
 export class RunInputs {
-  constructor(private readonly db: Database, private readonly folder: string, private readonly imports: ImportStore) {}
+  private realFolder?: string;
+
+  constructor(private readonly db: Database, private readonly folder: string, private readonly imports: ImportStore, private readonly files: RunFiles = systemFiles) {}
+
+  /**
+   * The project's files folder as `realpath` spells it, from the data folder's real path read once. On Windows
+   * `realpath` gives the long name of a folder reached by its short 8.3 name, such as `LONGFO~1`, so the folder
+   * is compared with that spelling and not with the one it was given. A link or junction inside the data folder
+   * still changes the answer of `realpath` and is refused.
+   */
+  private async realFilesFolder(id: number): Promise<string> {
+    this.realFolder ??= await this.files.realpath(this.folder);
+    return join(this.realFolder, "projects", String(id), "files");
+  }
 
   private uploads(id: number): UploadEntry[] {
     return this.db.query(`SELECT a.name,a.kind,a.sha256,f.size,f.storage_id AS storageId,
@@ -143,15 +164,17 @@ export class RunInputs {
       const path = join(directory, entry.storageId);
       let file: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        if (await realpath(directory) !== directory || (await lstat(path)).isSymbolicLink()) throw new RunInputsChanged();
+        const real = await this.realFilesFolder(id);
+        if (await this.files.realpath(directory) !== real || (await this.files.lstat(path)).isSymbolicLink()) throw new RunInputsChanged();
         file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         await this.verify(file, entry, signal);
         const result = await client.uploadImage(uuid, name, Bun.file(file.fd), signal);
         abort(signal);
         await this.verify(file, entry, signal);
-        const current = await lstat(path);
-        const opened = await file.stat();
-        if (!current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino || await realpath(directory) !== directory) throw new RunInputsChanged();
+        // Windows has no O_NOFOLLOW and opens the target of a link, so this comparison is what refuses a link put in the photo's place.
+        const current = await this.files.lstat(path);
+        const opened = await this.files.fstat(file);
+        if (!current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino || await this.files.realpath(directory) !== real) throw new RunInputsChanged();
         await check();
         if (!result.ok) return result;
         if (entry.kind === "photo") onProgress?.(++done, snapshot.photoCount);

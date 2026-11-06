@@ -1,0 +1,53 @@
+{
+  "folder": "C:\\work\\LONGFO~1\\probe-0iJSvR\\projects\\1\\files",
+  "realpath": "C:\\work\\long folder name for probe\\probe-0iJSvR\\projects\\1\\files",
+  "realpathSync": "C:\\work\\LONGFO~1\\probe-0iJSvR\\projects\\1\\files",
+  "realpathSyncNative": "C:\\work\\long folder name for probe\\probe-0iJSvR\\projects\\1\\files",
+  "photo": {
+    "lstat": {
+      "dev": 1234567890,
+      "ino": 2814749767396831,
+      "mode": 33206,
+      "size": 5,
+      "isFile": true,
+      "isSymbolicLink": false
+    },
+    "fstat": {
+      "dev": 1234567890,
+      "ino": 2814749767396831,
+      "mode": 33206,
+      "size": 5,
+      "isFile": true,
+      "isSymbolicLink": false
+    }
+  },
+  "link": {
+    "lstat": {
+      "dev": 1234567890,
+      "ino": 2814749767396834,
+      "mode": 41398,
+      "size": 43,
+      "isFile": false,
+      "isSymbolicLink": true
+    },
+    "fstat": {
+      "dev": 1234567890,
+      "ino": 2814749767396833,
+      "mode": 33206,
+      "size": 9,
+      "isFile": true,
+      "isSymbolicLink": false
+    }
+  },
+  "junction": {
+    "lstat": {
+      "dev": 1234567890,
+      "ino": 2814749767396837,
+      "mode": 41398,
+      "size": 41,
+      "isFile": false,
+      "isSymbolicLink": true
+    },
+    "realpath": "C:\\work\\long folder name for probe\\probe-0iJSvR\\other-files"
+  }
+}

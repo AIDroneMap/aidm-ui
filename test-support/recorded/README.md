@@ -85,6 +85,16 @@ session ran as the system account, so that folder is the system profile's.
 |---|---|---|
 | `windows/cim-command-line-engine.txt` | the `CommandLine` of the task API's `Win32_Process`, read with `Get-CimInstance` from PowerShell, as the ownership check asks for it | Nothing. No argument has a space, so Windows shows none in quotes. |
 
+`windows/file-identity.json` comes from a second Windows machine of the same kind (Windows Server 2022, 8.3 names on for drive `C:`) on 6 November 2026, with Bun 1.4.4. A script made a data folder's `projects\1\files` folder and a five-byte photo in it, under a folder reached by its short 8.3 name `LONGFO~1` (long name `long folder name for probe`), and recorded what Bun answered for the checks of an upload in `server/projects/run-inputs.ts`:
+
+| Key | Source | What changed |
+|---|---|---|
+| `folder` | the files folder as the script named it, through the short name | Nothing. |
+| `realpath`, `realpathSync`, `realpathSyncNative` | `realpath` from `node:fs/promises`, `realpathSync` and `realpathSync.native` of that folder. The first and the last answer the long name; `realpathSync` keeps the short one. | Nothing. |
+| `photo` | `lstat` of the photo and `fstat` of the handle `open` gave for it | Only `dev`, `ino`, `mode`, `size` and the two kinds kept. `dev`, the volume serial number, set to 1234567890 here and below. |
+| `link` | `lstat` of a symbolic link to another file put next to the photo, and `fstat` of the handle that `open` with the upload's flags gave for the link. Windows has no `O_NOFOLLOW`, so that handle is the target's. | As for `photo`. |
+| `junction` | `lstat` of the files folder after it was moved away and replaced by a junction to another folder, and `realpath` of the files folder then: the junction's target. | As for `photo`. |
+
 ## Edited
 
 Marked edited because no machine produced them as they stand.

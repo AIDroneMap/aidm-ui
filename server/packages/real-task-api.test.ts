@@ -440,9 +440,48 @@ real(
     const projectAfter = await (await fetch(`${h.base}/api/projects/${run.projectId}`)).json() as ProjectView;
     expect(projectAfter.resultsBytes).toBe(0);
     expect(projectAfter.resultArchives).toEqual([]);
-    // On Windows the test proves the start path of a native package: the install, the sample job, the restart and the stop.
-    // The other ways in, the presets and the imports are proven on Linux.
-    if (windows) return restartAndSwitchOff();
+    /** Three small files with the names of images, uploaded to a project as the Photos section sends them. */
+    const uploadPhotos = async (projectId: number) => {
+      for (let index = 0; index < 3; index++) {
+        const photo = `test image ${index}\n`.repeat(50);
+        const sha256 = new Bun.CryptoHasher("sha256").update(photo).digest("hex");
+        const upload = await fetch(`${h.base}/api/projects/${projectId}/uploads`, {
+          method: "POST", body: JSON.stringify({ name: `photo-${index}.jpg`, size: Buffer.byteLength(photo), sha256 }),
+        });
+        expect(upload.status).toBe(201);
+        const session = await upload.json() as { id: string };
+        const path = `${h.base}/api/projects/${projectId}/uploads/${session.id}`;
+        expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": sha256 }, body: photo })).status).toBe(204);
+        expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
+      }
+      await eventually(async () => {
+        const facts = await (await fetch(`${h.base}/api/projects/${projectId}/photo-facts`)).json() as { photoCount: number; pendingMetadata: number };
+        return facts.photoCount === 3 && facts.pendingMetadata === 0;
+      });
+    };
+
+    // On Windows the test proves the start path of a native package: the install, the sample job, a project run from
+    // uploaded photos, the restart and the stop. The other ways in, the presets and the imports are proven on Linux.
+    if (windows) {
+      const created = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Uploaded field", notes: "" }) });
+      expect(created.status).toBe(201);
+      const projectId = (await created.json() as ProjectView).id;
+      await uploadPhotos(projectId);
+      const reviewed = await fetch(`${h.base}/api/projects/${projectId}/run-review?engineId=${engineId}&preset=quick-map&offset=0`);
+      expect(reviewed.status).toBe(200);
+      const review = await reviewed.json() as RunReviewView;
+      expect(review).toMatchObject({ wayIn: "upload", photos: { included: 3, excluded: 0, total: 3 }, blocked: null });
+      const begun = await fetch(`${h.base}/api/projects/${projectId}/runs`, { method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", name: "Quick map field", revision: review.revision }) });
+      expect(begun.status).toBe(202);
+      const projectRun = await begun.json() as RunView;
+      let finished: RunView | undefined;
+      await eventually(async () => {
+        finished = await (await fetch(`${h.base}/api/runs/${projectRun.id}`)).json() as RunView;
+        return finished.resultsAvailable || finished.state === "failed" || finished.results?.state === "failed";
+      }, 240_000);
+      expect(finished).toMatchObject({ state: "completed", resultsAvailable: true, results: { state: "ready" } });
+      return restartAndSwitchOff();
+    }
 
     const linkedProjectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Linked field", notes: "" }) });
     expect(linkedProjectResponse.status).toBe(201);
@@ -486,22 +525,7 @@ real(
     const projectResponse = await fetch(`${h.base}/api/projects`, { method: "POST", body: JSON.stringify({ name: "Uploaded field", notes: "" }) });
     expect(projectResponse.status).toBe(201);
     const uploadedProject = await projectResponse.json() as ProjectView;
-    for (let index = 0; index < 3; index++) {
-      const photo = `test image ${index}\n`.repeat(50);
-      const sha256 = new Bun.CryptoHasher("sha256").update(photo).digest("hex");
-      const upload = await fetch(`${h.base}/api/projects/${uploadedProject.id}/uploads`, {
-        method: "POST", body: JSON.stringify({ name: `photo-${index}.jpg`, size: Buffer.byteLength(photo), sha256 }),
-      });
-      expect(upload.status).toBe(201);
-      const session = await upload.json() as { id: string };
-      const path = `${h.base}/api/projects/${uploadedProject.id}/uploads/${session.id}`;
-      expect((await fetch(`${path}/chunks/0`, { method: "PUT", headers: { "x-chunk-sha256": sha256 }, body: photo })).status).toBe(204);
-      expect((await fetch(`${path}/complete`, { method: "POST" })).status).toBe(200);
-    }
-    await eventually(async () => {
-      const facts = await (await fetch(`${h.base}/api/projects/${uploadedProject.id}/photo-facts`)).json() as { photoCount: number; pendingMetadata: number };
-      return facts.photoCount === 3 && facts.pendingMetadata === 0;
-    });
+    await uploadPhotos(uploadedProject.id);
     const editedSettings = [{ name: "orthophoto-resolution", value: 8 }];
     const reviewResponse = await fetch(`${h.base}/api/projects/${uploadedProject.id}/run-review`, {
       method: "POST", body: JSON.stringify({ engineId, preset: "quick-map", options: editedSettings }),

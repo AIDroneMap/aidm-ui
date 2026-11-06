@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
 import { openHarness, eventually, type Harness } from "../testing/harness.ts";
 import type { RunReviewView } from "../../shared/run-review.ts";
@@ -50,6 +53,36 @@ test("project photos reach the selected engine with reviewed settings and persis
   expect(task.options).toContainEqual({ name: "fast-orthophoto", value: true });
   expect(task.options).not.toContainEqual(expect.objectContaining({ name: "no-gpu" }));
   expect(h.runs.get(run.id)).toMatchObject({ projectId: project, engineId: engine, name: "Field run", preset: "quick-map", wayIn: "upload", sample: false });
+});
+
+test("photos in a data folder reached by a short 8.3 name reach the engine, and a changed photo fails with project_run.photos_changed", async () => {
+  // On Windows realpath answers a short 8.3 name with the long one (test-support/recorded/windows/file-identity.json). A link gives Linux the same two spellings.
+  const temporary = mkdtempSync(join(tmpdir(), "aidm-ui-short-name-"));
+  mkdirSync(join(temporary, "long folder name for probe"));
+  symlinkSync(join(temporary, "long folder name for probe"), join(temporary, "LONGFO~1"));
+  try {
+    await h.stop();
+    h = openHarness({ dataFolder: join(temporary, "LONGFO~1") });
+    project = (await (await request("POST", "/api/projects", { name: "Field", notes: "" })).json() as { id: number }).id;
+    engine = h.engineStore.addRemote({ name: "Chosen engine", address: api.address, token: api.token }).id;
+    await upload("photo.jpg");
+    const first = await (await review()).json() as RunReviewView;
+    const run = await (await start(first)).json() as RunView;
+    await eventually(async () => api.tasks.size === 1 && [...api.tasks.values()][0]!.committed);
+    expect([...api.tasks.values()][0]!.images).toHaveLength(1);
+    expect((await (await request("GET", `/api/runs/${run.id}`)).json() as RunView).problem).toBeNull();
+
+    // A second project, since a project runs one job at a time.
+    project = (await (await request("POST", "/api/projects", { name: "Changed field", notes: "" })).json() as { id: number }).id;
+    await upload("photo.jpg");
+    const files = join(h.dataFolder, "projects", String(project), "files");
+    const [stored] = readdirSync(files);
+    writeFileSync(join(files, stored!), "a synthetic phot0");
+    const changed = await (await start(await (await review()).json() as RunReviewView)).json() as RunView;
+    let view: RunView | undefined;
+    await eventually(async () => (view = await (await request("GET", `/api/runs/${changed.id}`)).json() as RunView).state === "failed");
+    expect(view!.problem?.code).toBe("project_run.photos_changed");
+  } finally { await h.stop(); h = openHarness(); rmSync(temporary, { recursive: true, force: true }); }
 });
 
 test("review blocks above a reported image limit, permits equality, and start rechecks it", async () => {
