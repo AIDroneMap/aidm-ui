@@ -138,6 +138,52 @@ export function describeGpu(
   return { state: "used", reason: null, guideUrl: null };
 }
 
+/** The numbers of a driver version such as "576.57", or null when it is not digits and dots. */
+function driverParts(version: string): number[] | null {
+  return /^\d+(\.\d+)*$/.test(version) ? version.split(".").map(Number) : null;
+}
+
+/**
+ * Whether a driver version is at or above a floor, compared number by number
+ * from the left, so 580.9 is newer than 576.57. A missing number counts as 0.
+ * A version that cannot be read does not meet any floor.
+ */
+export function driverMeetsFloor(version: string, floor: string): boolean {
+  const have = driverParts(version.trim());
+  const need = driverParts(floor);
+  if (have === null || need === null) return false;
+  for (let i = 0; i < Math.max(have.length, need.length); i++) {
+    const difference = (have[i] ?? 0) - (need[i] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+
+/**
+ * Whether Windows gets the CUDA package, and what the operator is told when a
+ * card is there and it does not. The machine check read the driver version;
+ * there is no container tool and no test run after the download. No card
+ * gives no reason: that is the usual case.
+ */
+export function windowsCuda(
+  driverVersion: string | null,
+  options: {
+    forceCpu: boolean;
+    /** Undefined when the manifest has no CUDA package; null when it has one with no driver floor. */
+    minimumDriverVersion: string | null | undefined;
+  },
+): { use: boolean; view: GpuView } {
+  const notUsed = (reason: ApiError | null) => ({ use: false, view: { state: "not_used" as const, reason, guideUrl: null } });
+  if (driverVersion === null) return notUsed(null);
+  if (options.forceCpu) return notUsed({ code: "gpu.forced_cpu", data: {} });
+  const floor = options.minimumDriverVersion;
+  if (floor === undefined) return notUsed(null);
+  if (floor !== null && !driverMeetsFloor(driverVersion, floor)) {
+    return notUsed({ code: "gpu.driver_too_old", data: { driverVersion, minimumDriverVersion: floor } });
+  }
+  return { use: true, view: { state: "used", reason: null, guideUrl: null } };
+}
+
 /** True when checks a and b allow the GPU package and the operator did not rule it out. */
 export function mayUseGpuPackage(precheck: GpuPrecheck | undefined, forceCpu: boolean): boolean {
   return precheck?.state === "ready" && !forceCpu;

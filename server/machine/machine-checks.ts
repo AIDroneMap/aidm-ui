@@ -12,27 +12,42 @@ export interface MachineChecksDeps {
   now: () => number;
 }
 
+/** A machine check's answer and the facts it was made from. */
+export interface CheckedMachine {
+  view: MachineCheckView;
+  facts: MachineFacts;
+}
+
 /**
  * The machine check as the server runs it: one at a time, and a recent answer
  * is reused. Everything that wants to know the state of the computer goes
  * through here, so that a check after the computer changed is seen by all.
  */
 export class MachineChecks {
-  private last: { view: MachineCheckView; at: number } | null = null;
-  private running: Promise<MachineCheckView> | null = null;
+  private last: (CheckedMachine & { at: number }) | null = null;
+  private running: Promise<CheckedMachine> | null = null;
   /** The check that waits for the one in flight to finish. */
-  private queued: Promise<MachineCheckView> | null = null;
+  private queued: Promise<CheckedMachine> | null = null;
 
   constructor(private readonly deps: MachineChecksDeps) {}
 
   /** The last answer while it is fresh, joining a check that is already running. */
-  read(): Promise<MachineCheckView> | MachineCheckView {
-    if (this.last !== null && this.deps.now() - this.last.at <= MACHINE_CHECK_MAX_AGE_MS) return this.last.view;
+  async read(): Promise<MachineCheckView> {
+    return (await this.readWithFacts()).view;
+  }
+
+  /** Like read, with the facts the answer was made from, so a caller can act on what the check saw. */
+  readWithFacts(): Promise<CheckedMachine> | CheckedMachine {
+    if (this.last !== null && this.deps.now() - this.last.at <= MACHINE_CHECK_MAX_AGE_MS) return this.last;
     return this.running ?? this.start();
   }
 
   /** "Check again" must see the computer as it is after the click, so it never shares an answer that began before it. */
-  fresh(): Promise<MachineCheckView> {
+  async fresh(): Promise<MachineCheckView> {
+    return (await this.freshWithFacts()).view;
+  }
+
+  private freshWithFacts(): Promise<CheckedMachine> {
     if (this.running === null) return this.start();
     this.queued ??= this.running
       .catch(() => {})
@@ -44,15 +59,15 @@ export class MachineChecks {
     return this.queued;
   }
 
-  private async execute(): Promise<MachineCheckView> {
+  private async execute(): Promise<CheckedMachine> {
     const facts = await this.deps.machine.gather();
     const at = this.deps.now();
     const view = checkMachine(facts, { preferredRuntime: this.deps.settings.get("runtime.preferred"), now: at });
-    this.last = { view, at };
-    return view;
+    this.last = { view, facts, at };
+    return { view, facts };
   }
 
-  private start(): Promise<MachineCheckView> {
+  private start(): Promise<CheckedMachine> {
     const run = this.execute().finally(() => {
       if (this.running === run) this.running = null;
     });

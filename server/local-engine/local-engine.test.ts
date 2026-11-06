@@ -3,12 +3,23 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import type { ApiError } from "../../shared/api-error.ts";
-import type { EngineView, InstallProgressView, LocalEngineView, RunView, SampleView } from "../../shared/api-types.ts";
+import type { EngineView, InstallProgressView, LocalEngineView, RunView, SampleView, VariantId } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
 import { FakeRuntime } from "../../test-support/fake-runtime.ts";
-import { linuxInputs, podmanRules, recordedMachine } from "../../test-support/recorded-machine.ts";
+import {
+  linuxInputs,
+  nvidiaQueryRule,
+  podmanRules,
+  recordedMachine,
+  WINDOWS_10_RELEASE,
+  windowsInputs,
+  type MachineInputs,
+} from "../../test-support/recorded-machine.ts";
+import type { ScriptedRule } from "../../test-support/scripted-runner.ts";
+import { generateSigner, sampleManifest, signedRelease } from "../../test-support/signed-manifest.ts";
 import { writeStoredZip } from "../../test-support/stored-zip-writer.ts";
 import { imageFolder } from "../images/image-download.ts";
+import { ACCEPTED_KEYS } from "../manifest/keys.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, IMAGE_UNPACKED_FACTOR, SAMPLE_JOB_PEAK_MEMORY } from "../machine/thresholds.ts";
 import { TaskClient } from "../task-api/task-client.ts";
 import { eventually, freePort, openHarness, type Harness } from "../testing/harness.ts";
@@ -592,14 +603,74 @@ test("without a working runtime the install is refused where Podman cannot be se
   expect(podman(h).loads).toEqual([]);
 });
 
+const WINDOWS_X64 = { platform: "win32", arch: "x64", totalMemory: 32 * GiB, cpuCount: 8 };
+
+/**
+ * A Windows computer whose machine check reads these inputs. The process says
+ * x64, as it does under emulation. With a manifest, a signed release that the
+ * manager holds; package downloads are answered 404, so an install goes no
+ * further than its first step.
+ */
+async function startWindows(inputs: MachineInputs, manifest?: unknown): Promise<{ h: Harness; archiveRequests: string[] }> {
+  const fake = new FakeFileServer();
+  await fake.start();
+  cleanups.push(() => fake.stop());
+  const signer = await generateSigner();
+  if (manifest !== undefined) {
+    const { bytes, signature } = await signedRelease(signer, manifest);
+    fake.files.set("/releases/download/v2.6.0/manifest.json", bytes);
+    fake.files.set("/releases/download/v2.6.0/manifest.json.sig", signature);
+    fake.redirects.set("/releases/latest/download/manifest.json", "/releases/download/v2.6.0/manifest.json");
+  }
+  const archiveRequests: string[] = [];
+  const h = start({
+    localMachine: WINDOWS_X64,
+    machine: recordedMachine(inputs),
+    runtimes: {},
+    manifest: { releasesUrl: fake.url("/releases"), keys: [signer.key, ...ACCEPTED_KEYS], fetch: (url, init) => fetch(url, init) },
+    native: {
+      fetch: (async (input: Parameters<typeof fetch>[0]) => {
+        archiveRequests.push(String(input instanceof Request ? input.url : input));
+        return new Response(null, { status: 404 });
+      }) as typeof fetch,
+    },
+  });
+  if (manifest !== undefined) expect((await send(h, "POST", "/api/packages/refresh")).status).toBe(200);
+  return { h, archiveRequests };
+}
+
 test("a computer with no package on offer is refused with the offer's reason", async () => {
-  const h = start({ localMachine: { platform: "win32", arch: "x64", totalMemory: 32 * GiB, cpuCount: 8 } });
+  // The built-in entry has no Windows package.
+  const { h } = await startWindows(windowsInputs());
   const response = await send(h, "POST", "/api/local-engine/install");
   expect(response.status).toBe(409);
   expect(await errorOf(response)).toEqual({
     code: "install.not_offered",
-    data: { reason: { code: "machine.windows_not_yet", data: {} } },
+    data: { reason: { code: "manifest.no_variant", data: { platform: "win32", arch: "x64" } } },
   });
+});
+
+test.each<[string, ScriptedRule, VariantId]>([
+  ["a driver at or above the CUDA package's floor", nvidiaQueryRule("smi-query"), "windows-x64-cuda"],
+  ["a driver below the CUDA package's floor", nvidiaQueryRule("smi-query-two"), "windows-x64"],
+])("on Windows with %s the install takes the package the offer names", async (_, rule, variant) => {
+  const { h } = await startWindows(windowsInputs({ rules: [rule] }), sampleManifest());
+  expect((await send(h, "POST", "/api/local-engine/install")).status).toBe(202);
+  expect((await localView(h)).install?.variant).toBe(variant);
+  expect((await localView(h)).install?.steps.map((step) => step.id)).toEqual(["engine"]);
+});
+
+test.each<[string, MachineInputs, ApiError]>([
+  ["Windows 10", windowsInputs({ release: WINDOWS_10_RELEASE }), { code: "machine.windows_too_old", data: { build: 19045, minimumBuild: 22000 } }],
+  // The process reports x64 under emulation; the machine check reads the processor itself.
+  ["Windows on an ARM processor", windowsInputs({ arch: "arm64" }), { code: "machine.windows_not_x64", data: {} }],
+  ["a processor without AVX2", windowsInputs({ avx2: false }), { code: "machine.cpu_missing", data: { missing: "avx2" } }],
+])("on %s the install is refused with the machine check's reason and nothing is downloaded", async (_, inputs, reason) => {
+  const { h, archiveRequests } = await startWindows(inputs, sampleManifest());
+  const response = await send(h, "POST", "/api/local-engine/install");
+  expect(response.status).toBe(409);
+  expect(await errorOf(response)).toEqual(reason);
+  expect(archiveRequests).toEqual([]);
 });
 
 test("an install that is already running is refused", async () => {

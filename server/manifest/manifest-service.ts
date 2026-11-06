@@ -2,7 +2,8 @@ import type { ApiError } from "../../shared/api-error.ts";
 import type { EnginePackageOffer, PackagesView, RefreshResult, VariantId } from "../../shared/api-types.ts";
 import { base64ToBytes, bytesToBase64 } from "../../shared/base64.ts";
 import { compareVersions, isReadableVersion } from "../engines/versions.ts";
-import { describeGpu, gpuApplies, mayUseGpuPackage, type GpuPrecheck } from "../machine/gpu.ts";
+import { windowsX64 } from "../machine/facts.ts";
+import { describeGpu, gpuApplies, mayUseGpuPackage, windowsCuda, type GpuPrecheck } from "../machine/gpu.ts";
 import type { Settings } from "../settings/settings.ts";
 import { verifyBuiltinManifest } from "./builtin.ts";
 import { ACCEPTED_KEYS, type AcceptedKey } from "./keys.ts";
@@ -88,6 +89,8 @@ export interface OfferFacts {
   forceCpu?: boolean;
   /** The digest of a graphics card package whose test run failed. That package is not offered again. */
   gpuFailedDigest?: string | null;
+  /** The NVIDIA driver version the machine check read on Windows. Null or absent: no driver answered. */
+  driverVersion?: string | null;
 }
 
 export type ChosenVariant = { id: VariantId; variant: ManifestVariant };
@@ -95,6 +98,15 @@ export type ChosenVariant = { id: VariantId; variant: ManifestVariant };
 function pickVariant(manifest: Manifest, id: VariantId): ChosenVariant | null {
   const variant = manifest.variants[id];
   return variant === undefined ? null : { id, variant };
+}
+
+/** On Windows: whether the CUDA package is offered, and what the operator is told about the card. */
+function windowsGpu(manifest: Manifest, facts: OfferFacts): ReturnType<typeof windowsCuda> {
+  const cuda = manifest.variants["windows-x64-cuda"];
+  return windowsCuda(facts.driverVersion ?? null, {
+    forceCpu: facts.forceCpu === true,
+    minimumDriverVersion: cuda?.kind === "native" ? (cuda.minimumDriverVersion ?? null) : undefined,
+  });
 }
 
 /** Whether the test run inside the manifest's graphics card package failed before. */
@@ -109,6 +121,10 @@ function variantFor(manifest: Manifest, facts: OfferFacts): ChosenVariant | null
     // Check c, inside the pulled image, comes after this choice and can still turn it back to the processor package.
     const wanted = mayUseGpuPackage(facts.gpu, facts.forceCpu === true) && !gpuFailedBefore(manifest, facts);
     return (wanted ? pick("linux-amd64-gpu") : null) ?? pick("linux-amd64-cpu");
+  }
+  if (windowsX64(facts)) {
+    // No test run inside the package and no fall back: the CUDA package is offered only when the driver meets its floor.
+    return (windowsGpu(manifest, facts).use ? pick("windows-x64-cuda") : null) ?? pick("windows-x64");
   }
   if (facts.platform === "linux" && facts.arch === "arm64") return pick("linux-arm64-cpu");
   if (facts.platform === "darwin" && facts.arch === "arm64") {
@@ -324,15 +340,6 @@ export class ManifestService {
       updateCheck: this.deps.settings.get("updates.check"),
       lastCheck: this.deps.settings.get("updates.lastCheck"),
     };
-    // The Windows local engine has no spec yet, so whatever a manifest holds, nothing is offered.
-    if (facts.platform === "win32") {
-      return {
-        view: { ...base, offer: null, gpu: noGpu, reason: { code: "machine.windows_not_yet", data: {} } },
-        variant: null,
-        processor: null,
-      };
-    }
-
     const { usable, waiting } = await this.usableManifest();
     if (usable === undefined) {
       return { view: { ...base, offer: null, gpu: noGpu, reason: waiting }, variant: null, processor: null };
@@ -363,11 +370,13 @@ export class ManifestService {
       source,
       tag,
     };
-    const gpu = describeGpu(facts.gpu, {
-      forceCpu: facts.forceCpu === true,
-      manifestHasGpuPackage: manifest.variants["linux-amd64-gpu"] !== undefined,
-      inImageFailed: gpuFailedBefore(manifest, facts),
-    });
+    const gpu = windowsX64(facts)
+      ? windowsGpu(manifest, facts).view
+      : describeGpu(facts.gpu, {
+          forceCpu: facts.forceCpu === true,
+          manifestHasGpuPackage: manifest.variants["linux-amd64-gpu"] !== undefined,
+          inImageFailed: gpuFailedBefore(manifest, facts),
+        });
     return { view: { ...base, offer, gpu, reason: waiting }, variant: chosen.variant, processor };
   }
 

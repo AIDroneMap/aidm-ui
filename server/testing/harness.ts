@@ -235,7 +235,7 @@ export function openHarness(
     freeBytes: options.freeBytes ?? (() => 1024 * GiB),
     log,
     macSetup: options.macSetup === undefined ? undefined : new MacSetup({ ...options.macSetup, dataFolder, log }),
-    localEngineOffer: async () => (await machineChecks.read()).localEngine,
+    machineCheck: async () => machineChecks.readWithFacts(),
     sleep: options.sleep ?? (async () => {}),
     images,
     imageDownload: options.imageDownload,

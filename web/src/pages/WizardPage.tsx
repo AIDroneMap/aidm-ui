@@ -51,7 +51,6 @@ function Sentence({ error }: { error: ApiError }) {
 
 /** The requirement each refusal of this computer names, and nothing else (AGENTS.md: supported hardware is a list). */
 const REFUSALS: Readonly<Record<string, string>> = {
-  "machine.windows_not_yet": "wizard.refused.platform",
   "machine.platform_unsupported": "wizard.refused.platform",
   "machine.cpu_missing": "wizard.refused.cpu",
   "machine.mac_intel": "wizard.refused.mac",
@@ -285,7 +284,8 @@ function GpuNote({ gpu, offer }: { gpu: PackagesView["gpu"]; offer: EnginePackag
   if (gpu.state === "used") {
     return (
       <>
-        <p>{t("wizard.install.gpu.used")}</p>
+        {/* A native package has no test run after the download. */}
+        <p>{t(offer.kind === "native" ? "wizard.install.gpu.used_native" : "wizard.install.gpu.used")}</p>
         {offer.variant === "linux-amd64-gpu" && (
           <p>
             {offer.processorSize === null
