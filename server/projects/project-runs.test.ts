@@ -59,7 +59,7 @@ test("photos in a data folder reached by a short 8.3 name reach the engine, and 
   // On Windows realpath answers a short 8.3 name with the long one (test-support/recorded/windows/file-identity.json). A link gives Linux the same two spellings.
   const temporary = mkdtempSync(join(tmpdir(), "aidm-ui-short-name-"));
   mkdirSync(join(temporary, "long folder name for probe"));
-  symlinkSync(join(temporary, "long folder name for probe"), join(temporary, "LONGFO~1"));
+  symlinkSync(join(temporary, "long folder name for probe"), join(temporary, "LONGFO~1"), "junction");
   try {
     await h.stop();
     h = openHarness({ dataFolder: join(temporary, "LONGFO~1") });

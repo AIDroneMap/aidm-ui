@@ -129,11 +129,11 @@ const probeName = win32.basename(win32.resolve(windows.folder, "..", "..", "..")
 
 /**
  * A data folder reached by another spelling than the one `realpath` answers, as Windows reached the recorded one by its
- * short name. Linux has no 8.3 names, so the short name is a link to the long one, which `realpath` follows the same way.
+ * short name. Linux has no 8.3 names, so the short name is a link to the long one (a junction on Windows), which `realpath` follows the same way.
  */
 async function shortNamed(temporary: string): Promise<string> {
   await mkdir(join(temporary, longName!, probeName), { recursive: true });
-  await symlink(join(temporary, longName!), join(temporary, shortName!));
+  await symlink(join(temporary, longName!), join(temporary, shortName!), "junction");
   return join(temporary, shortName!, probeName);
 }
 
@@ -207,7 +207,7 @@ test("a files folder replaced by a link to another folder is refused, as realpat
     const files = join(root, "projects", String(id), "files"), other = join(root, "other-files");
     const snapshot = await inputs.snapshot(id);
     await mkdir(other); await writeFile(join(other, hash.slice(0, 32)), "photo");
-    await rename(files, files + "-old"); await symlink(other, files);
+    await rename(files, files + "-old"); await symlink(other, files, "junction");
     expect((await lstat(files)).isSymbolicLink()).toBe(true);
     await expect(inputs.copyToTask(id, snapshot, sent().client as never, "task")).rejects.toBeInstanceOf(RunInputsChanged);
   }, { root: shortNamed });
