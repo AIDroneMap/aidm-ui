@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
+import { existsSync, type Stats } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
@@ -129,11 +129,12 @@ const probeName = win32.basename(win32.resolve(windows.folder, "..", "..", "..")
 
 /**
  * A data folder reached by another spelling than the one `realpath` answers, as Windows reached the recorded one by its
- * short name. Linux has no 8.3 names, so the short name is a link to the long one (a junction on Windows), which `realpath` follows the same way.
+ * short name. Windows with 8.3 names on gives the long folder that short name itself. Where it does not, as on Linux,
+ * the short name is a link to the long one, which `realpath` follows the same way.
  */
 async function shortNamed(temporary: string): Promise<string> {
   await mkdir(join(temporary, longName!, probeName), { recursive: true });
-  await symlink(join(temporary, longName!), join(temporary, shortName!), "junction");
+  if (!existsSync(join(temporary, shortName!))) await symlink(join(temporary, longName!), join(temporary, shortName!), "junction");
   return join(temporary, shortName!, probeName);
 }
 

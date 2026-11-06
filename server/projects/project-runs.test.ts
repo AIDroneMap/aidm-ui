@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeTaskApi } from "../../test-support/fake-task-api.ts";
@@ -56,10 +56,11 @@ test("project photos reach the selected engine with reviewed settings and persis
 });
 
 test("photos in a data folder reached by a short 8.3 name reach the engine, and a changed photo fails with project_run.photos_changed", async () => {
-  // On Windows realpath answers a short 8.3 name with the long one (test-support/recorded/windows/file-identity.json). A link gives Linux the same two spellings.
+  // On Windows realpath answers a short 8.3 name with the long one (test-support/recorded/windows/file-identity.json).
+  // Windows with 8.3 names on makes the short name itself; elsewhere a link gives the same two spellings.
   const temporary = mkdtempSync(join(tmpdir(), "aidm-ui-short-name-"));
   mkdirSync(join(temporary, "long folder name for probe"));
-  symlinkSync(join(temporary, "long folder name for probe"), join(temporary, "LONGFO~1"), "junction");
+  if (!existsSync(join(temporary, "LONGFO~1"))) symlinkSync(join(temporary, "long folder name for probe"), join(temporary, "LONGFO~1"), "junction");
   try {
     await h.stop();
     h = openHarness({ dataFolder: join(temporary, "LONGFO~1") });
