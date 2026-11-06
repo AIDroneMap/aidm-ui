@@ -2,9 +2,16 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import type { PackagesView, RefreshResult } from "../../shared/api-types.ts";
+import type { GpuView, PackagesView, RefreshResult } from "../../shared/api-types.ts";
 import { FakeFileServer } from "../../test-support/fake-file-server.ts";
-import { linuxInputs, recordedMachine } from "../../test-support/recorded-machine.ts";
+import {
+  linuxInputs,
+  nvidiaQueryRule,
+  recordedMachine,
+  windowsInputs,
+  type MachineInputs,
+} from "../../test-support/recorded-machine.ts";
+import type { ScriptedRule } from "../../test-support/scripted-runner.ts";
 import {
   BUILTIN_SEQUENCE,
   generateSigner,
@@ -14,6 +21,7 @@ import {
   type TestSigner,
 } from "../../test-support/signed-manifest.ts";
 import { eventually, openHarness, type Harness } from "../testing/harness.ts";
+import { NVIDIA_QUERY_ARGV } from "../machine/gpu.ts";
 import { ACCEPTED_KEYS } from "./keys.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -149,11 +157,11 @@ test("a Linux computer is offered the native package, not an image, when the man
   expect((await packages(h)).offer).toMatchObject({ variant: "linux-amd64-cpu", kind: "native", size: 7 });
 });
 
-test("a Windows computer is offered nothing yet, with the reason, and nothing is requested", async () => {
-  const h = open({ machine: recordedMachine(linuxInputs({ platform: "win32", arch: "x64" })) });
+test("a Windows computer gets no offer from a manifest with no Windows package, and nothing is requested", async () => {
+  const h = open({ machine: recordedMachine(windowsInputs({ rules: [nvidiaQueryRule("smi-query")] })) });
   const view = await packages(h);
   expect(view.offer).toBeNull();
-  expect(view.reason).toEqual({ code: "machine.windows_not_yet", data: {} });
+  expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "win32", arch: "x64" } });
   expect(fake.requests).toEqual([]);
 });
 
@@ -163,13 +171,92 @@ test("a computer of another kind gets no offer", async () => {
   expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "freebsd", arch: "x64" } });
 });
 
-test("a Windows computer is still offered nothing when a manifest has a Windows package", async () => {
+// On Windows the offer is the CUDA package when the driver the machine check read meets the entry's floor, else the processor package.
+
+/** The Windows driver's answer to the card and driver version query, with this version. */
+function driverAnswer(version: string): ScriptedRule {
+  return { argv: NVIDIA_QUERY_ARGV, result: { exitCode: 0, stdout: `NVIDIA GeForce RTX 4070, ${version}\n`, stderr: "" } };
+}
+
+/** The offer on a Windows 11 computer with these inputs, after a refresh to this manifest. */
+async function windowsOffer(inputs: Partial<MachineInputs>, manifest = sampleManifest()): Promise<PackagesView> {
+  await publish("v2.6.0", manifest);
+  const h = open({ machine: recordedMachine(windowsInputs(inputs)) });
+  expect((await refresh(h)).result).toMatchObject({ ok: true });
+  return packages(h);
+}
+
+const USED: GpuView = { state: "used", reason: null, guideUrl: null };
+const NO_REASON: GpuView = { state: "not_used", reason: null, guideUrl: null };
+
+test.each([
+  ["a driver above the floor", nvidiaQueryRule("smi-query")],
+  ["a driver at the floor", driverAnswer("576.57")],
+  ["a driver whose minor number is shorter but larger (580.9 against 576.57)", driverAnswer("580.9")],
+])("Windows with %s is offered the CUDA package, with no reason", async (_, rule) => {
+  const view = await windowsOffer({ rules: [rule] });
+  expect(view.offer).toMatchObject({ variant: "windows-x64-cuda", kind: "native", size: 444, processorSize: null });
+  expect(view.gpu).toEqual(USED);
+  expect(view.reason).toBeNull();
+});
+
+test("Windows with a driver below the floor is offered the processor package, with both versions in the reason", async () => {
+  const view = await windowsOffer({ rules: [nvidiaQueryRule("smi-query-two")] });
+  expect(view.offer).toMatchObject({ variant: "windows-x64", kind: "native", size: 333 });
+  expect(view.gpu).toEqual({
+    state: "not_used",
+    reason: { code: "gpu.driver_too_old", data: { driverVersion: "566.36", minimumDriverVersion: "576.57" } },
+    guideUrl: null,
+  });
+});
+
+test.each([
+  ["a driver that does not answer", [nvidiaQueryRule("smi-query-no-driver")]],
+  ["no nvidia-smi at all", []],
+])("Windows with %s is offered the processor package, with no reason", async (_, rules) => {
+  const view = await windowsOffer({ rules });
+  expect(view.offer).toMatchObject({ variant: "windows-x64", kind: "native" });
+  expect(view.gpu).toEqual(NO_REASON);
+});
+
+test("Windows with a current driver and the processor-only choice is offered the processor package, with that reason", async () => {
   await publish("v2.6.0", sampleManifest());
-  const h = open({ machine: recordedMachine(linuxInputs({ platform: "win32", arch: "x64" })) });
+  const h = open({ machine: recordedMachine(windowsInputs({ rules: [nvidiaQueryRule("smi-query")] })) });
+  h.settings.set("local.forceCpu", true);
   await refresh(h);
   const view = await packages(h);
+  expect(view.offer).toMatchObject({ variant: "windows-x64" });
+  expect(view.gpu).toEqual({ state: "not_used", reason: { code: "gpu.forced_cpu", data: {} }, guideUrl: null });
+});
+
+test("Windows with a card and a manifest that has only the processor package is offered it, with no reason", async () => {
+  const manifest = sampleManifest();
+  delete manifest.variants["windows-x64-cuda"];
+  const view = await windowsOffer({ rules: [nvidiaQueryRule("smi-query")] }, manifest);
+  expect(view.offer).toMatchObject({ variant: "windows-x64" });
+  expect(view.gpu).toEqual(NO_REASON);
+});
+
+test("a CUDA package without a driver floor is offered to any driver that answers", async () => {
+  const manifest = sampleManifest();
+  const { minimumDriverVersion: _, ...cuda } = manifest.variants["windows-x64-cuda"] as { minimumDriverVersion?: string };
+  manifest.variants["windows-x64-cuda"] = cuda as (typeof manifest.variants)["windows-x64"];
+  const view = await windowsOffer({ rules: [driverAnswer("1.0")] }, manifest);
+  expect(view.offer).toMatchObject({ variant: "windows-x64-cuda" });
+});
+
+test("Windows with an old driver and a manifest that has only the CUDA package gets no offer", async () => {
+  const manifest = sampleManifest();
+  delete manifest.variants["windows-x64"];
+  const view = await windowsOffer({ rules: [nvidiaQueryRule("smi-query-two")] }, manifest);
   expect(view.offer).toBeNull();
-  expect(view.reason?.code).toBe("machine.windows_not_yet");
+  expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "win32", arch: "x64" } });
+});
+
+test("Windows on an ARM processor is offered no Windows package, even with a manifest that has both", async () => {
+  const view = await windowsOffer({ arch: "arm64" });
+  expect(view.offer).toBeNull();
+  expect(view.reason).toEqual({ code: "manifest.no_variant", data: { platform: "win32", arch: "arm64" } });
 });
 
 test("the GPU image is not the offer while the graphics card checks have not passed", async () => {

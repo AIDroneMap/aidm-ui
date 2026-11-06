@@ -4,8 +4,8 @@ import { readJson, type RouteContext, type RouteTable } from "../http/route-tabl
 
 export function manifestRoutes(ctx: RouteContext): RouteTable {
   const view = async () => {
-    const { platform, arch } = await ctx.machine.gather();
-    return ctx.localEngine.packages({ platform, arch });
+    const { platform, arch, nvidia } = await ctx.machine.gather();
+    return ctx.localEngine.packages({ platform, arch, driverVersion: nvidia.driverVersion });
   };
 
   return {

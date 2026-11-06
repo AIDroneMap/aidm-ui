@@ -11,7 +11,6 @@ import type {
   InstallProgressView,
   InstallStepView,
   LocalEngineView,
-  MachineCheckView,
   PackagesView,
   RuntimeId,
 } from "../../shared/api-types.ts";
@@ -19,6 +18,7 @@ import type { EngineMonitor } from "../engines/engine-monitor.ts";
 import type { EngineRecord, EngineStore } from "../engines/engine-store.ts";
 import { compareVersions } from "../engines/versions.ts";
 import type { FreeBytes } from "../machine/disk.ts";
+import type { CheckedMachine } from "../machine/machine-checks.ts";
 import { gpuApplies, inImageFailed, NOT_CHECKED, precheckGpu, type GpuPrecheck } from "../machine/gpu.ts";
 import { DOWNLOAD_FREE_DISK_MARGIN, MEMORY_CAP_MIN } from "../machine/thresholds.ts";
 import type { ManifestService, OfferFacts } from "../manifest/manifest-service.ts";
@@ -199,11 +199,13 @@ export interface LocalEngineDeps {
   /** On a Mac: the checks of an engine that runs and does not answer, and the tool's subnet (ADR 0006). */
   appleNetwork?: Pick<AppleNetwork, "diagnose" | "conflicts" | "move">;
   /**
-   * What the machine check says about the local engine. On a Mac the install
-   * refuses with its reason (an Intel Mac, macOS 15), so the route and the
-   * wizard cannot disagree.
+   * The machine check and the facts it read. On a Mac and on Windows the
+   * install refuses with its reason (an Intel Mac, macOS 15, Windows 10), so
+   * the route and the wizard cannot disagree. On Windows the offer also takes
+   * the processor and the driver version from those facts: a process under
+   * emulation reports x64 on an ARM processor.
    */
-  localEngineOffer?: () => Promise<MachineCheckView["localEngine"]>;
+  machineCheck?: () => Promise<CheckedMachine>;
   /** The token for a new install. 32 random bytes in hex by default. */
   random?: () => string;
   freePort?: () => Promise<number>;
@@ -223,6 +225,9 @@ export interface LocalEngineDeps {
   /** For native packages; a test swaps the way the program is started and the way the archive is fetched. */
   native?: NativeOptions;
 }
+
+/** The computer as the offer sees it: the driver version is read on Windows only. */
+type OfferMachine = { platform: string; arch: string; driverVersion?: string | null };
 
 function randomToken(): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
@@ -590,18 +595,19 @@ export class LocalEngineManager {
   }
 
   /** What decides the package: the computer, the checks, the operator's choice and a test run that failed before. */
-  private offerFacts(facts: { platform: string; arch: string }, gpu: GpuPrecheck): OfferFacts {
+  private offerFacts(facts: OfferMachine, gpu: GpuPrecheck): OfferFacts {
     return {
       platform: facts.platform,
       arch: facts.arch,
       gpu,
       forceCpu: this.settings.get("local.forceCpu"),
       gpuFailedDigest: this.settings.get("local.gpuCheckFailed")?.digest ?? null,
+      driverVersion: facts.driverVersion ?? null,
     };
   }
 
   /** The offer for this computer, with what the graphics card checks found. For the packages route. */
-  async packages(facts: { platform: string; arch: string }): Promise<PackagesView> {
+  async packages(facts: OfferMachine): Promise<PackagesView> {
     const gpu = await this.gpuPrecheck(facts, GPU_PRECHECK_MAX_AGE_MS);
     return this.deps.manifests.offer(this.offerFacts(facts, gpu));
   }
@@ -618,14 +624,17 @@ export class LocalEngineManager {
     let started = false;
     try {
       const { machine } = this.deps;
-      if (machine.platform === "darwin" && this.deps.localEngineOffer !== undefined) {
-        const local = await this.deps.localEngineOffer();
+      let computer: OfferMachine = machine;
+      if ((machine.platform === "darwin" || machine.platform === "win32") && this.deps.machineCheck !== undefined) {
+        const { view, facts } = await this.deps.machineCheck();
+        const local = view.localEngine;
         if (!local.offered) return { ok: false, status: 409, error: local.reason ?? { code: "install.not_offered", data: {} } };
+        if (machine.platform === "win32") computer = { platform: facts.platform, arch: facts.arch, driverVersion: facts.nvidia.driverVersion };
       }
       // Checks a and b come before anything is downloaded. Check c needs the image and comes after the pull.
       await this.refreshRuntimes();
       const gpu = await this.lookAtGpu(machine, 0);
-      const offered = await this.deps.manifests.offerWithVariant(this.offerFacts(machine, gpu));
+      const offered = await this.deps.manifests.offerWithVariant(this.offerFacts(computer, gpu));
       const { offer } = offered.view;
       const variant = offered.variant;
       if (offer === null || variant === null) return refusal(409, "install.not_offered", { reason: offered.view.reason });

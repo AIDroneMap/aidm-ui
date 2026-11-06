@@ -429,6 +429,49 @@ test("a native package says it is installed as a program, and a container does n
   expect(untranslatedText(native, ["2.6.0", "651 MiB"])).toEqual([]);
 });
 
+// The offer on Windows: the CUDA package, or the processor package with or without the driver reason.
+
+const windowsCpu: PackagesView = {
+  ...builtIn,
+  offer: { ...builtIn.offer!, packageVersion: "2.8.0", variant: "windows-x64", kind: "native", size: 333 * 1024 ** 2, source: "downloaded", tag: "v2.8.0" },
+};
+
+test("on Windows with a current driver the offer card names the CUDA package and says the card will be used, with no test run", () => {
+  const html = renderInstall(
+    { ...windowsCpu, offer: { ...windowsCpu.offer!, variant: "windows-x64-cuda" }, gpu: { state: "used", reason: null, guideUrl: null } },
+    { local: { ...fresh, platform: "win32" } },
+  );
+  expect(html).toContain("Windows, 64-bit Intel or AMD processor with an NVIDIA graphics card");
+  expect(html).toContain("<p>The engine will use your NVIDIA graphics card.</p>");
+  expect(html).not.toContain("test run");
+  expect(html).toContain("Installed as a program on this computer");
+  expect(untranslatedText(html, ["2.8.0", "333 MiB", "v2.8.0"])).toEqual([]);
+});
+
+test("on Windows with an old driver the offer card names the processor package and both driver versions", () => {
+  const html = renderInstall(
+    {
+      ...windowsCpu,
+      gpu: { state: "not_used", reason: { code: "gpu.driver_too_old", data: { driverVersion: "566.36", minimumDriverVersion: "576.57" } }, guideUrl: null },
+    },
+    { local: { ...fresh, platform: "win32" } },
+  );
+  expect(html).toContain("Windows, 64-bit Intel or AMD processor</li>");
+  expect(html).toContain(
+    "This computer has an NVIDIA graphics card with driver version 566.36. The graphics card package needs version 576.57 or newer, so AIDM UI offers the processor package. Update the NVIDIA driver to use the card.",
+  );
+  expect(html).not.toContain("How to set up the NVIDIA Container Toolkit");
+  expect(untranslatedText(html, ["2.8.0", "333 MiB", "v2.8.0", "566.36", "576.57"])).toEqual([]);
+});
+
+test("on Windows without a card the offer card names the processor package and gives no reason", () => {
+  const html = renderInstall(windowsCpu, { local: { ...fresh, platform: "win32" } });
+  expect(html).toContain("Windows, 64-bit Intel or AMD processor</li>");
+  expect(html).not.toContain("NVIDIA");
+  expect(html).toContain(">Install on this computer</button>");
+  expect(untranslatedText(html, ["2.8.0", "333 MiB", "v2.8.0"])).toEqual([]);
+});
+
 test("an interface that is too old shows both versions and no offer", () => {
   const html = renderInstall({
     ...builtIn,
@@ -825,7 +868,6 @@ test("on macOS 15 the choice screen says which macOS is needed and offers a remo
 
 test("every refusal of this computer, on the check line and in the refused state, names the requirement in one sentence and nothing else", () => {
   const cases: Array<[MachineCheckData["lines"][number]["message"], string]> = [
-    [{ code: "machine.windows_not_yet", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
     [{ code: "machine.platform_unsupported", data: {} }, "The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon."],
     [{ code: "machine.cpu_missing", data: { missing: "avx2" } }, "The engine needs an x86-64-v3 or ARMv8.2-A processor."],
     [{ code: "machine.mac_intel", data: {} }, "The engine needs a Mac with Apple silicon."],
@@ -846,7 +888,7 @@ test("every refusal of this computer, on the check line and in the refused state
     expect(install, reason.code).not.toContain(`role="alert"`);
   }
   // A package refused for this computer: the same sentence in place of an offer.
-  const none = renderInstall({ ...builtIn, offer: null, reason: { code: "machine.windows_not_yet", data: {} } });
+  const none = renderInstall({ ...builtIn, offer: null, reason: { code: "machine.platform_unsupported", data: {} } });
   expect(none).toContain('<p class="wizard-refused">The engine needs Linux on an x86-64-v3 or ARMv8.2-A processor, or macOS on Apple silicon.</p>');
   // Any other failure of the install stays an alert with its own words.
   expect(renderInstall(builtIn, { local: fresh, installFailure: new ApiFailure(500, "server.internal_error") })).toContain('role="alert"');

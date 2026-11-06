@@ -203,7 +203,7 @@ export async function startAidmUi(options: StartOptions): Promise<StartResult> {
       log: log,
       macSetup: onMac ? new MacSetup({ runner, dataFolder, freeBytes, log: log, network: appleNetwork }) : undefined,
       appleNetwork,
-      localEngineOffer: async () => (await machineChecks.read()).localEngine,
+      machineCheck: async () => machineChecks.readWithFacts(),
       nativeRunner: runner,
     });
     const sample = new SampleJob({

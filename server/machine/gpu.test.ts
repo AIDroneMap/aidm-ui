@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import type { ApiError } from "../../shared/api-error.ts";
+import type { GpuView } from "../../shared/api-types.ts";
 import { ScriptedRunner, recorded, type ScriptedRule } from "../../test-support/scripted-runner.ts";
 import { recordedText } from "../../test-support/scripted-runner.ts";
-import { describeGpu, NVIDIA_TOOLKIT_GUIDE_URL, parseGpuQuery, precheckGpu } from "./gpu.ts";
+import { describeGpu, driverMeetsFloor, NVIDIA_TOOLKIT_GUIDE_URL, parseGpuQuery, precheckGpu, windowsCuda } from "./gpu.ts";
 
 const x64 = { platform: "linux", arch: "x64" };
 const smi: ScriptedRule = { argv: ["nvidia-smi", "-L"], result: recorded("nvidia", "smi-l") };
@@ -151,4 +153,35 @@ test("the Windows query gives each card's name and the driver version after the 
   });
   expect(parseGpuQuery("")).toEqual({ gpus: [], driverVersion: null });
   expect(parseGpuQuery("No devices were found\n")).toEqual({ gpus: [], driverVersion: null });
+});
+
+test.each([
+  ["580.9", "576.57", true],
+  ["576.57", "576.57", true],
+  ["581.57", "576.57", true],
+  ["581", "576.57", true],
+  ["576.57.01", "576.57", true],
+  [" 576.57 ", "576.57", true],
+  ["576.5", "576.57", false],
+  ["566.36", "576.57", false],
+  ["576", "576.57", false],
+  ["N/A", "576.57", false],
+  ["", "576.57", false],
+  ["576.57a", "576.57", false],
+])("driver %s against the floor %s: %p", (version, floor, meets) => {
+  expect(driverMeetsFloor(version, floor)).toBe(meets);
+});
+
+test("on Windows the CUDA package needs a driver, no processor-only choice, a CUDA entry and a driver at its floor", () => {
+  const used: GpuView = { state: "used", reason: null, guideUrl: null };
+  const notUsed = (reason: ApiError | null) => ({ use: false, view: { state: "not_used", reason, guideUrl: null } satisfies GpuView });
+  expect(windowsCuda("581.57", { forceCpu: false, minimumDriverVersion: "576.57" })).toEqual({ use: true, view: used });
+  expect(windowsCuda("581.57", { forceCpu: false, minimumDriverVersion: null })).toEqual({ use: true, view: used });
+  expect(windowsCuda(null, { forceCpu: false, minimumDriverVersion: "576.57" })).toEqual(notUsed(null));
+  expect(windowsCuda(null, { forceCpu: true, minimumDriverVersion: "576.57" })).toEqual(notUsed(null));
+  expect(windowsCuda("581.57", { forceCpu: true, minimumDriverVersion: "576.57" })).toEqual(notUsed({ code: "gpu.forced_cpu", data: {} }));
+  expect(windowsCuda("581.57", { forceCpu: false, minimumDriverVersion: undefined })).toEqual(notUsed(null));
+  expect(windowsCuda("566.36", { forceCpu: false, minimumDriverVersion: "576.57" })).toEqual(
+    notUsed({ code: "gpu.driver_too_old", data: { driverVersion: "566.36", minimumDriverVersion: "576.57" } }),
+  );
 });
